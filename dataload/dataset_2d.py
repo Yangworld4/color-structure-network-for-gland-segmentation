@@ -1,31 +1,72 @@
 import os
+import csv
 import torch
 from torch.utils.data import Dataset, DataLoader
 from PIL import Image
-import cv2
 import numpy as np
-import pywt
-import random
+
+
+def _read_manifest(manifest_path, sup):
+    """Read image/mask paths relative to the manifest file."""
+    manifest_path = os.path.abspath(manifest_path)
+    manifest_dir = os.path.dirname(manifest_path)
+    if not os.path.isfile(manifest_path):
+        raise FileNotFoundError('Manifest not found: {}'.format(manifest_path))
+
+    image_paths = []
+    mask_paths = []
+    with open(manifest_path, newline='', encoding='utf-8-sig') as manifest_file:
+        reader = csv.DictReader(manifest_file)
+        if not reader.fieldnames or 'image' not in reader.fieldnames:
+            raise ValueError("Manifest must contain an 'image' column: {}".format(manifest_path))
+        if sup and 'mask' not in reader.fieldnames:
+            raise ValueError("Supervised manifest must contain a 'mask' column: {}".format(manifest_path))
+
+        for row_number, row in enumerate(reader, start=2):
+            image_value = (row.get('image') or '').strip()
+            mask_value = (row.get('mask') or '').strip()
+            if not image_value:
+                raise ValueError('Empty image path at {}:{}'.format(manifest_path, row_number))
+            if sup and not mask_value:
+                raise ValueError('Empty mask path at {}:{}'.format(manifest_path, row_number))
+
+            image_paths.append(os.path.normpath(os.path.join(manifest_dir, image_value)))
+            if sup:
+                mask_paths.append(os.path.normpath(os.path.join(manifest_dir, mask_value)))
+
+    if not image_paths:
+        raise ValueError('Manifest contains no samples: {}'.format(manifest_path))
+
+    missing = [path for path in image_paths + mask_paths if not os.path.isfile(path)]
+    if missing:
+        preview = ', '.join(missing[:3])
+        raise FileNotFoundError(
+            '{} referenced file(s) do not exist (first entries: {})'.format(len(missing), preview)
+        )
+    return image_paths, mask_paths
 
 class dataset_itn(Dataset):
-    def __init__(self, data_dir, input1, augmentation_1, normalize_1, sup=True, num_images=None, **kwargs):
+    def __init__(self, data_dir, input1, augmentation_1, normalize_1, sup=True, num_images=None,
+                 manifest_path=None, **kwargs):
         super(dataset_itn, self).__init__()
 
-        img_paths_1 = []
-        mask_paths = []
+        if manifest_path is not None:
+            img_paths_1, mask_paths = _read_manifest(manifest_path, sup)
+        else:
+            img_paths_1 = []
+            mask_paths = []
+            image_dir_1 = os.path.join(data_dir, input1)
+            if not os.path.isdir(image_dir_1):
+                raise FileNotFoundError('Image directory not found: {}'.format(image_dir_1))
+            mask_dir = os.path.join(data_dir, 'mask') if sup else None
 
-        image_dir_1 = data_dir + '/' + input1
-        if sup:
-            mask_dir = data_dir + '/mask'
-
-        for image in os.listdir(image_dir_1):
-
-            image_path_1 = os.path.join(image_dir_1, image)
-            img_paths_1.append(image_path_1)
-
-            if sup:
-                mask_path = os.path.join(mask_dir, image)
-                mask_paths.append(mask_path)
+            for image in sorted(os.listdir(image_dir_1)):
+                image_path_1 = os.path.join(image_dir_1, image)
+                if not os.path.isfile(image_path_1):
+                    continue
+                img_paths_1.append(image_path_1)
+                if sup:
+                    mask_paths.append(os.path.join(mask_dir, image))
 
         if sup:
             assert len(img_paths_1) == len(mask_paths)
@@ -58,13 +99,16 @@ class dataset_itn(Dataset):
     def __getitem__(self, index):
 
         img_path_1 = self.img_paths_1[index]
-        img_1 = Image.open(img_path_1)
-        img_1 = np.array(img_1)
+        with Image.open(img_path_1) as image:
+            img_1 = np.array(image.convert('RGB'))
 
         if self.sup:
             mask_path = self.mask_paths[index]
-            mask = Image.open(mask_path)
-            mask = np.array(mask)
+            with Image.open(mask_path) as mask_image:
+                mask = np.array(mask_image.convert('L'))
+            # FDCL is configured for two classes. Prepared masks use 0/255,
+            # while segmentation losses require class indices 0/1.
+            mask = (mask > 0).astype(np.uint8)
 
             augment_1 = self.augmentation_1(image=img_1, mask=mask)
             img_1 = augment_1['image']
@@ -91,13 +135,15 @@ class dataset_itn(Dataset):
         return len(self.img_paths_1)
 
 
-def imagefloder_itn(data_dir, input1, data_transform_1, data_normalize_1, sup=True, num_images=None, **kwargs):
+def imagefloder_itn(data_dir=None, input1='image', data_transform_1=None, data_normalize_1=None,
+                    sup=True, num_images=None, manifest_path=None, **kwargs):
     dataset = dataset_itn(data_dir=data_dir,
                            input1=input1,
                            augmentation_1=data_transform_1,
                            normalize_1=data_normalize_1,
                            sup=sup,
                            num_images=num_images,
+                           manifest_path=manifest_path,
                            **kwargs
                            )
     return dataset

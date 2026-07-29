@@ -7,6 +7,8 @@ from torch.autograd import Variable
 from torch.utils.data import DataLoader
 from models.getnetwork import get_network
 import argparse
+import csv
+import logging
 import time
 import os
 import numpy as np
@@ -48,9 +50,15 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--path_trained_models', default='checkpoints/semi_fdcl_10')
     parser.add_argument('--path_seg_results', default='seg_pred/semi_fdcl_10')
-    parser.add_argument('-pd', '--path_dataset', default='dataset/GlaS')
+    parser.add_argument('-pd', '--path_dataset', default='datasets/GLaS')
     parser.add_argument('--dataset_name', default='GlaS', help='CRAG, MoNuSeg, GlaS')
     parser.add_argument('--input1', default='image')
+    parser.add_argument('--manifest_dir', default=None,
+                        help='manifest directory; defaults to PATH_DATASET/manifests/paper_seed_2026')
+    parser.add_argument('--labeled_ratio', default=10, type=int, choices=[10, 20],
+                        help='percentage of labeled training data in the prepared manifests')
+    parser.add_argument('--check_data', action='store_true',
+                        help='load one batch, print its shapes/ranges, and exit before GPU setup')
     parser.add_argument('--sup_mark', default='9')
     parser.add_argument('--unsup_mark', default='76')
     parser.add_argument('-b', '--batch_size', default=2, type=int)
@@ -66,41 +74,23 @@ if __name__ == '__main__':
     parser.add_argument('--w_dis', default=1.0, type=float, help='weight distance loss')
     parser.add_argument('--sd', default=4, type=int, help='seed')
 
-    parser.add_argument('-i', '--display_iter', default=5, type=int)
+    parser.add_argument('-i', '--display_iter', default=1, type=int,
+                        help='deprecated: important metrics are now evaluated and logged every epoch')
     parser.add_argument('-n', '--network', default='xnet_sb', type=str)
     parser.add_argument('--local_rank', default=0, type=int)
-    parser.add_argument('--rank_index', default=0, help='0, 1, 2, 3')
+    parser.add_argument('--rank_index', default=0, type=int, help='0, 1, 2, 3')
     args = parser.parse_args()
-
-    torch.cuda.set_device(args.local_rank)
-    dist.init_process_group(backend='nccl', init_method='env://')
-
-    rank = torch.distributed.get_rank()
-    ngpus_per_node = torch.cuda.device_count()
-    init_seeds(rank + args.sd)
 
     dataset_name = args.dataset_name
     cfg = dataset_cfg(dataset_name)
+    manifest_dir = args.manifest_dir or os.path.join(
+        args.path_dataset, 'manifests', 'paper_seed_2026'
+    )
+    use_manifests = os.path.isdir(manifest_dir)
 
     print_num = 77 + (cfg['NUM_CLASSES'] - 3) * 14
     print_num_minus = print_num - 2
     print_num_half = int(print_num / 2 - 1)
-
-    # trained model save
-    path_trained_models = args.path_trained_models + '/' + str(os.path.split(args.path_dataset)[1])
-    if not os.path.exists(path_trained_models) and rank == args.rank_index:
-        os.mkdir(path_trained_models)
-    path_trained_models = path_trained_models+'/'+'CPS'+'-l='+str(args.lr)+'-e='+str(args.num_epochs)+'-s='+str(args.step_size)+'-g='+str(args.gamma)+'-b='+str(args.batch_size)+'-cw='+str(args.unsup_weight)+'-w='+str(args.warm_up_duration)+'-'+str(args.sup_mark)+'-'+str(args.unsup_mark)+'-'+str(args.input1)
-    if not os.path.exists(path_trained_models) and rank == args.rank_index:
-        os.mkdir(path_trained_models)
-
-    # seg results save
-    path_seg_results = args.path_seg_results + '/' + str(os.path.split(args.path_dataset)[1])
-    if not os.path.exists(path_seg_results) and rank == args.rank_index:
-        os.mkdir(path_seg_results)
-    path_seg_results = path_seg_results+'/'+'CPS'+'-l='+str(args.lr)+'-e='+str(args.num_epochs)+'-s='+str(args.step_size)+'-g='+str(args.gamma)+'-b='+str(args.batch_size)+'-cw='+str(args.unsup_weight)+'-w='+str(args.warm_up_duration)+'-'+str(args.sup_mark)+'-'+str(args.unsup_mark)+'-'+str(args.input1)
-    if not os.path.exists(path_seg_results) and rank == args.rank_index:
-        os.mkdir(path_seg_results)
 
     if args.input1 == 'image':
         input1_mean = 'MEAN'
@@ -109,36 +99,133 @@ if __name__ == '__main__':
         input1_mean = 'MEAN_' + args.input1
         input1_std = 'STD_' + args.input1
 
-
     data_transforms = data_transform_2d()
     data_normalize = data_normalize_2d(cfg[input1_mean], cfg[input1_std])
 
-    dataset_train_unsup = imagefloder_itn(
-        data_dir=args.path_dataset + '/train_unsup_'+args.unsup_mark,
-        input1=args.input1,
-        data_transform_1=data_transforms['train'],
-        data_normalize_1=data_normalize,
-        sup=False,
-        num_images=None,
-    )
-    num_images_unsup = len(dataset_train_unsup)
+    if use_manifests:
+        labeled_manifest = os.path.join(
+            manifest_dir, 'labeled_{}.csv'.format(args.labeled_ratio)
+        )
+        unlabeled_manifest = os.path.join(
+            manifest_dir, 'unlabeled_{}.csv'.format(args.labeled_ratio)
+        )
+        validation_manifest = os.path.join(manifest_dir, 'validation.csv')
 
-    dataset_train_sup = imagefloder_itn(
-        data_dir=args.path_dataset + '/train_sup_'+args.sup_mark,
-        input1=args.input1,
-        data_transform_1=data_transforms['train'],
-        data_normalize_1=data_normalize,
-        sup=True,
-        num_images=num_images_unsup,
-    )
-    dataset_val = imagefloder_itn(
-        data_dir=args.path_dataset + '/val',
-        input1=args.input1,
-        data_transform_1=data_transforms['val'],
-        data_normalize_1=data_normalize,
-        sup=True,
-        num_images=None,
-    )
+        dataset_train_unsup = imagefloder_itn(
+            manifest_path=unlabeled_manifest,
+            data_transform_1=data_transforms['train'],
+            data_normalize_1=data_normalize,
+            sup=False,
+        )
+        dataset_train_sup = imagefloder_itn(
+            manifest_path=labeled_manifest,
+            data_transform_1=data_transforms['train'],
+            data_normalize_1=data_normalize,
+            sup=True,
+            num_images=len(dataset_train_unsup),
+        )
+        dataset_val = imagefloder_itn(
+            manifest_path=validation_manifest,
+            data_transform_1=data_transforms['val'],
+            data_normalize_1=data_normalize,
+            sup=True,
+        )
+    else:
+        dataset_train_unsup = imagefloder_itn(
+            data_dir=args.path_dataset + '/train_unsup_' + args.unsup_mark,
+            input1=args.input1,
+            data_transform_1=data_transforms['train'],
+            data_normalize_1=data_normalize,
+            sup=False,
+        )
+        dataset_train_sup = imagefloder_itn(
+            data_dir=args.path_dataset + '/train_sup_' + args.sup_mark,
+            input1=args.input1,
+            data_transform_1=data_transforms['train'],
+            data_normalize_1=data_normalize,
+            sup=True,
+            num_images=len(dataset_train_unsup),
+        )
+        dataset_val = imagefloder_itn(
+            data_dir=args.path_dataset + '/val',
+            input1=args.input1,
+            data_transform_1=data_transforms['val'],
+            data_normalize_1=data_normalize,
+            sup=True,
+        )
+
+    if args.check_data:
+        sup_sample = dataset_train_sup[0]
+        unsup_sample = dataset_train_unsup[0]
+        val_sample = dataset_val[0]
+        print('Data source:', manifest_dir if use_manifests else args.path_dataset)
+        print('Samples: supervised={}, unsupervised={}, validation={}'.format(
+            len(dataset_train_sup), len(dataset_train_unsup), len(dataset_val)
+        ))
+        print('Supervised image:', tuple(sup_sample['image'].shape), sup_sample['image'].dtype)
+        print('Supervised mask:', tuple(sup_sample['mask'].shape), sup_sample['mask'].dtype,
+              'classes={}'.format(torch.unique(sup_sample['mask']).tolist()))
+        print('Unsupervised image:', tuple(unsup_sample['image'].shape), unsup_sample['image'].dtype)
+        print('Validation image/mask:', tuple(val_sample['image'].shape),
+              tuple(val_sample['mask'].shape))
+        sys.exit(0)
+
+    if not torch.cuda.is_available():
+        raise RuntimeError('FDCL training requires a CUDA GPU; use --check_data to validate input only.')
+
+    torch.cuda.set_device(args.local_rank)
+    dist.init_process_group(backend='nccl', init_method='env://')
+
+    rank = torch.distributed.get_rank()
+    ngpus_per_node = torch.cuda.device_count()
+    init_seeds(rank + args.sd)
+
+    # trained model save
+    path_trained_models = args.path_trained_models + '/' + str(os.path.split(args.path_dataset)[1])
+    if rank == args.rank_index:
+        os.makedirs(path_trained_models, exist_ok=True)
+    path_trained_models = path_trained_models+'/'+'CPS'+'-l='+str(args.lr)+'-e='+str(args.num_epochs)+'-s='+str(args.step_size)+'-g='+str(args.gamma)+'-b='+str(args.batch_size)+'-cw='+str(args.unsup_weight)+'-w='+str(args.warm_up_duration)+'-'+str(args.sup_mark)+'-'+str(args.unsup_mark)+'-'+str(args.input1)
+    if rank == args.rank_index:
+        os.makedirs(path_trained_models, exist_ok=True)
+
+    # seg results save
+    path_seg_results = args.path_seg_results + '/' + str(os.path.split(args.path_dataset)[1])
+    if rank == args.rank_index:
+        os.makedirs(path_seg_results, exist_ok=True)
+    path_seg_results = path_seg_results+'/'+'CPS'+'-l='+str(args.lr)+'-e='+str(args.num_epochs)+'-s='+str(args.step_size)+'-g='+str(args.gamma)+'-b='+str(args.batch_size)+'-cw='+str(args.unsup_weight)+'-w='+str(args.warm_up_duration)+'-'+str(args.sup_mark)+'-'+str(args.unsup_mark)+'-'+str(args.input1)
+    if rank == args.rank_index:
+        os.makedirs(path_seg_results, exist_ok=True)
+
+    if rank == args.rank_index:
+        run_id = time.strftime('%Y%m%d-%H%M%S')
+        log_path = os.path.join(path_trained_models, 'train_{}.log'.format(run_id))
+        metrics_path = os.path.join(path_trained_models, 'metrics_{}.csv'.format(run_id))
+        logger = logging.getLogger('fdcl.train')
+        logger.setLevel(logging.INFO)
+        logger.handlers.clear()
+        log_handler = logging.FileHandler(log_path, mode='w', encoding='utf-8')
+        log_handler.setFormatter(logging.Formatter('%(asctime)s | %(levelname)s | %(message)s'))
+        logger.addHandler(log_handler)
+
+        metric_fields = [
+            'epoch', 'lr_model1', 'lr_model2', 'unsup_weight',
+            'train_loss_sup1', 'train_loss_sup2', 'train_loss_unsup', 'train_loss_total',
+            'train_threshold1', 'train_jaccard1', 'train_dice1',
+            'train_threshold2', 'train_jaccard2', 'train_dice2',
+            'val_loss1', 'val_loss2',
+            'val_threshold1', 'val_jaccard1', 'val_dice1',
+            'val_threshold2', 'val_jaccard2', 'val_dice2',
+            'best_val_jaccard', 'epoch_seconds',
+        ]
+        metrics_file = open(metrics_path, 'w', newline='', encoding='utf-8')
+        metrics_writer = csv.DictWriter(metrics_file, fieldnames=metric_fields)
+        metrics_writer.writeheader()
+        metrics_file.flush()
+        logger.info('Training started | dataset=%s | labeled_ratio=%s | network=%s',
+                    args.dataset_name, args.labeled_ratio, args.network)
+        logger.info('Arguments: %s', vars(args))
+        print('Training log:', log_path)
+        print('Metrics CSV:', metrics_path)
 
     train_sampler_sup = torch.utils.data.distributed.DistributedSampler(dataset_train_sup, shuffle=True)
     train_sampler_unsup = torch.utils.data.distributed.DistributedSampler(dataset_train_unsup, shuffle=True)
@@ -182,8 +269,7 @@ if __name__ == '__main__':
     for epoch in range(args.num_epochs):
 
         count_iter += 1
-        if (count_iter-1) % args.display_iter == 0:
-            begin_time = time.time()
+        begin_time = time.time()
 
         dataloaders['train_sup'].sampler.set_epoch(epoch)
         dataloaders['train_unsup'].sampler.set_epoch(epoch)
@@ -241,16 +327,14 @@ if __name__ == '__main__':
             pred_train_sup1, f1_sup = model1(img_train_sup)
             pred_train_sup2, f2_sup = model2(img_train_sup)
             
-            if count_iter % args.display_iter == 0:
-                if i == 0:
-                    score_list_train1 = pred_train_sup1
-                    score_list_train2 = pred_train_sup2
-                    mask_list_train = mask_train_sup
-                # else:
-                elif 0 < i <= num_batches['train_sup'] / 32:
-                    score_list_train1 = torch.cat((score_list_train1, pred_train_sup1), dim=0)
-                    score_list_train2 = torch.cat((score_list_train2, pred_train_sup2), dim=0)
-                    mask_list_train = torch.cat((mask_list_train, mask_train_sup), dim=0)
+            if i == 0:
+                score_list_train1 = pred_train_sup1.detach()
+                score_list_train2 = pred_train_sup2.detach()
+                mask_list_train = mask_train_sup.detach()
+            elif 0 < i <= num_batches['train_sup'] / 32:
+                score_list_train1 = torch.cat((score_list_train1, pred_train_sup1.detach()), dim=0)
+                score_list_train2 = torch.cat((score_list_train2, pred_train_sup2.detach()), dim=0)
+                mask_list_train = torch.cat((mask_list_train, mask_train_sup.detach()), dim=0)
             
             loss_train_sup1 = criterion(pred_train_sup1, mask_train_sup)
             loss_train_sup2 = criterion(pred_train_sup2, mask_train_sup)
@@ -278,7 +362,8 @@ if __name__ == '__main__':
         scheduler_warmup2.step()
         torch.cuda.empty_cache()
 
-        if count_iter % args.display_iter == 0:
+        # Validation and metric persistence intentionally run after every epoch.
+        if count_iter:
 
             score_gather_list_train1 = [torch.zeros_like(score_list_train1) for _ in range(ngpus_per_node)]
             torch.distributed.all_gather(score_gather_list_train1, score_list_train1)
@@ -358,7 +443,54 @@ if __name__ == '__main__':
                     torch.cuda.empty_cache()
 
                     print('-' * print_num)
-                    print('| Epoch Time: {:.4f}s'.format((time.time()-begin_time) / args.display_iter).ljust(print_num_minus, ' '), '|')
+                    epoch_seconds = time.time() - begin_time
+                    print('| Epoch Time: {:.4f}s'.format(epoch_seconds).ljust(print_num_minus, ' '), '|')
+
+                    metrics = {
+                        'epoch': epoch + 1,
+                        'lr_model1': optimizer1.param_groups[0]['lr'],
+                        'lr_model2': optimizer2.param_groups[0]['lr'],
+                        'unsup_weight': unsup_weight,
+                        'train_loss_sup1': train_epoch_loss_sup1,
+                        'train_loss_sup2': train_epoch_loss_sup2,
+                        'train_loss_unsup': train_epoch_loss_cps,
+                        'train_loss_total': train_epoch_loss,
+                        'train_threshold1': train_eval_list1[0],
+                        'train_jaccard1': train_eval_list1[1],
+                        'train_dice1': train_eval_list1[2],
+                        'train_threshold2': train_eval_list2[0],
+                        'train_jaccard2': train_eval_list2[1],
+                        'train_dice2': train_eval_list2[2],
+                        'val_loss1': val_epoch_loss_sup1,
+                        'val_loss2': val_epoch_loss_sup2,
+                        'val_threshold1': val_eval_list1[0],
+                        'val_jaccard1': val_eval_list1[1],
+                        'val_dice1': val_eval_list1[2],
+                        'val_threshold2': val_eval_list2[0],
+                        'val_jaccard2': val_eval_list2[1],
+                        'val_dice2': val_eval_list2[2],
+                        'best_val_jaccard': best_val_eval_list[1],
+                        'epoch_seconds': epoch_seconds,
+                    }
+                    metrics_writer.writerow(metrics)
+                    metrics_file.flush()
+                    logger.info(
+                        'Epoch %d/%d | train_loss=%.6f (sup1=%.6f, sup2=%.6f, unsup=%.6f) '
+                        '| train_jaccard1=%.6f | train_dice1=%.6f '
+                        '| train_jaccard2=%.6f | train_dice2=%.6f '
+                        '| val_loss1=%.6f | val_loss2=%.6f '
+                        '| val_jaccard1=%.6f | val_dice1=%.6f '
+                        '| val_jaccard2=%.6f | val_dice2=%.6f '
+                        '| best_jaccard=%.6f | lr=%.8g | time=%.2fs',
+                        epoch + 1, args.num_epochs, train_epoch_loss,
+                        train_epoch_loss_sup1, train_epoch_loss_sup2, train_epoch_loss_cps,
+                        train_eval_list1[1], train_eval_list1[2],
+                        train_eval_list2[1], train_eval_list2[2],
+                        val_epoch_loss_sup1, val_epoch_loss_sup2,
+                        val_eval_list1[1], val_eval_list1[2],
+                        val_eval_list2[1], val_eval_list2[2],
+                        best_val_eval_list[1], optimizer1.param_groups[0]['lr'], epoch_seconds,
+                    )
             torch.cuda.empty_cache()
         torch.cuda.empty_cache()
 
@@ -372,4 +504,6 @@ if __name__ == '__main__':
         print('-' * print_num)
         print_best(cfg['NUM_CLASSES'], best_val_eval_list, best_model, best_result, path_trained_models, print_num_minus)
         print('=' * print_num)
-
+        logger.info('Training completed | best_result=%s | best_val_jaccard=%.6f',
+                    best_result, best_val_eval_list[1])
+        metrics_file.close()

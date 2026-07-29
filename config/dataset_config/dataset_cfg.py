@@ -6,7 +6,7 @@ def dataset_cfg(dataet_name):
     config = {
         'GlaS':
             {
-                'PATH_DATASET': 'dataset/GlaS',
+                'PATH_DATASET': 'datasets/GLaS',
                 'PATH_TRAINED_MODEL': 'checkpoints',
                 'PATH_SEG_RESULT': 'seg_pred',
                 'IN_CHANNELS': 3,
@@ -20,7 +20,7 @@ def dataset_cfg(dataet_name):
             },
             'CRAG':
             {
-                'PATH_DATASET': 'dataset/CRAG',
+                'PATH_DATASET': 'datasets/CRAG',
                 'PATH_TRAINED_MODEL': 'checkpoints',
                 'PATH_SEG_RESULT': 'seg_pred',
                 'IN_CHANNELS': 3,

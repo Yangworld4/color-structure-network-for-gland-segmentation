@@ -38,6 +38,25 @@ We present **Feature Diversified Collaborative Learning (FDCL)**, a straightforw
   │         ├── image
   │         └── mask
 ```
+
+The repository also supports the prepared manifest layout directly:
+
+```text
+datasets/GLaS/
+├── images/{train,test}/
+├── masks/{train,test}/
+└── manifests/paper_seed_2026/
+    ├── labeled_10.csv
+    ├── unlabeled_10.csv
+    ├── labeled_20.csv
+    ├── unlabeled_20.csv
+    └── validation.csv
+```
+
+Paths in each CSV are resolved relative to that CSV file. Supervised manifests
+must contain `image` and `mask` columns; unlabeled manifests only need `image`.
+Binary masks may use either `0/1` or `0/255` values.
+
 ## Training FDCL
 
 1. **Install dependencies**:
@@ -52,9 +71,62 @@ pip install -r requirements.txt
 
 Once the dataset is organized and the dependencies are installed, you can start training by running:
 
+Validate the prepared GLaS input without starting GPU training:
+
 ```bash
-python main.py
+python main.py --check_data
 ```
+
+Train with the 10% labeled split:
+
+```bash
+python main.py --labeled_ratio 10
+```
+
+Every epoch is validated and written to the experiment checkpoint directory:
+
+- `train_YYYYmmdd-HHMMSS.log`: concise human-readable epoch summaries.
+- `metrics_YYYYmmdd-HHMMSS.csv`: losses, Jaccard, Dice, threshold, learning rate, and epoch time
+  for plotting or further analysis.
+
+Use CRAG or the 20% labeled split:
+
+```bash
+python main.py --dataset_name CRAG --path_dataset datasets/CRAG --labeled_ratio 20
+```
+
+The legacy `train_sup_*/train_unsup_*/val` directory format remains supported
+when no manifest directory is found.
+
+## Final test
+
+After training, test the checkpoint with the highest validation Jaccard:
+
+```bash
+python test.py --dataset_name GlaS --path_dataset datasets/GLaS
+```
+
+When checkpoints exist for only one dataset, `python test.py` identifies that
+dataset automatically. An explicit checkpoint also determines the dataset from
+its path. Conflicting `--dataset_name`, dataset path, manifest, and checkpoint
+combinations are rejected instead of being evaluated silently.
+
+For CRAG or a specific checkpoint:
+
+```bash
+python test.py \
+  --dataset_name CRAG \
+  --path_dataset datasets/CRAG \
+  --checkpoint checkpoints/path/to/best_result1_Jc_0.8000.pth
+```
+
+By default, testing uses a foreground threshold of `0.5`, the standard binary
+decision rule and the equivalent of `argmax` for two-class softmax output. Use
+`--threshold auto` to select the threshold on `validation.csv` before applying
+it to the held-out test set. Predictions are restored to each source image's
+resolution.
+The output directory contains `test.log`, aggregate `metrics.json`,
+`per_image_metrics.csv`, and the predicted masks.
 
 ## Citation
 
@@ -62,6 +134,3 @@ If you use this work in your research or project, please cite the following pape
 
 ```bash
 ```
-
-
-

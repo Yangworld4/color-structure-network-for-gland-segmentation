@@ -1,0 +1,15 @@
+{
+  "jaccard": 0.6913259764912146,
+  "dice": 0.8174958418428876,
+  "precision": 0.761169721584849,
+  "recall": 0.8828243331726094,
+  "specificity": 0.7119284066680516,
+  "accuracy": 0.7990503372161013,
+  "loss": 4.226112034916878,
+  "threshold": 0.5,
+  "threshold_source": "fixed",
+  "validation_jaccard_at_threshold": null,
+  "samples": 80,
+  "checkpoint": "checkpoints/semi_fdcl_10/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-9-76-image/best_Jc_0.6528.pth",
+  "manifest": "datasets/GLaS/manifests/paper_seed_2026/test.csv"
+}
