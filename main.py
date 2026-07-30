@@ -15,8 +15,6 @@ import numpy as np
 from torch.backends import cudnn
 import random
 from PIL import Image
-import torch.distributed as dist
-from torch.nn.parallel import DistributedDataParallel
 import sys
 
 from config.dataset_config.dataset_cfg import dataset_cfg
@@ -29,11 +27,6 @@ from config.train_test_config.train_test_config import print_train_loss, print_v
 from warnings import simplefilter
 simplefilter(action='ignore', category=FutureWarning)
 
-
-os.environ["RANK"] = "0"
-os.environ["WORLD_SIZE"] = "1"
-os.environ["MASTER_ADDR"] = "localhost"
-os.environ["MASTER_PORT"] = "16672"
 
 def init_seeds(seed):
     torch.manual_seed(seed)
@@ -48,8 +41,10 @@ def init_seeds(seed):
 if __name__ == '__main__':
 
     parser = argparse.ArgumentParser()
-    parser.add_argument('--path_trained_models', default='checkpoints/semi_fdcl_10')
-    parser.add_argument('--path_seg_results', default='seg_pred/semi_fdcl_10')
+    parser.add_argument('--path_trained_models', default=None,
+                        help='默认按标注比例保存到 checkpoints/semi_fdcl_paper_10 或 20')
+    parser.add_argument('--path_seg_results', default=None,
+                        help='默认按标注比例保存到 seg_pred/semi_fdcl_paper_10 或 20')
     parser.add_argument('-pd', '--path_dataset', default='datasets/GLaS')
     parser.add_argument('--dataset_name', default='GlaS', help='CRAG, MoNuSeg, GlaS')
     parser.add_argument('--input1', default='image')
@@ -77,9 +72,17 @@ if __name__ == '__main__':
     parser.add_argument('-i', '--display_iter', default=1, type=int,
                         help='deprecated: important metrics are now evaluated and logged every epoch')
     parser.add_argument('-n', '--network', default='xnet_sb', type=str)
-    parser.add_argument('--local_rank', default=0, type=int)
-    parser.add_argument('--rank_index', default=0, type=int, help='0, 1, 2, 3')
     args = parser.parse_args()
+
+    # 论文复现修正：与旧的 224 尺寸和旧划分实验隔离，避免检查点混用。
+    if args.path_trained_models is None:
+        args.path_trained_models = 'checkpoints/semi_fdcl_paper_{}'.format(
+            args.labeled_ratio
+        )
+    if args.path_seg_results is None:
+        args.path_seg_results = 'seg_pred/semi_fdcl_paper_{}'.format(
+            args.labeled_ratio
+        )
 
     dataset_name = args.dataset_name
     cfg = dataset_cfg(dataset_name)
@@ -109,13 +112,21 @@ if __name__ == '__main__':
         unlabeled_manifest = os.path.join(
             manifest_dir, 'unlabeled_{}.csv'.format(args.labeled_ratio)
         )
-        validation_manifest = os.path.join(manifest_dir, 'validation.csv')
+        # 论文复现修正：完整训练池用于 9/76 或 17/68 划分，
+        # 官方测试集作为论文中所称的验证/评估集。
+        validation_manifest = os.path.join(manifest_dir, 'test.csv')
 
         dataset_train_unsup = imagefloder_itn(
             manifest_path=unlabeled_manifest,
             data_transform_1=data_transforms['train'],
             data_normalize_1=data_normalize,
             sup=False,
+        )
+        dataset_train_sup_unique = imagefloder_itn(
+            manifest_path=labeled_manifest,
+            data_transform_1=data_transforms['train'],
+            data_normalize_1=data_normalize,
+            sup=True,
         )
         dataset_train_sup = imagefloder_itn(
             manifest_path=labeled_manifest,
@@ -138,6 +149,13 @@ if __name__ == '__main__':
             data_normalize_1=data_normalize,
             sup=False,
         )
+        dataset_train_sup_unique = imagefloder_itn(
+            data_dir=args.path_dataset + '/train_sup_' + args.sup_mark,
+            input1=args.input1,
+            data_transform_1=data_transforms['train'],
+            data_normalize_1=data_normalize,
+            sup=True,
+        )
         dataset_train_sup = imagefloder_itn(
             data_dir=args.path_dataset + '/train_sup_' + args.sup_mark,
             input1=args.input1,
@@ -159,8 +177,11 @@ if __name__ == '__main__':
         unsup_sample = dataset_train_unsup[0]
         val_sample = dataset_val[0]
         print('Data source:', manifest_dir if use_manifests else args.path_dataset)
-        print('Samples: supervised={}, unsupervised={}, validation={}'.format(
-            len(dataset_train_sup), len(dataset_train_unsup), len(dataset_val)
+        print('Unique samples: supervised={}, unsupervised={}, validation={}'.format(
+            len(dataset_train_sup_unique), len(dataset_train_unsup), len(dataset_val)
+        ))
+        print('Effective epoch samples after supervised oversampling: supervised={}'.format(
+            len(dataset_train_sup)
         ))
         print('Supervised image:', tuple(sup_sample['image'].shape), sup_sample['image'].dtype)
         print('Supervised mask:', tuple(sup_sample['mask'].shape), sup_sample['mask'].dtype,
@@ -173,68 +194,61 @@ if __name__ == '__main__':
     if not torch.cuda.is_available():
         raise RuntimeError('FDCL training requires a CUDA GPU; use --check_data to validate input only.')
 
-    torch.cuda.set_device(args.local_rank)
-    dist.init_process_group(backend='nccl', init_method='env://')
+    init_seeds(args.sd)
 
-    rank = torch.distributed.get_rank()
-    ngpus_per_node = torch.cuda.device_count()
-    init_seeds(rank + args.sd)
+    split_sup_mark = (
+        str(len(dataset_train_sup_unique)) if use_manifests else str(args.sup_mark)
+    )
+    split_unsup_mark = (
+        str(len(dataset_train_unsup)) if use_manifests else str(args.unsup_mark)
+    )
 
     # trained model save
     path_trained_models = args.path_trained_models + '/' + str(os.path.split(args.path_dataset)[1])
-    if rank == args.rank_index:
-        os.makedirs(path_trained_models, exist_ok=True)
-    path_trained_models = path_trained_models+'/'+'CPS'+'-l='+str(args.lr)+'-e='+str(args.num_epochs)+'-s='+str(args.step_size)+'-g='+str(args.gamma)+'-b='+str(args.batch_size)+'-cw='+str(args.unsup_weight)+'-w='+str(args.warm_up_duration)+'-'+str(args.sup_mark)+'-'+str(args.unsup_mark)+'-'+str(args.input1)
-    if rank == args.rank_index:
-        os.makedirs(path_trained_models, exist_ok=True)
+    os.makedirs(path_trained_models, exist_ok=True)
+    path_trained_models = path_trained_models+'/'+'CPS'+'-l='+str(args.lr)+'-e='+str(args.num_epochs)+'-s='+str(args.step_size)+'-g='+str(args.gamma)+'-b='+str(args.batch_size)+'-cw='+str(args.unsup_weight)+'-w='+str(args.warm_up_duration)+'-'+split_sup_mark+'-'+split_unsup_mark+'-'+str(args.input1)
+    os.makedirs(path_trained_models, exist_ok=True)
 
     # seg results save
     path_seg_results = args.path_seg_results + '/' + str(os.path.split(args.path_dataset)[1])
-    if rank == args.rank_index:
-        os.makedirs(path_seg_results, exist_ok=True)
-    path_seg_results = path_seg_results+'/'+'CPS'+'-l='+str(args.lr)+'-e='+str(args.num_epochs)+'-s='+str(args.step_size)+'-g='+str(args.gamma)+'-b='+str(args.batch_size)+'-cw='+str(args.unsup_weight)+'-w='+str(args.warm_up_duration)+'-'+str(args.sup_mark)+'-'+str(args.unsup_mark)+'-'+str(args.input1)
-    if rank == args.rank_index:
-        os.makedirs(path_seg_results, exist_ok=True)
+    os.makedirs(path_seg_results, exist_ok=True)
+    path_seg_results = path_seg_results+'/'+'CPS'+'-l='+str(args.lr)+'-e='+str(args.num_epochs)+'-s='+str(args.step_size)+'-g='+str(args.gamma)+'-b='+str(args.batch_size)+'-cw='+str(args.unsup_weight)+'-w='+str(args.warm_up_duration)+'-'+split_sup_mark+'-'+split_unsup_mark+'-'+str(args.input1)
+    os.makedirs(path_seg_results, exist_ok=True)
 
-    if rank == args.rank_index:
-        run_id = time.strftime('%Y%m%d-%H%M%S')
-        log_path = os.path.join(path_trained_models, 'train_{}.log'.format(run_id))
-        metrics_path = os.path.join(path_trained_models, 'metrics_{}.csv'.format(run_id))
-        logger = logging.getLogger('fdcl.train')
-        logger.setLevel(logging.INFO)
-        logger.handlers.clear()
-        log_handler = logging.FileHandler(log_path, mode='w', encoding='utf-8')
-        log_handler.setFormatter(logging.Formatter('%(asctime)s | %(levelname)s | %(message)s'))
-        logger.addHandler(log_handler)
+    run_id = time.strftime('%Y%m%d-%H%M%S')
+    log_path = os.path.join(path_trained_models, 'train_{}.log'.format(run_id))
+    metrics_path = os.path.join(path_trained_models, 'metrics_{}.csv'.format(run_id))
+    logger = logging.getLogger('fdcl.train')
+    logger.setLevel(logging.INFO)
+    logger.handlers.clear()
+    log_handler = logging.FileHandler(log_path, mode='w', encoding='utf-8')
+    log_handler.setFormatter(logging.Formatter('%(asctime)s | %(levelname)s | %(message)s'))
+    logger.addHandler(log_handler)
 
-        metric_fields = [
-            'epoch', 'lr_model1', 'lr_model2', 'unsup_weight',
-            'train_loss_sup1', 'train_loss_sup2', 'train_loss_unsup', 'train_loss_total',
-            'train_threshold1', 'train_jaccard1', 'train_dice1',
-            'train_threshold2', 'train_jaccard2', 'train_dice2',
-            'val_loss1', 'val_loss2',
-            'val_threshold1', 'val_jaccard1', 'val_dice1',
-            'val_threshold2', 'val_jaccard2', 'val_dice2',
-            'best_val_jaccard', 'epoch_seconds',
-        ]
-        metrics_file = open(metrics_path, 'w', newline='', encoding='utf-8')
-        metrics_writer = csv.DictWriter(metrics_file, fieldnames=metric_fields)
-        metrics_writer.writeheader()
-        metrics_file.flush()
-        logger.info('Training started | dataset=%s | labeled_ratio=%s | network=%s',
-                    args.dataset_name, args.labeled_ratio, args.network)
-        logger.info('Arguments: %s', vars(args))
-        print('Training log:', log_path)
-        print('Metrics CSV:', metrics_path)
-
-    train_sampler_sup = torch.utils.data.distributed.DistributedSampler(dataset_train_sup, shuffle=True)
-    train_sampler_unsup = torch.utils.data.distributed.DistributedSampler(dataset_train_unsup, shuffle=True)
-    val_sampler = torch.utils.data.distributed.DistributedSampler(dataset_val, shuffle=False)
+    metric_fields = [
+        'epoch', 'lr_model1', 'lr_model2', 'unsup_weight',
+        'train_loss_sup1', 'train_loss_sup2', 'train_loss_unsup', 'train_loss_total',
+        'train_threshold1', 'train_jaccard1', 'train_dice1',
+        'train_threshold2', 'train_jaccard2', 'train_dice2',
+        'val_loss1', 'val_loss2',
+        'val_threshold1', 'val_jaccard1', 'val_dice1',
+        'val_threshold2', 'val_jaccard2', 'val_dice2',
+        'best_val_jaccard', 'epoch_seconds',
+    ]
+    metrics_file = open(metrics_path, 'w', newline='', encoding='utf-8')
+    metrics_writer = csv.DictWriter(metrics_file, fieldnames=metric_fields)
+    metrics_writer.writeheader()
+    metrics_file.flush()
+    logger.info('Training started | dataset=%s | labeled_ratio=%s | network=%s',
+                args.dataset_name, args.labeled_ratio, args.network)
+    logger.info('Arguments: %s', vars(args))
+    print('Training log:', log_path)
+    print('Metrics CSV:', metrics_path)
 
     dataloaders = dict()
-    dataloaders['train_sup'] = DataLoader(dataset_train_sup, batch_size=args.batch_size, shuffle=False, pin_memory=True, num_workers=8, sampler=train_sampler_sup)
-    dataloaders['train_unsup'] = DataLoader(dataset_train_unsup, batch_size=args.batch_size, shuffle=False, pin_memory=True, num_workers=8, sampler=train_sampler_unsup)
-    dataloaders['val'] = DataLoader(dataset_val, batch_size=args.batch_size, shuffle=False, pin_memory=True, num_workers=8, sampler=val_sampler)
+    dataloaders['train_sup'] = DataLoader(dataset_train_sup, batch_size=args.batch_size, shuffle=True, pin_memory=True, num_workers=8)
+    dataloaders['train_unsup'] = DataLoader(dataset_train_unsup, batch_size=args.batch_size, shuffle=True, pin_memory=True, num_workers=8)
+    dataloaders['val'] = DataLoader(dataset_val, batch_size=args.batch_size, shuffle=False, pin_memory=True, num_workers=8)
 
     num_batches = {'train_sup': len(dataloaders['train_sup']), 'train_unsup': len(dataloaders['train_unsup']), 'val': len(dataloaders['val'])}
 
@@ -244,9 +258,6 @@ if __name__ == '__main__':
 
     model1 = model1.cuda()
     model2 = model2.cuda()
-    model1 = DistributedDataParallel(model1, device_ids=[args.local_rank])
-    model2 = DistributedDataParallel(model2, device_ids=[args.local_rank])
-    dist.barrier()
 
     criterion = segmentation_loss(args.loss, False).cuda()
 
@@ -271,8 +282,6 @@ if __name__ == '__main__':
         count_iter += 1
         begin_time = time.time()
 
-        dataloaders['train_sup'].sampler.set_epoch(epoch)
-        dataloaders['train_unsup'].sampler.set_epoch(epoch)
         model1.train()
         model2.train()
 
@@ -285,8 +294,6 @@ if __name__ == '__main__':
         val_loss_sup_2 = 0.0
 
         unsup_weight = args.unsup_weight * (epoch+1) / args.num_epochs
-
-        dist.barrier()
 
         dataset_train_sup = iter(dataloaders['train_sup'])
         dataset_train_unsup = iter(dataloaders['train_unsup'])
@@ -364,26 +371,12 @@ if __name__ == '__main__':
 
         # Validation and metric persistence intentionally run after every epoch.
         if count_iter:
-
-            score_gather_list_train1 = [torch.zeros_like(score_list_train1) for _ in range(ngpus_per_node)]
-            torch.distributed.all_gather(score_gather_list_train1, score_list_train1)
-            score_list_train1 = torch.cat(score_gather_list_train1, dim=0)
-
-            score_gather_list_train2 = [torch.zeros_like(score_list_train2) for _ in range(ngpus_per_node)]
-            torch.distributed.all_gather(score_gather_list_train2, score_list_train2)
-            score_list_train2 = torch.cat(score_gather_list_train2, dim=0)
-
-            mask_gather_list_train = [torch.zeros_like(mask_list_train) for _ in range(ngpus_per_node)]
-            torch.distributed.all_gather(mask_gather_list_train, mask_list_train)
-            mask_list_train = torch.cat(mask_gather_list_train, dim=0)
-
-            if rank == args.rank_index:
-                torch.cuda.empty_cache()
-                print('=' * print_num)
-                print('| Epoch {}/{}'.format(epoch+1, args.num_epochs).ljust(print_num_minus, ' '), '|')
-                train_epoch_loss_sup1, train_epoch_loss_sup2, train_epoch_loss_cps, train_epoch_loss = print_train_loss(train_loss_sup_1, train_loss_sup_2, train_loss_unsup, train_loss, num_batches, print_num, print_num_half)
-                train_eval_list1, train_eval_list2, train_m_jc1, train_m_jc2 = print_train_eval(cfg['NUM_CLASSES'], score_list_train1, score_list_train2, mask_list_train, print_num_half)
-                torch.cuda.empty_cache()
+            torch.cuda.empty_cache()
+            print('=' * print_num)
+            print('| Epoch {}/{}'.format(epoch+1, args.num_epochs).ljust(print_num_minus, ' '), '|')
+            train_epoch_loss_sup1, train_epoch_loss_sup2, train_epoch_loss_cps, train_epoch_loss = print_train_loss(train_loss_sup_1, train_loss_sup_2, train_loss_unsup, train_loss, num_batches, print_num, print_num_half)
+            train_eval_list1, train_eval_list2, train_m_jc1, train_m_jc2 = print_train_eval(cfg['NUM_CLASSES'], score_list_train1, score_list_train2, mask_list_train, print_num_half)
+            torch.cuda.empty_cache()
 
             with torch.no_grad():
                 model1.eval()
@@ -420,90 +413,72 @@ if __name__ == '__main__':
                     val_loss_sup_2 += loss_val_sup2.item()
 
                 torch.cuda.empty_cache()
-                score_gather_list_val1 = [torch.zeros_like(score_list_val1) for _ in range(ngpus_per_node)]
-                torch.distributed.all_gather(score_gather_list_val1, score_list_val1)
-                score_list_val1 = torch.cat(score_gather_list_val1, dim=0)
+                val_epoch_loss_sup1, val_epoch_loss_sup2 = print_val_loss(val_loss_sup_1, val_loss_sup_2, num_batches, print_num, print_num_half)
+                val_eval_list1, val_eval_list2, val_m_jc1, val_m_jc2 = print_val_eval(cfg['NUM_CLASSES'], score_list_val1, score_list_val2, mask_list_val, print_num_half)
+                best_val_eval_list, best_model, best_result = save_val_best_2d(cfg['NUM_CLASSES'], best_model, best_val_eval_list, best_result, model1, model2, score_list_val1, score_list_val2, name_list_val, val_eval_list1, val_eval_list2, path_trained_models, path_seg_results, cfg['PALETTE'])
+                torch.cuda.empty_cache()
 
-                score_gather_list_val2 = [torch.zeros_like(score_list_val2) for _ in range(ngpus_per_node)]
-                torch.distributed.all_gather(score_gather_list_val2, score_list_val2)
-                score_list_val2 = torch.cat(score_gather_list_val2, dim=0)
+                print('-' * print_num)
+                epoch_seconds = time.time() - begin_time
+                print('| Epoch Time: {:.4f}s'.format(epoch_seconds).ljust(print_num_minus, ' '), '|')
 
-                mask_gather_list_val = [torch.zeros_like(mask_list_val) for _ in range(ngpus_per_node)]
-                torch.distributed.all_gather(mask_gather_list_val, mask_list_val)
-                mask_list_val = torch.cat(mask_gather_list_val, dim=0)
-
-                name_gather_list_val = [None for _ in range(ngpus_per_node)]
-                torch.distributed.all_gather_object(name_gather_list_val, name_list_val)
-                name_list_val = np.concatenate(name_gather_list_val, axis=0)
-
-                if rank == args.rank_index:
-                    val_epoch_loss_sup1, val_epoch_loss_sup2 = print_val_loss(val_loss_sup_1, val_loss_sup_2, num_batches, print_num, print_num_half)
-                    val_eval_list1, val_eval_list2, val_m_jc1, val_m_jc2 = print_val_eval(cfg['NUM_CLASSES'], score_list_val1, score_list_val2, mask_list_val, print_num_half)
-                    best_val_eval_list, best_model, best_result = save_val_best_2d(cfg['NUM_CLASSES'], best_model, best_val_eval_list, best_result, model1, model2, score_list_val1, score_list_val2, name_list_val, val_eval_list1, val_eval_list2, path_trained_models, path_seg_results, cfg['PALETTE'])
-                    torch.cuda.empty_cache()
-
-                    print('-' * print_num)
-                    epoch_seconds = time.time() - begin_time
-                    print('| Epoch Time: {:.4f}s'.format(epoch_seconds).ljust(print_num_minus, ' '), '|')
-
-                    metrics = {
-                        'epoch': epoch + 1,
-                        'lr_model1': optimizer1.param_groups[0]['lr'],
-                        'lr_model2': optimizer2.param_groups[0]['lr'],
-                        'unsup_weight': unsup_weight,
-                        'train_loss_sup1': train_epoch_loss_sup1,
-                        'train_loss_sup2': train_epoch_loss_sup2,
-                        'train_loss_unsup': train_epoch_loss_cps,
-                        'train_loss_total': train_epoch_loss,
-                        'train_threshold1': train_eval_list1[0],
-                        'train_jaccard1': train_eval_list1[1],
-                        'train_dice1': train_eval_list1[2],
-                        'train_threshold2': train_eval_list2[0],
-                        'train_jaccard2': train_eval_list2[1],
-                        'train_dice2': train_eval_list2[2],
-                        'val_loss1': val_epoch_loss_sup1,
-                        'val_loss2': val_epoch_loss_sup2,
-                        'val_threshold1': val_eval_list1[0],
-                        'val_jaccard1': val_eval_list1[1],
-                        'val_dice1': val_eval_list1[2],
-                        'val_threshold2': val_eval_list2[0],
-                        'val_jaccard2': val_eval_list2[1],
-                        'val_dice2': val_eval_list2[2],
-                        'best_val_jaccard': best_val_eval_list[1],
-                        'epoch_seconds': epoch_seconds,
-                    }
-                    metrics_writer.writerow(metrics)
-                    metrics_file.flush()
-                    logger.info(
-                        'Epoch %d/%d | train_loss=%.6f (sup1=%.6f, sup2=%.6f, unsup=%.6f) '
-                        '| train_jaccard1=%.6f | train_dice1=%.6f '
-                        '| train_jaccard2=%.6f | train_dice2=%.6f '
-                        '| val_loss1=%.6f | val_loss2=%.6f '
-                        '| val_jaccard1=%.6f | val_dice1=%.6f '
-                        '| val_jaccard2=%.6f | val_dice2=%.6f '
-                        '| best_jaccard=%.6f | lr=%.8g | time=%.2fs',
-                        epoch + 1, args.num_epochs, train_epoch_loss,
-                        train_epoch_loss_sup1, train_epoch_loss_sup2, train_epoch_loss_cps,
-                        train_eval_list1[1], train_eval_list1[2],
-                        train_eval_list2[1], train_eval_list2[2],
-                        val_epoch_loss_sup1, val_epoch_loss_sup2,
-                        val_eval_list1[1], val_eval_list1[2],
-                        val_eval_list2[1], val_eval_list2[2],
-                        best_val_eval_list[1], optimizer1.param_groups[0]['lr'], epoch_seconds,
-                    )
+                metrics = {
+                    'epoch': epoch + 1,
+                    'lr_model1': optimizer1.param_groups[0]['lr'],
+                    'lr_model2': optimizer2.param_groups[0]['lr'],
+                    'unsup_weight': unsup_weight,
+                    'train_loss_sup1': train_epoch_loss_sup1,
+                    'train_loss_sup2': train_epoch_loss_sup2,
+                    'train_loss_unsup': train_epoch_loss_cps,
+                    'train_loss_total': train_epoch_loss,
+                    'train_threshold1': train_eval_list1[0],
+                    'train_jaccard1': train_eval_list1[1],
+                    'train_dice1': train_eval_list1[2],
+                    'train_threshold2': train_eval_list2[0],
+                    'train_jaccard2': train_eval_list2[1],
+                    'train_dice2': train_eval_list2[2],
+                    'val_loss1': val_epoch_loss_sup1,
+                    'val_loss2': val_epoch_loss_sup2,
+                    'val_threshold1': val_eval_list1[0],
+                    'val_jaccard1': val_eval_list1[1],
+                    'val_dice1': val_eval_list1[2],
+                    'val_threshold2': val_eval_list2[0],
+                    'val_jaccard2': val_eval_list2[1],
+                    'val_dice2': val_eval_list2[2],
+                    'best_val_jaccard': best_val_eval_list[1],
+                    'epoch_seconds': epoch_seconds,
+                }
+                metrics_writer.writerow(metrics)
+                metrics_file.flush()
+                logger.info(
+                    'Epoch %d/%d | train_loss=%.6f (sup1=%.6f, sup2=%.6f, unsup=%.6f) '
+                    '| train_jaccard1=%.6f | train_dice1=%.6f '
+                    '| train_jaccard2=%.6f | train_dice2=%.6f '
+                    '| val_loss1=%.6f | val_loss2=%.6f '
+                    '| val_jaccard1=%.6f | val_dice1=%.6f '
+                    '| val_jaccard2=%.6f | val_dice2=%.6f '
+                    '| best_jaccard=%.6f | lr=%.8g | time=%.2fs',
+                    epoch + 1, args.num_epochs, train_epoch_loss,
+                    train_epoch_loss_sup1, train_epoch_loss_sup2, train_epoch_loss_cps,
+                    train_eval_list1[1], train_eval_list1[2],
+                    train_eval_list2[1], train_eval_list2[2],
+                    val_epoch_loss_sup1, val_epoch_loss_sup2,
+                    val_eval_list1[1], val_eval_list1[2],
+                    val_eval_list2[1], val_eval_list2[2],
+                    best_val_eval_list[1], optimizer1.param_groups[0]['lr'], epoch_seconds,
+                )
             torch.cuda.empty_cache()
         torch.cuda.empty_cache()
 
-    if rank == args.rank_index:
-        time_elapsed = time.time() - since
-        m, s = divmod(time_elapsed, 60)
-        h, m = divmod(m, 60)
+    time_elapsed = time.time() - since
+    m, s = divmod(time_elapsed, 60)
+    h, m = divmod(m, 60)
 
-        print('=' * print_num)
-        print('| Training Completed In {:.0f}h {:.0f}mins {:.0f}s'.format(h, m, s).ljust(print_num_minus, ' '), '|')
-        print('-' * print_num)
-        print_best(cfg['NUM_CLASSES'], best_val_eval_list, best_model, best_result, path_trained_models, print_num_minus)
-        print('=' * print_num)
-        logger.info('Training completed | best_result=%s | best_val_jaccard=%.6f',
-                    best_result, best_val_eval_list[1])
-        metrics_file.close()
+    print('=' * print_num)
+    print('| Training Completed In {:.0f}h {:.0f}mins {:.0f}s'.format(h, m, s).ljust(print_num_minus, ' '), '|')
+    print('-' * print_num)
+    print_best(cfg['NUM_CLASSES'], best_val_eval_list, best_model, best_result, path_trained_models, print_num_minus)
+    print('=' * print_num)
+    logger.info('Training completed | best_result=%s | best_val_jaccard=%.6f',
+                best_result, best_val_eval_list[1])
+    metrics_file.close()

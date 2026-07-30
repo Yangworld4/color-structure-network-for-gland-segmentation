@@ -5,6 +5,15 @@ import os
 from PIL import Image
 import torchio as tio
 
+
+def _snapshot_model_state(model):
+    """将当前最佳权重复制到 CPU，避免后续训练继续修改最佳模型。"""
+    return {
+        name: value.detach().cpu().clone()
+        for name, value in model.state_dict().items()
+    }
+
+
 def print_train_loss_sup(train_loss, num_batches, print_num, print_num_minus):
     train_epoch_loss = train_loss / num_batches['train_sup']
     print('-' * print_num)
@@ -218,11 +227,12 @@ def save_val_best_2d(num_classes, best_model, best_list, best_result, model1, mo
     if eval_list_1[1] < eval_list_2[1]:
         if best_list[1] < eval_list_2[1]:
 
-            best_model = model2
+            # 最佳模型必须保存独立权重快照，不能只保存仍在训练的模型引用。
+            best_model = _snapshot_model_state(model2)
             best_list = eval_list_2
             best_result = 'Result2'
 
-            torch.save(model2.state_dict(), os.path.join(path_trained_model, 'best_{}_Jc_{:.4f}.pth'.format('result2', best_list[1])))
+            torch.save(best_model, os.path.join(path_trained_model, 'best_{}_Jc_{:.4f}.pth'.format('result2', best_list[1])))
 
             if num_classes == 2:
                 score_list_val_2 = torch.softmax(score_list_val_2, dim=1)
@@ -246,11 +256,12 @@ def save_val_best_2d(num_classes, best_model, best_list, best_result, model1, mo
     else:
         if best_list[1] < eval_list_1[1]:
 
-            best_model = model1
+            # 最佳模型必须保存独立权重快照，不能只保存仍在训练的模型引用。
+            best_model = _snapshot_model_state(model1)
             best_list = eval_list_1
             best_result = 'Result1'
 
-            torch.save(model1.state_dict(), os.path.join(path_trained_model, 'best_{}_Jc_{:.4f}.pth'.format('result1', best_list[1])))
+            torch.save(best_model, os.path.join(path_trained_model, 'best_{}_Jc_{:.4f}.pth'.format('result1', best_list[1])))
 
             if num_classes == 2:
                 score_list_val_1 = torch.softmax(score_list_val_1, dim=1)
@@ -345,9 +356,16 @@ def print_best_sup(num_classes, best_val_list, print_num):
         print('| Best Val mDc: {:.4f}'.format(best_val_list[3]).ljust(print_num, ' '), '|')
 
 def print_best(num_classes, best_val_list, best_model, best_result, path_trained_model, print_num):
+    # 兼容旧调用：新训练传入 CPU 权重快照，旧代码可能仍传入模型对象。
+    best_state = (
+        best_model
+        if isinstance(best_model, dict)
+        else _snapshot_model_state(best_model)
+    )
+
     if num_classes == 2:
 
-        torch.save(best_model.state_dict(), os.path.join(path_trained_model, 'best_Jc_{:.4f}.pth'.format(best_val_list[1])))
+        torch.save(best_state, os.path.join(path_trained_model, 'best_Jc_{:.4f}.pth'.format(best_val_list[1])))
 
         print('| Best  Result: {}'.format(best_result).ljust(print_num, ' '), '|')
         print('| Best Val Thr: {:.4f}'.format(best_val_list[0]).ljust(print_num, ' '), '|')
@@ -355,7 +373,7 @@ def print_best(num_classes, best_val_list, best_model, best_result, path_trained
         print('| Best Val  Dc: {:.4f}'.format(best_val_list[2]).ljust(print_num, ' '), '|')
     else:
 
-        torch.save(best_model.state_dict(), os.path.join(path_trained_model, 'best_Jc_{:.4f}.pth'.format(best_val_list[1])))
+        torch.save(best_state, os.path.join(path_trained_model, 'best_Jc_{:.4f}.pth'.format(best_val_list[1])))
 
         np.set_printoptions(precision=4, suppress=True)
         print('| Best  Result: {}'.format(best_result).ljust(print_num, ' '), '|')
@@ -427,6 +445,5 @@ def save_test_3d(num_classes, score_test, name_test, threshold, path_seg_results
 
         output_image = tio.ScalarImage(tensor=pred_results.unsqueeze(0), affine=affine)
         output_image.save(os.path.join(path_seg_results, name_test))
-
 
 

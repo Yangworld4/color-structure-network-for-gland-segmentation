@@ -205,7 +205,7 @@ class U_Net(nn.Module):
         # outputs = []
         # outputs.append(d1)
         # return outputs
-        return d1
+        return d1, d2
 
 class R2U_Net(nn.Module):
     def __init__(self, in_channels=3, num_classes=1, t=2):
@@ -453,7 +453,7 @@ def r2_attention_unet(in_channels, num_classes):
 
 
 # if __name__ == '__main__':
-#     model = U_Net(1,10)
+#     model = U_Net(1,2)
 #     model.eval()
 #     input = torch.rand(2,1,128,128)
 #     output = model(input)

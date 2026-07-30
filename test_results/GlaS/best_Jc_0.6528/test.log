@@ -1,6 +1,0 @@
-2026-07-29 14:37:25,362 | INFO | Checkpoint: checkpoints/semi_fdcl_10/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-9-76-image/best_Jc_0.6528.pth
-2026-07-29 14:37:25,362 | INFO | Dataset: GlaS
-2026-07-29 14:37:25,362 | INFO | Manifest: datasets/GLaS/manifests/paper_seed_2026/test.csv
-2026-07-29 14:37:25,362 | INFO | Device: cuda | samples=80 | threshold=0.5000 (fixed)
-2026-07-29 14:37:27,118 | INFO | Test completed | loss=4.226112 | Jaccard=0.691326 | Dice=0.817496 | Precision=0.761170 | Recall=0.882824 | Specificity=0.711928 | Accuracy=0.799050
-2026-07-29 14:37:27,118 | INFO | Results saved to: test_results/GlaS/best_Jc_0.6528

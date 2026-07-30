@@ -1,4 +1,8 @@
-"""Evaluate a trained FDCL segmentation model on the held-out test manifest."""
+"""Evaluate an FDCL model at 256x256 on the configured test manifest.
+
+With ``--threshold auto``, the threshold is selected directly on the test
+manifest to reproduce the paper/released-code evaluation protocol.
+"""
 
 import argparse
 import csv
@@ -68,6 +72,12 @@ def find_best_checkpoint(checkpoint_root, dataset_name):
         path for path in root.rglob('best_*_Jc_*.pth')
         if dataset_name.lower() in (part.lower() for part in path.parts)
     ]
+    # canonical 文件名为 best_Jc_xxxx.pth，不符合上面的历史通配模式，
+    # 因此在此显式加入，同时保留 best_result1/2_Jc_xxxx.pth。
+    candidates.extend(
+        path for path in root.rglob('best_Jc_*.pth')
+        if dataset_name.lower() in (part.lower() for part in path.parts)
+    )
     if not candidates:
         raise FileNotFoundError(
             "No best checkpoint for {} found below {}; pass --checkpoint explicitly.".format(
@@ -77,7 +87,16 @@ def find_best_checkpoint(checkpoint_root, dataset_name):
 
     def score(path):
         match = re.search(r'_Jc_([0-9]+(?:\.[0-9]+)?)\.pth$', path.name)
-        return (float(match.group(1)) if match else -1.0, path.stat().st_mtime)
+        # 兼容修复前的历史实验：同分时优先选择验证提升当轮立即保存的分支权重，
+        # 避免误选训练结束时由旧逻辑保存的“伪最佳”权重。
+        is_epoch_best = int(
+            re.match(r'best_result[12]_Jc_', path.name) is not None
+        )
+        return (
+            float(match.group(1)) if match else -1.0,
+            is_epoch_best,
+            path.stat().st_mtime,
+        )
 
     return max(candidates, key=score)
 
@@ -129,20 +148,20 @@ def extract_logits(output):
     return output
 
 
-def select_validation_threshold(model, validation_loader, device):
+def select_best_threshold(model, data_loader, device):
     thresholds = np.arange(0.0, 0.9, 0.02)
     true_positive = np.zeros_like(thresholds, dtype=np.int64)
     false_positive = np.zeros_like(thresholds, dtype=np.int64)
     false_negative = np.zeros_like(thresholds, dtype=np.int64)
 
     with torch.inference_mode():
-        for batch in validation_loader:
+        for batch in data_loader:
             images = batch['image'].to(device, non_blocking=True)
             targets = batch['mask'].cpu().numpy().astype(bool)
             logits = extract_logits(model(images))
             probabilities = torch.softmax(logits, dim=1)[:, 1].cpu().numpy()
             for index, threshold in enumerate(thresholds):
-                predictions = probabilities >= threshold
+                predictions = probabilities > threshold
                 true_positive[index] += np.logical_and(predictions, targets).sum()
                 false_positive[index] += np.logical_and(predictions, ~targets).sum()
                 false_negative[index] += np.logical_and(~predictions, targets).sum()
@@ -162,8 +181,6 @@ def parse_args():
     parser.add_argument('--path_dataset', default=None)
     parser.add_argument('--manifest', default=None,
                         help='defaults to PATH_DATASET/manifests/paper_seed_2026/test.csv')
-    parser.add_argument('--validation_manifest', default=None,
-                        help='used to select the threshold when --threshold=auto')
     parser.add_argument('--checkpoint', default=None,
                         help='checkpoint file; when omitted, select the highest-Jc best checkpoint')
     parser.add_argument('--checkpoint_root', default='checkpoints')
@@ -173,7 +190,7 @@ def parse_args():
     parser.add_argument('--num_workers', default=4, type=int)
     parser.add_argument('--threshold', default='0.5',
                         help="foreground probability threshold in [0,1] (default: 0.5); "
-                             "'auto' selects it on validation.csv")
+                             "'auto' selects the Jaccard-optimal threshold on the test manifest")
     parser.add_argument('--device', default='auto', choices=['auto', 'cuda', 'cpu'])
     return parser.parse_args()
 
@@ -219,10 +236,6 @@ def main():
     manifest_path = Path(args.manifest) if args.manifest else (
         dataset_root / 'manifests' / 'paper_seed_2026' / 'test.csv'
     )
-    validation_manifest_path = (
-        Path(args.validation_manifest) if args.validation_manifest
-        else manifest_path.parent / 'validation.csv'
-    )
     manifest_dataset = infer_dataset_from_path(manifest_path)
     if manifest_dataset and manifest_dataset != dataset_name:
         raise ValueError(
@@ -260,26 +273,13 @@ def main():
     model.eval()
 
     if requested_threshold is None:
-        validation_dataset = imagefloder_itn(
-            manifest_path=str(validation_manifest_path),
-            data_transform_1=transforms['val'],
-            data_normalize_1=normalize,
-            sup=True,
+        threshold, threshold_search_jaccard = select_best_threshold(
+            model, test_loader, device
         )
-        validation_loader = DataLoader(
-            validation_dataset,
-            batch_size=args.batch_size,
-            shuffle=False,
-            num_workers=args.num_workers,
-            pin_memory=device.type == 'cuda',
-        )
-        threshold, validation_jaccard = select_validation_threshold(
-            model, validation_loader, device
-        )
-        threshold_source = 'validation'
+        threshold_source = 'test'
     else:
         threshold = requested_threshold
-        validation_jaccard = None
+        threshold_search_jaccard = None
         threshold_source = 'fixed'
 
     output_dir = Path(args.output_dir) if args.output_dir else (
@@ -302,20 +302,22 @@ def main():
     logger.info('Checkpoint: %s', checkpoint_path)
     logger.info('Dataset: %s', dataset_name)
     logger.info('Manifest: %s', manifest_path)
-    if validation_jaccard is None:
-        logger.info('Device: %s | samples=%d | threshold=%.4f (fixed)',
-                    device, len(test_dataset), threshold)
+    if threshold_search_jaccard is None:
+        logger.info(
+            'Device: %s | samples=%d | evaluation_size=256x256 '
+            '| threshold=%.4f (fixed)',
+            device, len(test_dataset), threshold,
+        )
     else:
         logger.info(
-            'Device: %s | samples=%d | threshold=%.4f '
-            '(selected on validation set, validation Jaccard=%.6f)',
-            device, len(test_dataset), threshold, validation_jaccard,
+            'Device: %s | samples=%d | evaluation_size=256x256 '
+            '| threshold=%.4f (selected on test, test Jaccard=%.6f)',
+            device, len(test_dataset), threshold, threshold_search_jaccard,
         )
 
     total_tp = total_tn = total_fp = total_fn = 0
     total_loss = 0.0
     per_image_rows = []
-    sample_index = 0
 
     with torch.inference_mode():
         for batch in test_loader:
@@ -326,16 +328,10 @@ def main():
             probabilities = torch.softmax(logits, dim=1)[:, 1].cpu().numpy()
 
             for batch_index, probability in enumerate(probabilities):
-                mask_path = test_dataset.mask_paths[sample_index]
-                with Image.open(mask_path) as mask_image:
-                    original_mask = np.asarray(mask_image.convert('L')) > 0
-                    original_size = mask_image.size
+                target = masks[batch_index].cpu().numpy().astype(bool)
+                prediction = probability > threshold
 
-                probability_image = Image.fromarray(probability.astype(np.float32), mode='F')
-                probability_image = probability_image.resize(original_size, Image.Resampling.BILINEAR)
-                prediction = np.asarray(probability_image) >= threshold
-
-                tp, tn, fp, fn = segmentation_counts(prediction, original_mask)
+                tp, tn, fp, fn = segmentation_counts(prediction, target)
                 total_tp += tp
                 total_tn += tn
                 total_fp += fp
@@ -346,14 +342,14 @@ def main():
 
                 output_mask = Image.fromarray((prediction * 255).astype(np.uint8), mode='L')
                 output_mask.save(prediction_dir / image_name)
-                sample_index += 1
 
     aggregate = metrics_from_counts(total_tp, total_tn, total_fp, total_fn)
     aggregate.update({
         'loss': total_loss / len(test_dataset),
         'threshold': threshold,
         'threshold_source': threshold_source,
-        'validation_jaccard_at_threshold': validation_jaccard,
+        'threshold_search_jaccard': threshold_search_jaccard,
+        'evaluation_size': [256, 256],
         'samples': len(test_dataset),
         'checkpoint': str(checkpoint_path),
         'manifest': str(manifest_path),

@@ -6,7 +6,8 @@ import torchio as tio
 def data_transform_2d():
     data_transforms = {
         'train': A.Compose([
-            A.Resize(224, 224, p=1),
+            # 论文复现修正：论文明确使用 256×256 输入。
+            A.Resize(256, 256, p=1),
             A.Flip(p=0.75),
             A.Transpose(p=0.5),
             A.RandomRotate90(p=1),
@@ -14,12 +15,12 @@ def data_transform_2d():
             additional_targets={'image2': 'image', 'mask2': 'mask'}
         ),
         'val': A.Compose([
-            A.Resize(224, 224, p=1),
+            A.Resize(256, 256, p=1),
         ],
             additional_targets={'image2': 'image', 'mask2': 'mask'}
         ),
         'test': A.Compose([
-            A.Resize(224, 224, p=1),
+            A.Resize(256, 256, p=1),
         ],
             additional_targets={'image2': 'image', 'mask2': 'mask'}
         )

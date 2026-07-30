@@ -12,6 +12,7 @@ def dataset_cfg(dataet_name):
                 'IN_CHANNELS': 3,
                 'NUM_CLASSES': 2,
                 'MEAN': [0.787803, 0.512017, 0.784938],
+                # 论文复现修正：按 GlaS 全部 85 张训练图、RGB/255 重新统计。
                 'STD': [0.428206, 0.507778, 0.426366],
                 'PALETTE': list(np.array([
                     [0, 0, 0],
