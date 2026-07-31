@@ -83,6 +83,27 @@ Train with the 10% labeled split:
 python main.py --labeled_ratio 10
 ```
 
+Aligned dual views are enabled by the dataset configuration. The existing
+`image` field aliases the normalized RGB `image_appearance`, while
+`image_structure` contains `[hematoxylin, gray, sobel]`. Disable the extension
+to exercise the legacy data path:
+
+During dual-view training, `model1` receives `image_appearance` and `model2`
+receives `image_structure`. With dual views disabled, both models fall back to
+the legacy `image` field.
+
+```bash
+python main.py --check_data --no-dual_view
+```
+
+Run the dual-view checks and save labeled/unlabeled debug panels without
+starting training:
+
+```bash
+python tools/smoke_test_dual_views.py --check_forward
+python tools/visualize_dual_views.py --output_dir outputs/dual_view_debug
+```
+
 Every epoch is validated and written to the experiment checkpoint directory:
 
 - `train_YYYYmmdd-HHMMSS.log`: concise human-readable epoch summaries.
@@ -118,6 +139,17 @@ python test.py \
   --dataset_name CRAG \
   --path_dataset datasets/CRAG \
   --checkpoint checkpoints/path/to/best_result1_Jc_0.8000.pth
+```
+
+New dual-view checkpoints are branch-aware during testing: `best_result1`
+uses the appearance view and `best_result2` uses the structure view. Override
+the automatic choice when testing a legacy FDCL checkpoint:
+
+```bash
+python test.py \
+  --dataset_name GLaS \
+  --checkpoint checkpoints/path/to/legacy_result2.pth \
+  --input_view appearance
 ```
 
 By default, testing uses a foreground threshold of `0.5`, the standard binary

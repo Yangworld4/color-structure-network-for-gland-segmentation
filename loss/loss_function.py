@@ -1,3 +1,4 @@
+import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -5,7 +6,7 @@ import numpy as np
 from torch.autograd import Variable
 import sys
 from torch.nn.modules.loss import _Loss
-from typing import Union, Tuple, Dict
+from typing import Optional, Union, Tuple, Dict
 
 class MixSoftmaxCrossEntropyLoss(nn.CrossEntropyLoss):
     def __init__(self, aux=True, aux_weight=0.2, ignore_index=-1, **kwargs):

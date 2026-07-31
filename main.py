@@ -16,6 +16,7 @@ from torch.backends import cudnn
 import random
 from PIL import Image
 import sys
+from typing import Mapping, Tuple
 
 from config.dataset_config.dataset_cfg import dataset_cfg
 from config.augmentation.online_aug import data_transform_2d, data_normalize_2d
@@ -38,6 +39,14 @@ def init_seeds(seed):
     torch.backends.cudnn.benchmark = False
     torch.backends.cudnn.deterministic = True
 
+
+def get_model_inputs(batch: Mapping[str, torch.Tensor]) -> Tuple[torch.Tensor, torch.Tensor]:
+    """Route RGB appearance to model1 and H/Gray/Sobel structure to model2."""
+    appearance = batch.get('image_appearance', batch['image'])
+    structure = batch.get('image_structure', batch['image'])
+    return appearance, structure
+
+
 if __name__ == '__main__':
 
     parser = argparse.ArgumentParser()
@@ -54,6 +63,12 @@ if __name__ == '__main__':
                         help='percentage of labeled training data in the prepared manifests')
     parser.add_argument('--check_data', action='store_true',
                         help='load one batch, print its shapes/ranges, and exit before GPU setup')
+    parser.add_argument(
+        '--dual_view',
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help='enable aligned appearance/structure dataset views (default: dataset config)',
+    )
     parser.add_argument('--sup_mark', default='9')
     parser.add_argument('--unsup_mark', default='76')
     parser.add_argument('-b', '--batch_size', default=2, type=int)
@@ -86,6 +101,9 @@ if __name__ == '__main__':
 
     dataset_name = args.dataset_name
     cfg = dataset_cfg(dataset_name)
+    dual_view_cfg = cfg['dual_view']
+    if args.dual_view is not None:
+        dual_view_cfg['enabled'] = args.dual_view
     manifest_dir = args.manifest_dir or os.path.join(
         args.path_dataset, 'manifests', 'paper_seed_2026'
     )
@@ -121,12 +139,16 @@ if __name__ == '__main__':
             data_transform_1=data_transforms['train'],
             data_normalize_1=data_normalize,
             sup=False,
+            dual_view_config=dual_view_cfg,
+            training=True,
         )
         dataset_train_sup_unique = imagefloder_itn(
             manifest_path=labeled_manifest,
             data_transform_1=data_transforms['train'],
             data_normalize_1=data_normalize,
             sup=True,
+            dual_view_config=dual_view_cfg,
+            training=True,
         )
         dataset_train_sup = imagefloder_itn(
             manifest_path=labeled_manifest,
@@ -134,12 +156,16 @@ if __name__ == '__main__':
             data_normalize_1=data_normalize,
             sup=True,
             num_images=len(dataset_train_unsup),
+            dual_view_config=dual_view_cfg,
+            training=True,
         )
         dataset_val = imagefloder_itn(
             manifest_path=validation_manifest,
             data_transform_1=data_transforms['val'],
             data_normalize_1=data_normalize,
             sup=True,
+            dual_view_config=dual_view_cfg,
+            training=False,
         )
     else:
         dataset_train_unsup = imagefloder_itn(
@@ -148,6 +174,8 @@ if __name__ == '__main__':
             data_transform_1=data_transforms['train'],
             data_normalize_1=data_normalize,
             sup=False,
+            dual_view_config=dual_view_cfg,
+            training=True,
         )
         dataset_train_sup_unique = imagefloder_itn(
             data_dir=args.path_dataset + '/train_sup_' + args.sup_mark,
@@ -155,6 +183,8 @@ if __name__ == '__main__':
             data_transform_1=data_transforms['train'],
             data_normalize_1=data_normalize,
             sup=True,
+            dual_view_config=dual_view_cfg,
+            training=True,
         )
         dataset_train_sup = imagefloder_itn(
             data_dir=args.path_dataset + '/train_sup_' + args.sup_mark,
@@ -163,6 +193,8 @@ if __name__ == '__main__':
             data_normalize_1=data_normalize,
             sup=True,
             num_images=len(dataset_train_unsup),
+            dual_view_config=dual_view_cfg,
+            training=True,
         )
         dataset_val = imagefloder_itn(
             data_dir=args.path_dataset + '/val',
@@ -170,6 +202,8 @@ if __name__ == '__main__':
             data_transform_1=data_transforms['val'],
             data_normalize_1=data_normalize,
             sup=True,
+            dual_view_config=dual_view_cfg,
+            training=False,
         )
 
     if args.check_data:
@@ -184,9 +218,15 @@ if __name__ == '__main__':
             len(dataset_train_sup)
         ))
         print('Supervised image:', tuple(sup_sample['image'].shape), sup_sample['image'].dtype)
+        if 'image_structure' in sup_sample:
+            print('Supervised dual views:', tuple(sup_sample['image_appearance'].shape),
+                  tuple(sup_sample['image_structure'].shape))
         print('Supervised mask:', tuple(sup_sample['mask'].shape), sup_sample['mask'].dtype,
               'classes={}'.format(torch.unique(sup_sample['mask']).tolist()))
         print('Unsupervised image:', tuple(unsup_sample['image'].shape), unsup_sample['image'].dtype)
+        if 'image_structure' in unsup_sample:
+            print('Unsupervised dual views:', tuple(unsup_sample['image_appearance'].shape),
+                  tuple(unsup_sample['image_structure'].shape))
         print('Validation image/mask:', tuple(val_sample['image'].shape),
               tuple(val_sample['mask'].shape))
         sys.exit(0)
@@ -301,14 +341,15 @@ if __name__ == '__main__':
         for i in range(num_batches['train_sup']):
             
             unsup_index = next(dataset_train_unsup)
-            img_train_unsup = unsup_index['image']
-            img_train_unsup = Variable(img_train_unsup.cuda(non_blocking=True))
+            img_train_unsup1, img_train_unsup2 = get_model_inputs(unsup_index)
+            img_train_unsup1 = Variable(img_train_unsup1.cuda(non_blocking=True))
+            img_train_unsup2 = Variable(img_train_unsup2.cuda(non_blocking=True))
             
             optimizer1.zero_grad()
             optimizer2.zero_grad()
             
-            pred_train_unsup1, f1_unsup = model1(img_train_unsup)
-            pred_train_unsup2, f2_unsup = model2(img_train_unsup)
+            pred_train_unsup1, f1_unsup = model1(img_train_unsup1)
+            pred_train_unsup2, f2_unsup = model2(img_train_unsup2)
 
             max_train1 = torch.max(pred_train_unsup1, dim=1)[1]
             max_train2 = torch.max(pred_train_unsup2, dim=1)[1]
@@ -326,13 +367,14 @@ if __name__ == '__main__':
             torch.cuda.empty_cache()
             
             sup_index = next(dataset_train_sup)
-            img_train_sup = sup_index['image']
-            img_train_sup = Variable(img_train_sup.cuda(non_blocking=True))
+            img_train_sup1, img_train_sup2 = get_model_inputs(sup_index)
+            img_train_sup1 = Variable(img_train_sup1.cuda(non_blocking=True))
+            img_train_sup2 = Variable(img_train_sup2.cuda(non_blocking=True))
             mask_train_sup = sup_index['mask']
             mask_train_sup = Variable(mask_train_sup.cuda(non_blocking=True))
 
-            pred_train_sup1, f1_sup = model1(img_train_sup)
-            pred_train_sup2, f2_sup = model2(img_train_sup)
+            pred_train_sup1, f1_sup = model1(img_train_sup1)
+            pred_train_sup2, f2_sup = model2(img_train_sup2)
             
             if i == 0:
                 score_list_train1 = pred_train_sup1.detach()
@@ -384,15 +426,17 @@ if __name__ == '__main__':
 
                 for i, data in enumerate(dataloaders['val']):
 
-                    inputs_val = Variable(data['image'].cuda(non_blocking=True))
+                    inputs_val1, inputs_val2 = get_model_inputs(data)
+                    inputs_val1 = Variable(inputs_val1.cuda(non_blocking=True))
+                    inputs_val2 = Variable(inputs_val2.cuda(non_blocking=True))
                     mask_val = Variable(data['mask'].cuda(non_blocking=True))
                     name_val = data['ID']
 
                     optimizer1.zero_grad()
                     optimizer2.zero_grad()
 
-                    outputs_val1 = model1(inputs_val)[0]
-                    outputs_val2 = model2(inputs_val)[0]
+                    outputs_val1 = model1(inputs_val1)[0]
+                    outputs_val2 = model2(inputs_val2)[0]
                     torch.cuda.empty_cache()
 
                     if i == 0:

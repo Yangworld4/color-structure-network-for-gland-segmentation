@@ -5,6 +5,8 @@ from torch.utils.data import Dataset, DataLoader
 from PIL import Image
 import numpy as np
 
+from dataload.dual_view_transformer import DualViewTransform
+
 
 def _read_manifest(manifest_path, sup):
     """Read image/mask paths relative to the manifest file."""
@@ -47,7 +49,7 @@ def _read_manifest(manifest_path, sup):
 
 class dataset_itn(Dataset):
     def __init__(self, data_dir, input1, augmentation_1, normalize_1, sup=True, num_images=None,
-                 manifest_path=None, **kwargs):
+                 manifest_path=None, dual_view_config=None, training=True, **kwargs):
         super(dataset_itn, self).__init__()
 
         if manifest_path is not None:
@@ -94,6 +96,14 @@ class dataset_itn(Dataset):
         self.augmentation_1 = augmentation_1
         self.normalize_1 = normalize_1
         self.sup = sup
+        self.dual_view_transform = None
+        if dual_view_config is not None and dual_view_config.get('enabled', False):
+            self.dual_view_transform = DualViewTransform(
+                geometric_transform=augmentation_1,
+                appearance_normalize=normalize_1,
+                config=dual_view_config,
+                training=training,
+            )
         self.kwargs = kwargs
 
     def __getitem__(self, index):
@@ -110,10 +120,14 @@ class dataset_itn(Dataset):
             # while segmentation losses require class indices 0/1.
             mask = (mask > 0).astype(np.uint8)
 
+            if self.dual_view_transform is not None:
+                sampel = self.dual_view_transform(img_1, mask)
+                sampel['ID'] = os.path.split(mask_path)[1]
+                return sampel
+
             augment_1 = self.augmentation_1(image=img_1, mask=mask)
             img_1 = augment_1['image']
             mask_1 = augment_1['mask']
-
             normalize_1 = self.normalize_1(image=img_1, mask=mask_1)
             img_1 = normalize_1['image']
             mask_1 = normalize_1['mask']
@@ -122,6 +136,11 @@ class dataset_itn(Dataset):
             sampel = {'image': img_1, 'mask': mask_1, 'ID': os.path.split(mask_path)[1]}
 
         else:
+            if self.dual_view_transform is not None:
+                sampel = self.dual_view_transform(img_1)
+                sampel['ID'] = os.path.split(img_path_1)[1]
+                return sampel
+
             augment_1 = self.augmentation_1(image=img_1)
             img_1 = augment_1['image']
             normalize_1 = self.normalize_1(image=img_1)
@@ -136,7 +155,8 @@ class dataset_itn(Dataset):
 
 
 def imagefloder_itn(data_dir=None, input1='image', data_transform_1=None, data_normalize_1=None,
-                    sup=True, num_images=None, manifest_path=None, **kwargs):
+                    sup=True, num_images=None, manifest_path=None, dual_view_config=None,
+                    training=True, **kwargs):
     dataset = dataset_itn(data_dir=data_dir,
                            input1=input1,
                            augmentation_1=data_transform_1,
@@ -144,6 +164,8 @@ def imagefloder_itn(data_dir=None, input1='image', data_transform_1=None, data_n
                            sup=sup,
                            num_images=num_images,
                            manifest_path=manifest_path,
+                           dual_view_config=dual_view_config,
+                           training=training,
                            **kwargs
                            )
     return dataset

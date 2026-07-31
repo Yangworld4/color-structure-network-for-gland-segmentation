@@ -66,7 +66,7 @@ def resolve_dataset_name(requested_name, checkpoint, checkpoint_root):
     )
 
 
-def find_best_checkpoint(checkpoint_root, dataset_name):
+def find_best_checkpoint(checkpoint_root, dataset_name, input_view='auto'):
     root = Path(checkpoint_root)
     candidates = [
         path for path in root.rglob('best_*_Jc_*.pth')
@@ -78,10 +78,20 @@ def find_best_checkpoint(checkpoint_root, dataset_name):
         path for path in root.rglob('best_Jc_*.pth')
         if dataset_name.lower() in (part.lower() for part in path.parts)
     )
+    if input_view == 'appearance':
+        candidates = [
+            path for path in candidates
+            if re.match(r'best_result1_Jc_', path.name)
+        ]
+    elif input_view == 'structure':
+        candidates = [
+            path for path in candidates
+            if re.match(r'best_result2_Jc_', path.name)
+        ]
     if not candidates:
         raise FileNotFoundError(
-            "No best checkpoint for {} found below {}; pass --checkpoint explicitly.".format(
-                dataset_name, checkpoint_root
+            "No {} checkpoint for {} found below {}; pass --checkpoint explicitly.".format(
+                input_view, dataset_name, checkpoint_root
             )
         )
 
@@ -99,6 +109,51 @@ def find_best_checkpoint(checkpoint_root, dataset_name):
         )
 
     return max(candidates, key=score)
+
+
+def resolve_input_view(requested_view, checkpoint_path):
+    """Resolve the model input while refusing ambiguous canonical checkpoints."""
+    if requested_view != 'auto':
+        return requested_view
+
+    checkpoint_name = Path(checkpoint_path).name.lower()
+    if re.match(r'best_result1_jc_', checkpoint_name):
+        return 'appearance'
+    if re.match(r'best_result2_jc_', checkpoint_name):
+        return 'structure'
+
+    score_match = re.match(r'best_jc_([0-9]+(?:\.[0-9]+)?)\.pth$', checkpoint_name)
+    if score_match:
+        score = score_match.group(1)
+        branch_candidates = list(Path(checkpoint_path).parent.glob(
+            'best_result[12]_Jc_{}.pth'.format(score)
+        ))
+        inferred_views = {
+            'appearance' if 'result1' in path.name.lower() else 'structure'
+            for path in branch_candidates
+        }
+        if len(inferred_views) == 1:
+            return inferred_views.pop()
+
+    raise ValueError(
+        'Cannot infer whether checkpoint {} belongs to model1/appearance or '
+        'model2/structure. Pass --input_view appearance or --input_view structure. '
+        'For pre-dual-view FDCL checkpoints, use appearance.'.format(checkpoint_path)
+    )
+
+
+def select_model_input(batch, input_view):
+    """Select the same branch input for threshold search and final inference."""
+    if input_view == 'appearance':
+        return batch.get('image_appearance', batch['image'])
+    if input_view == 'structure':
+        if 'image_structure' not in batch:
+            raise KeyError(
+                'Structure input requested, but image_structure is unavailable. '
+                'Enable dual views.'
+            )
+        return batch['image_structure']
+    raise ValueError('Unsupported input view: {}'.format(input_view))
 
 
 def load_checkpoint(model, checkpoint_path):
@@ -148,7 +203,7 @@ def extract_logits(output):
     return output
 
 
-def select_best_threshold(model, data_loader, device):
+def select_best_threshold(model, data_loader, device, input_view):
     thresholds = np.arange(0.0, 0.9, 0.02)
     true_positive = np.zeros_like(thresholds, dtype=np.int64)
     false_positive = np.zeros_like(thresholds, dtype=np.int64)
@@ -156,7 +211,9 @@ def select_best_threshold(model, data_loader, device):
 
     with torch.inference_mode():
         for batch in data_loader:
-            images = batch['image'].to(device, non_blocking=True)
+            images = select_model_input(batch, input_view).to(
+                device, non_blocking=True
+            )
             targets = batch['mask'].cpu().numpy().astype(bool)
             logits = extract_logits(model(images))
             probabilities = torch.softmax(logits, dim=1)[:, 1].cpu().numpy()
@@ -184,6 +241,15 @@ def parse_args():
     parser.add_argument('--checkpoint', default=None,
                         help='checkpoint file; when omitted, select the highest-Jc best checkpoint')
     parser.add_argument('--checkpoint_root', default='checkpoints')
+    parser.add_argument(
+        '--input_view',
+        default='auto',
+        choices=['auto', 'appearance', 'structure'],
+        help=(
+            "model input: auto maps new best_result1 to appearance and best_result2 "
+            "to structure; explicitly use appearance for legacy FDCL checkpoints"
+        ),
+    )
     parser.add_argument('--output_dir', default=None)
     parser.add_argument('--network', default='xnet_sb')
     parser.add_argument('--batch_size', default=2, type=int)
@@ -192,6 +258,12 @@ def parse_args():
                         help="foreground probability threshold in [0,1] (default: 0.5); "
                              "'auto' selects the Jaccard-optimal threshold on the test manifest")
     parser.add_argument('--device', default='auto', choices=['auto', 'cuda', 'cpu'])
+    parser.add_argument(
+        '--dual_view',
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help='enable aligned appearance/structure dataset views (default: dataset config)',
+    )
     return parser.parse_args()
 
 
@@ -211,9 +283,14 @@ def main():
         args.dataset_name, args.checkpoint, args.checkpoint_root
     )
     cfg = dataset_cfg(dataset_name)
+    dual_view_cfg = cfg['dual_view']
+    if args.dual_view is not None:
+        dual_view_cfg['enabled'] = args.dual_view
     checkpoint_path = (
         Path(args.checkpoint) if args.checkpoint
-        else find_best_checkpoint(args.checkpoint_root, dataset_name)
+        else find_best_checkpoint(
+            args.checkpoint_root, dataset_name, input_view=args.input_view
+        )
     )
     if not checkpoint_path.is_file():
         raise FileNotFoundError('Checkpoint not found: {}'.format(checkpoint_path))
@@ -223,6 +300,11 @@ def main():
             'Selected checkpoint belongs to {}, not {}: {}'.format(
                 checkpoint_dataset, dataset_name, checkpoint_path
             )
+        )
+    input_view = resolve_input_view(args.input_view, checkpoint_path)
+    if input_view == 'structure' and not dual_view_cfg['enabled']:
+        raise ValueError(
+            '--input_view structure requires dual views; remove --no-dual_view'
         )
 
     dataset_root = Path(args.path_dataset or cfg['PATH_DATASET'])
@@ -258,6 +340,8 @@ def main():
         data_transform_1=transforms['test'],
         data_normalize_1=normalize,
         sup=True,
+        dual_view_config=dual_view_cfg,
+        training=False,
     )
     test_loader = DataLoader(
         test_dataset,
@@ -274,7 +358,7 @@ def main():
 
     if requested_threshold is None:
         threshold, threshold_search_jaccard = select_best_threshold(
-            model, test_loader, device
+            model, test_loader, device, input_view
         )
         threshold_source = 'test'
     else:
@@ -283,7 +367,8 @@ def main():
         threshold_source = 'fixed'
 
     output_dir = Path(args.output_dir) if args.output_dir else (
-        Path('test_results') / dataset_name / checkpoint_path.stem
+        Path('test_results') / dataset_name
+        / '{}_{}'.format(checkpoint_path.stem, input_view)
     )
     prediction_dir = output_dir / 'predictions'
     prediction_dir.mkdir(parents=True, exist_ok=True)
@@ -302,6 +387,7 @@ def main():
     logger.info('Checkpoint: %s', checkpoint_path)
     logger.info('Dataset: %s', dataset_name)
     logger.info('Manifest: %s', manifest_path)
+    logger.info('Input view: %s', input_view)
     if threshold_search_jaccard is None:
         logger.info(
             'Device: %s | samples=%d | evaluation_size=256x256 '
@@ -321,7 +407,9 @@ def main():
 
     with torch.inference_mode():
         for batch in test_loader:
-            images = batch['image'].to(device, non_blocking=True)
+            images = select_model_input(batch, input_view).to(
+                device, non_blocking=True
+            )
             masks = batch['mask'].to(device, non_blocking=True)
             logits = extract_logits(model(images))
             total_loss += F.cross_entropy(logits, masks).item() * images.shape[0]
@@ -352,6 +440,7 @@ def main():
         'evaluation_size': [256, 256],
         'samples': len(test_dataset),
         'checkpoint': str(checkpoint_path),
+        'input_view': input_view,
         'manifest': str(manifest_path),
     })
 
