@@ -1,33 +1,46 @@
-from torchvision import transforms, datasets
-import torch
-import torch.nn as nn
-import torch.optim as optim
-from torch.optim import lr_scheduler
-from torch.autograd import Variable
-from torch.utils.data import DataLoader
-from models.getnetwork import get_network
 import argparse
 import csv
 import logging
-import time
 import os
-import numpy as np
-from torch.backends import cudnn
 import random
-from PIL import Image
-import sys
+import time
 from typing import Mapping, Tuple
+from warnings import simplefilter
 
+import numpy as np
+import torch
+import torch.optim as optim
+from torch.optim import lr_scheduler
+from torch.utils.data import DataLoader
+
+from config.augmentation.online_aug import data_normalize_2d, data_transform_2d
 from config.dataset_config.dataset_cfg import dataset_cfg
-from config.augmentation.online_aug import data_transform_2d, data_normalize_2d
+from config.train_test_config.train_test_config import (
+    print_best,
+    print_train_eval,
+    print_train_loss,
+    print_val_eval,
+    print_val_loss,
+    save_val_best_2d,
+)
+from config.warmup_config.warmup import GradualWarmupScheduler
+from dataload.dataset_2d import imagefloder_itn
 from loss.loss_function import segmentation_loss
 from models.getnetwork import get_network
-from dataload.dataset_2d import imagefloder_itn
-from config.warmup_config.warmup import GradualWarmupScheduler
-from config.train_test_config.train_test_config import print_train_loss, print_val_loss, print_train_eval, print_val_eval, save_val_best_2d, print_best
-from warnings import simplefilter
+
+
 simplefilter(action='ignore', category=FutureWarning)
 
+METRIC_FIELDS = [
+    'epoch', 'lr_model1', 'lr_model2', 'unsup_weight',
+    'train_loss_sup1', 'train_loss_sup2', 'train_loss_unsup', 'train_loss_total',
+    'train_threshold1', 'train_jaccard1', 'train_dice1',
+    'train_threshold2', 'train_jaccard2', 'train_dice2',
+    'val_loss1', 'val_loss2',
+    'val_threshold1', 'val_jaccard1', 'val_dice1',
+    'val_threshold2', 'val_jaccard2', 'val_dice2',
+    'best_val_jaccard', 'epoch_seconds',
+]
 
 def init_seeds(seed):
     torch.manual_seed(seed)
@@ -35,34 +48,706 @@ def init_seeds(seed):
     torch.cuda.manual_seed_all(seed)
     random.seed(seed)
     np.random.seed(seed)
-    os.environ['PYTHONHASHSEED'] = str(0)
+    os.environ['PYTHONHASHSEED'] = str(seed)
     torch.backends.cudnn.benchmark = False
     torch.backends.cudnn.deterministic = True
 
 
-def get_model_inputs(batch: Mapping[str, torch.Tensor]) -> Tuple[torch.Tensor, torch.Tensor]:
+def get_model_inputs(
+    batch: Mapping[str, torch.Tensor],
+) -> Tuple[torch.Tensor, torch.Tensor]:
     """Route RGB appearance to model1 and H/Gray/Sobel structure to model2."""
     appearance = batch.get('image_appearance', batch['image'])
     structure = batch.get('image_structure', batch['image'])
     return appearance, structure
 
 
-if __name__ == '__main__':
+def _normalization_keys(input_name):
+    if input_name == 'image':
+        return 'MEAN', 'STD'
+    return 'MEAN_' + input_name, 'STD_' + input_name
 
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--path_trained_models', default=None,
-                        help='默认按标注比例保存到 checkpoints/semi_fdcl_paper_10 或 20')
-    parser.add_argument('--path_seg_results', default=None,
-                        help='默认按标注比例保存到 seg_pred/semi_fdcl_paper_10 或 20')
+
+def build_datasets(args, cfg):
+    """Build the supervised, unlabeled, and validation datasets."""
+    dual_view_cfg = cfg['dual_view']
+    if args.dual_view is not None:
+        dual_view_cfg['enabled'] = args.dual_view
+
+    manifest_dir = args.manifest_dir or os.path.join(
+        args.path_dataset, 'manifests', 'paper_seed_2026'
+    )
+    use_manifests = os.path.isdir(manifest_dir)
+
+    mean_key, std_key = _normalization_keys(args.input1)
+    transforms = data_transform_2d()
+    normalize = data_normalize_2d(cfg[mean_key], cfg[std_key])
+
+    common = {
+        'data_normalize_1': normalize,
+        'dual_view_config': dual_view_cfg,
+    }
+    if use_manifests:
+        labeled_source = {
+            'manifest_path': os.path.join(
+                manifest_dir, 'labeled_{}.csv'.format(args.labeled_ratio)
+            )
+        }
+        unlabeled_source = {
+            'manifest_path': os.path.join(
+                manifest_dir, 'unlabeled_{}.csv'.format(args.labeled_ratio)
+            )
+        }
+        validation_source = {
+            'manifest_path': os.path.join(manifest_dir, 'test.csv')
+        }
+    else:
+        labeled_source = {
+            'data_dir': os.path.join(
+                args.path_dataset, 'train_sup_' + args.sup_mark
+            ),
+            'input1': args.input1,
+        }
+        unlabeled_source = {
+            'data_dir': os.path.join(
+                args.path_dataset, 'train_unsup_' + args.unsup_mark
+            ),
+            'input1': args.input1,
+        }
+        validation_source = {
+            'data_dir': os.path.join(args.path_dataset, 'val'),
+            'input1': args.input1,
+        }
+
+    train_unsup = imagefloder_itn(
+        **unlabeled_source,
+        **common,
+        data_transform_1=transforms['train'],
+        sup=False,
+        training=True,
+    )
+    train_sup_unique = imagefloder_itn(
+        **labeled_source,
+        **common,
+        data_transform_1=transforms['train'],
+        sup=True,
+        training=True,
+    )
+    train_sup = imagefloder_itn(
+        **labeled_source,
+        **common,
+        data_transform_1=transforms['train'],
+        sup=True,
+        num_images=len(train_unsup),
+        training=True,
+    )
+    validation = imagefloder_itn(
+        **validation_source,
+        **common,
+        data_transform_1=transforms['val'],
+        sup=True,
+        training=False,
+    )
+
+    datasets = {
+        'train_sup': train_sup,
+        'train_sup_unique': train_sup_unique,
+        'train_unsup': train_unsup,
+        'val': validation,
+    }
+    return datasets, manifest_dir, use_manifests
+
+
+def print_data_summary(args, datasets, manifest_dir, use_manifests):
+    sup_sample = datasets['train_sup'][0]
+    unsup_sample = datasets['train_unsup'][0]
+    val_sample = datasets['val'][0]
+
+    print('Data source:', manifest_dir if use_manifests else args.path_dataset)
+    print(
+        'Unique samples: supervised={}, unsupervised={}, validation={}'.format(
+            len(datasets['train_sup_unique']),
+            len(datasets['train_unsup']),
+            len(datasets['val']),
+        )
+    )
+    print(
+        'Effective epoch samples after supervised oversampling: supervised={}'.format(
+            len(datasets['train_sup'])
+        )
+    )
+    print(
+        'Supervised image:',
+        tuple(sup_sample['image'].shape),
+        sup_sample['image'].dtype,
+    )
+    if 'image_structure' in sup_sample:
+        print(
+            'Supervised dual views:',
+            tuple(sup_sample['image_appearance'].shape),
+            tuple(sup_sample['image_structure'].shape),
+        )
+    print(
+        'Supervised mask:',
+        tuple(sup_sample['mask'].shape),
+        sup_sample['mask'].dtype,
+        'classes={}'.format(torch.unique(sup_sample['mask']).tolist()),
+    )
+    print(
+        'Unsupervised image:',
+        tuple(unsup_sample['image'].shape),
+        unsup_sample['image'].dtype,
+    )
+    if 'image_structure' in unsup_sample:
+        print(
+            'Unsupervised dual views:',
+            tuple(unsup_sample['image_appearance'].shape),
+            tuple(unsup_sample['image_structure'].shape),
+        )
+    print(
+        'Validation image/mask:',
+        tuple(val_sample['image'].shape),
+        tuple(val_sample['mask'].shape),
+    )
+
+
+def build_dataloaders(datasets, batch_size):
+    loader_options = {
+        'batch_size': batch_size,
+        'pin_memory': True,
+        'num_workers': 8,
+    }
+    return {
+        'train_sup': DataLoader(
+            datasets['train_sup'], shuffle=True, **loader_options
+        ),
+        'train_unsup': DataLoader(
+            datasets['train_unsup'], shuffle=True, **loader_options
+        ),
+        'val': DataLoader(datasets['val'], shuffle=False, **loader_options),
+    }
+
+
+def _experiment_name(args, split_sup_mark, split_unsup_mark):
+    return (
+        'CPS-l={}-e={}-s={}-g={}-b={}-cw={}-w={}-{}-{}-{}'.format(
+            args.lr,
+            args.num_epochs,
+            args.step_size,
+            args.gamma,
+            args.batch_size,
+            args.unsup_weight,
+            args.warm_up_duration,
+            split_sup_mark,
+            split_unsup_mark,
+            args.input1,
+        )
+    )
+
+
+def build_output_paths(args, datasets, use_manifests):
+    split_sup_mark = (
+        str(len(datasets['train_sup_unique']))
+        if use_manifests
+        else str(args.sup_mark)
+    )
+    split_unsup_mark = (
+        str(len(datasets['train_unsup']))
+        if use_manifests
+        else str(args.unsup_mark)
+    )
+    experiment_name = _experiment_name(
+        args, split_sup_mark, split_unsup_mark
+    )
+    dataset_dir_name = os.path.basename(os.path.normpath(args.path_dataset))
+
+    trained_models = os.path.join(
+        args.path_trained_models, dataset_dir_name, experiment_name
+    )
+    segmentation_results = os.path.join(
+        args.path_seg_results, dataset_dir_name, experiment_name
+    )
+    os.makedirs(trained_models, exist_ok=True)
+    os.makedirs(segmentation_results, exist_ok=True)
+    return trained_models, segmentation_results
+
+
+def create_run_outputs(args, trained_models_path):
+    run_id = time.strftime('%Y%m%d-%H%M%S')
+    log_path = os.path.join(
+        trained_models_path, 'train_{}.log'.format(run_id)
+    )
+    metrics_path = os.path.join(
+        trained_models_path, 'metrics_{}.csv'.format(run_id)
+    )
+
+    logger = logging.getLogger('fdcl.train')
+    logger.setLevel(logging.INFO)
+    logger.handlers.clear()
+    log_handler = logging.FileHandler(log_path, mode='w', encoding='utf-8')
+    log_handler.setFormatter(
+        logging.Formatter('%(asctime)s | %(levelname)s | %(message)s')
+    )
+    logger.addHandler(log_handler)
+    logger.info(
+        'Training started | dataset=%s | labeled_ratio=%s | network=%s',
+        args.dataset_name,
+        args.labeled_ratio,
+        args.network,
+    )
+    logger.info('Arguments: %s', vars(args))
+
+    print('Training log:', log_path)
+    print('Metrics CSV:', metrics_path)
+    return logger, metrics_path
+
+
+def _build_optimizer_and_scheduler(model, args):
+    optimizer = optim.SGD(
+        model.parameters(),
+        lr=args.lr,
+        momentum=args.momentum,
+        weight_decay=5 * 10 ** args.wd,
+    )
+    step_scheduler = lr_scheduler.StepLR(
+        optimizer, step_size=args.step_size, gamma=args.gamma
+    )
+    scheduler = GradualWarmupScheduler(
+        optimizer,
+        multiplier=1.0,
+        total_epoch=args.warm_up_duration,
+        after_scheduler=step_scheduler,
+    )
+    return optimizer, scheduler
+
+
+def build_training_components(args, cfg):
+    """Create both sub-networks, their optimizers/schedulers, and the loss."""
+    model1 = get_network(
+        args.network, cfg['IN_CHANNELS'], cfg['NUM_CLASSES']
+    ).cuda()
+    model2 = get_network(
+        args.network, cfg['IN_CHANNELS'], cfg['NUM_CLASSES']
+    ).cuda()
+    criterion = segmentation_loss(args.loss, False).cuda()
+    optimizer1, scheduler1 = _build_optimizer_and_scheduler(model1, args)
+    optimizer2, scheduler2 = _build_optimizer_and_scheduler(model2, args)
+    return (
+        (model1, model2),
+        (optimizer1, optimizer2),
+        (scheduler1, scheduler2),
+        criterion,
+    )
+
+
+def _feature_diversification_loss(feature1, feature2):
+    distance1 = 1 / (
+        torch.square(feature1.detach() - feature2).mean() + 1e-6
+    )
+    distance2 = 1 / (
+        torch.square(feature2.detach() - feature1).mean() + 1e-6
+    )
+    return (distance1 + distance2) / 2
+
+
+def train_one_epoch(
+    args,
+    epoch,
+    models,
+    optimizers,
+    criterion,
+    dataloaders,
+):
+    model1, model2 = models
+    optimizer1, optimizer2 = optimizers
+    model1.train()
+    model2.train()
+
+    loss_totals = {
+        'sup1': 0.0,
+        'sup2': 0.0,
+        'unsup': 0.0,
+        'total': 0.0,
+    }
+    unsup_weight = args.unsup_weight * (epoch + 1) / args.num_epochs
+    supervised_batches = iter(dataloaders['train_sup'])
+    unsupervised_batches = iter(dataloaders['train_unsup'])
+    num_train_batches = len(dataloaders['train_sup'])
+
+    score_list1 = None
+    score_list2 = None
+    mask_list = None
+
+    for batch_index in range(num_train_batches):
+        unsup_batch = next(unsupervised_batches)
+        unsup_input1, unsup_input2 = get_model_inputs(unsup_batch)
+        unsup_input1 = unsup_input1.cuda(non_blocking=True)
+        unsup_input2 = unsup_input2.cuda(non_blocking=True)
+
+        optimizer1.zero_grad()
+        optimizer2.zero_grad()
+
+        unsup_prediction1, unsup_feature1 = model1(unsup_input1)
+        unsup_prediction2, unsup_feature2 = model2(unsup_input2)
+        pseudo_label1 = unsup_prediction1.argmax(dim=1)
+        pseudo_label2 = unsup_prediction2.argmax(dim=1)
+
+        unsup_diversification = _feature_diversification_loss(
+            unsup_feature1, unsup_feature2
+        )
+        unsup_loss = (
+            criterion(unsup_prediction1, pseudo_label2)
+            + criterion(unsup_prediction2, pseudo_label1)
+            + args.w_dis * unsup_diversification
+        ) * unsup_weight
+        unsup_loss.backward()
+
+        sup_batch = next(supervised_batches)
+        sup_input1, sup_input2 = get_model_inputs(sup_batch)
+        sup_input1 = sup_input1.cuda(non_blocking=True)
+        sup_input2 = sup_input2.cuda(non_blocking=True)
+        sup_mask = sup_batch['mask'].cuda(non_blocking=True)
+
+        sup_prediction1, sup_feature1 = model1(sup_input1)
+        sup_prediction2, sup_feature2 = model2(sup_input2)
+
+        if batch_index == 0:
+            score_list1 = sup_prediction1.detach()
+            score_list2 = sup_prediction2.detach()
+            mask_list = sup_mask.detach()
+        elif batch_index <= num_train_batches / 32:
+            score_list1 = torch.cat(
+                (score_list1, sup_prediction1.detach()), dim=0
+            )
+            score_list2 = torch.cat(
+                (score_list2, sup_prediction2.detach()), dim=0
+            )
+            mask_list = torch.cat((mask_list, sup_mask.detach()), dim=0)
+
+        supervised_loss1 = criterion(sup_prediction1, sup_mask)
+        supervised_loss2 = criterion(sup_prediction2, sup_mask)
+        sup_diversification = _feature_diversification_loss(
+            sup_feature1, sup_feature2
+        )
+        supervised_loss = (
+            supervised_loss1
+            + supervised_loss2
+            + args.w_dis * sup_diversification
+        )
+        supervised_loss.backward()
+
+        optimizer1.step()
+        optimizer2.step()
+
+        total_loss = unsup_loss + supervised_loss
+        loss_totals['unsup'] += unsup_loss.item()
+        loss_totals['sup1'] += supervised_loss1.item()
+        loss_totals['sup2'] += supervised_loss2.item()
+        loss_totals['total'] += total_loss.item()
+
+    return loss_totals, unsup_weight, (score_list1, score_list2, mask_list)
+
+
+@torch.no_grad()
+def validate(models, criterion, dataloader):
+    model1, model2 = models
+    model1.eval()
+    model2.eval()
+
+    loss1 = 0.0
+    loss2 = 0.0
+    scores1 = []
+    scores2 = []
+    masks = []
+    names = []
+
+    for batch in dataloader:
+        input1, input2 = get_model_inputs(batch)
+        input1 = input1.cuda(non_blocking=True)
+        input2 = input2.cuda(non_blocking=True)
+        mask = batch['mask'].cuda(non_blocking=True)
+
+        output1 = model1(input1)[0]
+        output2 = model2(input2)[0]
+        scores1.append(output1)
+        scores2.append(output2)
+        masks.append(mask)
+        names.extend(batch['ID'])
+        loss1 += criterion(output1, mask).item()
+        loss2 += criterion(output2, mask).item()
+
+    return {
+        'loss1': loss1,
+        'loss2': loss2,
+        'scores1': torch.cat(scores1, dim=0),
+        'scores2': torch.cat(scores2, dim=0),
+        'masks': torch.cat(masks, dim=0),
+        'names': np.asarray(names),
+    }
+
+
+def _collect_epoch_metrics(
+    epoch,
+    epoch_seconds,
+    unsup_weight,
+    optimizers,
+    train_losses,
+    train_evaluations,
+    val_losses,
+    val_evaluations,
+    best_val_eval_list,
+):
+    train_eval1, train_eval2 = train_evaluations
+    val_eval1, val_eval2 = val_evaluations
+    optimizer1, optimizer2 = optimizers
+    return {
+        'epoch': epoch + 1,
+        'lr_model1': optimizer1.param_groups[0]['lr'],
+        'lr_model2': optimizer2.param_groups[0]['lr'],
+        'unsup_weight': unsup_weight,
+        'train_loss_sup1': train_losses[0],
+        'train_loss_sup2': train_losses[1],
+        'train_loss_unsup': train_losses[2],
+        'train_loss_total': train_losses[3],
+        'train_threshold1': train_eval1[0],
+        'train_jaccard1': train_eval1[1],
+        'train_dice1': train_eval1[2],
+        'train_threshold2': train_eval2[0],
+        'train_jaccard2': train_eval2[1],
+        'train_dice2': train_eval2[2],
+        'val_loss1': val_losses[0],
+        'val_loss2': val_losses[1],
+        'val_threshold1': val_eval1[0],
+        'val_jaccard1': val_eval1[1],
+        'val_dice1': val_eval1[2],
+        'val_threshold2': val_eval2[0],
+        'val_jaccard2': val_eval2[1],
+        'val_dice2': val_eval2[2],
+        'best_val_jaccard': best_val_eval_list[1],
+        'epoch_seconds': epoch_seconds,
+    }
+
+
+def _log_epoch(logger, args, metrics):
+    logger.info(
+        'Epoch %d/%d | train_loss=%.6f (sup1=%.6f, sup2=%.6f, unsup=%.6f) '
+        '| train_jaccard1=%.6f | train_dice1=%.6f '
+        '| train_jaccard2=%.6f | train_dice2=%.6f '
+        '| val_loss1=%.6f | val_loss2=%.6f '
+        '| val_jaccard1=%.6f | val_dice1=%.6f '
+        '| val_jaccard2=%.6f | val_dice2=%.6f '
+        '| best_jaccard=%.6f | lr=%.8g | time=%.2fs',
+        metrics['epoch'],
+        args.num_epochs,
+        metrics['train_loss_total'],
+        metrics['train_loss_sup1'],
+        metrics['train_loss_sup2'],
+        metrics['train_loss_unsup'],
+        metrics['train_jaccard1'],
+        metrics['train_dice1'],
+        metrics['train_jaccard2'],
+        metrics['train_dice2'],
+        metrics['val_loss1'],
+        metrics['val_loss2'],
+        metrics['val_jaccard1'],
+        metrics['val_dice1'],
+        metrics['val_jaccard2'],
+        metrics['val_dice2'],
+        metrics['best_val_jaccard'],
+        metrics['lr_model1'],
+        metrics['epoch_seconds'],
+    )
+
+
+def train_model(
+    args,
+    cfg,
+    datasets,
+    use_manifests,
+):
+    """Run FDCL training, validation, logging, and checkpoint selection."""
+    dataloaders = build_dataloaders(datasets, args.batch_size)
+    num_batches = {
+        name: len(dataloader) for name, dataloader in dataloaders.items()
+    }
+    trained_models_path, segmentation_results_path = build_output_paths(
+        args, datasets, use_manifests
+    )
+    logger, metrics_path = create_run_outputs(args, trained_models_path)
+    models, optimizers, schedulers, criterion = build_training_components(
+        args, cfg
+    )
+
+    model1, model2 = models
+    best_model = model1
+    best_result = 'Result1'
+    best_val_eval_list = [0 for _ in range(4)]
+    print_num = 77 + (cfg['NUM_CLASSES'] - 3) * 14
+    print_num_minus = print_num - 2
+    print_num_half = int(print_num / 2 - 1)
+    training_start = time.time()
+
+    with open(metrics_path, 'w', newline='', encoding='utf-8') as metrics_file:
+        metrics_writer = csv.DictWriter(
+            metrics_file, fieldnames=METRIC_FIELDS
+        )
+        metrics_writer.writeheader()
+
+        for epoch in range(args.num_epochs):
+            epoch_start = time.time()
+            loss_totals, unsup_weight, train_predictions = train_one_epoch(
+                args,
+                epoch,
+                models,
+                optimizers,
+                criterion,
+                dataloaders,
+            )
+            schedulers[0].step()
+            schedulers[1].step()
+
+            print('=' * print_num)
+            print(
+                '| Epoch {}/{}'.format(epoch + 1, args.num_epochs).ljust(
+                    print_num_minus, ' '
+                ),
+                '|',
+            )
+            train_losses = print_train_loss(
+                loss_totals['sup1'],
+                loss_totals['sup2'],
+                loss_totals['unsup'],
+                loss_totals['total'],
+                num_batches,
+                print_num,
+                print_num_half,
+            )
+            train_eval1, train_eval2, _, _ = print_train_eval(
+                cfg['NUM_CLASSES'],
+                *train_predictions,
+                print_num_half,
+            )
+
+            validation = validate(models, criterion, dataloaders['val'])
+            val_losses = print_val_loss(
+                validation['loss1'],
+                validation['loss2'],
+                num_batches,
+                print_num,
+                print_num_half,
+            )
+            val_eval1, val_eval2, _, _ = print_val_eval(
+                cfg['NUM_CLASSES'],
+                validation['scores1'],
+                validation['scores2'],
+                validation['masks'],
+                print_num_half,
+            )
+            best_val_eval_list, best_model, best_result = save_val_best_2d(
+                cfg['NUM_CLASSES'],
+                best_model,
+                best_val_eval_list,
+                best_result,
+                model1,
+                model2,
+                validation['scores1'],
+                validation['scores2'],
+                validation['names'],
+                val_eval1,
+                val_eval2,
+                trained_models_path,
+                segmentation_results_path,
+                cfg['PALETTE'],
+            )
+
+            epoch_seconds = time.time() - epoch_start
+            print('-' * print_num)
+            print(
+                '| Epoch Time: {:.4f}s'.format(epoch_seconds).ljust(
+                    print_num_minus, ' '
+                ),
+                '|',
+            )
+            metrics = _collect_epoch_metrics(
+                epoch,
+                epoch_seconds,
+                unsup_weight,
+                optimizers,
+                train_losses,
+                (train_eval1, train_eval2),
+                val_losses,
+                (val_eval1, val_eval2),
+                best_val_eval_list,
+            )
+            metrics_writer.writerow(metrics)
+            metrics_file.flush()
+            _log_epoch(logger, args, metrics)
+
+    elapsed = time.time() - training_start
+    minutes, seconds = divmod(elapsed, 60)
+    hours, minutes = divmod(minutes, 60)
+    print('=' * print_num)
+    print(
+        '| Training Completed In {:.0f}h {:.0f}mins {:.0f}s'.format(
+            hours, minutes, seconds
+        ).ljust(print_num_minus, ' '),
+        '|',
+    )
+    print('-' * print_num)
+    print_best(
+        cfg['NUM_CLASSES'],
+        best_val_eval_list,
+        best_model,
+        best_result,
+        trained_models_path,
+        print_num_minus,
+    )
+    print('=' * print_num)
+    logger.info(
+        'Training completed | best_result=%s | best_val_jaccard=%.6f',
+        best_result,
+        best_val_eval_list[1],
+    )
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description='Train Feature Diversified Collaborative Learning (FDCL).'
+    )
+    parser.add_argument(
+        '--path_trained_models',
+        default=None,
+        help='默认按标注比例保存到 checkpoints/semi_fdcl_paper_10 或 20',
+    )
+    parser.add_argument(
+        '--path_seg_results',
+        default=None,
+        help='默认按标注比例保存到 seg_pred/semi_fdcl_paper_10 或 20',
+    )
     parser.add_argument('-pd', '--path_dataset', default='datasets/GLaS')
-    parser.add_argument('--dataset_name', default='GlaS', help='CRAG, MoNuSeg, GlaS')
+    parser.add_argument(
+        '--dataset_name',
+        default='GlaS',
+        choices=['GlaS', 'CRAG', 'MoNuSeg'],
+    )
     parser.add_argument('--input1', default='image')
-    parser.add_argument('--manifest_dir', default=None,
-                        help='manifest directory; defaults to PATH_DATASET/manifests/paper_seed_2026')
-    parser.add_argument('--labeled_ratio', default=10, type=int, choices=[10, 20],
-                        help='percentage of labeled training data in the prepared manifests')
-    parser.add_argument('--check_data', action='store_true',
-                        help='load one batch, print its shapes/ranges, and exit before GPU setup')
+    parser.add_argument(
+        '--manifest_dir',
+        default=None,
+        help='manifest directory; defaults to PATH_DATASET/manifests/paper_seed_2026',
+    )
+    parser.add_argument(
+        '--labeled_ratio',
+        default=10,
+        type=int,
+        choices=[10, 20],
+        help='percentage of labeled training data in the prepared manifests',
+    )
+    parser.add_argument(
+        '--check_data',
+        action='store_true',
+        help='load one sample, print its shapes/ranges, and exit before GPU setup',
+    )
     parser.add_argument(
         '--dual_view',
         action=argparse.BooleanOptionalAction,
@@ -78,18 +763,19 @@ if __name__ == '__main__':
     parser.add_argument('-g', '--gamma', default=0.5, type=float)
     parser.add_argument('-u', '--unsup_weight', default=5, type=float)
     parser.add_argument('--loss', default='dice')
-    parser.add_argument('-w', '--warm_up_duration', default=20)
+    parser.add_argument('-w', '--warm_up_duration', default=20, type=int)
     parser.add_argument('--momentum', default=0.9, type=float)
-    parser.add_argument('--wd', default=-5, type=float, help='weight decay pow')
-    parser.add_argument('--w_dis', default=1.0, type=float, help='weight distance loss')
-    parser.add_argument('--sd', default=4, type=int, help='seed')
+    parser.add_argument('--wd', default=-5, type=float, help='weight decay exponent')
+    parser.add_argument(
+        '--w_dis',
+        default=1.0,
+        type=float,
+        help='weight of the feature diversification loss',
+    )
+    parser.add_argument('--sd', default=4, type=int, help='random seed')
+    parser.add_argument('-n', '--network', default='xnet_sb')
 
-    parser.add_argument('-i', '--display_iter', default=1, type=int,
-                        help='deprecated: important metrics are now evaluated and logged every epoch')
-    parser.add_argument('-n', '--network', default='xnet_sb', type=str)
     args = parser.parse_args()
-
-    # 论文复现修正：与旧的 224 尺寸和旧划分实验隔离，避免检查点混用。
     if args.path_trained_models is None:
         args.path_trained_models = 'checkpoints/semi_fdcl_paper_{}'.format(
             args.labeled_ratio
@@ -98,431 +784,26 @@ if __name__ == '__main__':
         args.path_seg_results = 'seg_pred/semi_fdcl_paper_{}'.format(
             args.labeled_ratio
         )
+    return args
 
-    dataset_name = args.dataset_name
-    cfg = dataset_cfg(dataset_name)
-    dual_view_cfg = cfg['dual_view']
-    if args.dual_view is not None:
-        dual_view_cfg['enabled'] = args.dual_view
-    manifest_dir = args.manifest_dir or os.path.join(
-        args.path_dataset, 'manifests', 'paper_seed_2026'
-    )
-    use_manifests = os.path.isdir(manifest_dir)
 
-    print_num = 77 + (cfg['NUM_CLASSES'] - 3) * 14
-    print_num_minus = print_num - 2
-    print_num_half = int(print_num / 2 - 1)
-
-    if args.input1 == 'image':
-        input1_mean = 'MEAN'
-        input1_std = 'STD'
-    else:
-        input1_mean = 'MEAN_' + args.input1
-        input1_std = 'STD_' + args.input1
-
-    data_transforms = data_transform_2d()
-    data_normalize = data_normalize_2d(cfg[input1_mean], cfg[input1_std])
-
-    if use_manifests:
-        labeled_manifest = os.path.join(
-            manifest_dir, 'labeled_{}.csv'.format(args.labeled_ratio)
-        )
-        unlabeled_manifest = os.path.join(
-            manifest_dir, 'unlabeled_{}.csv'.format(args.labeled_ratio)
-        )
-        # 论文复现修正：完整训练池用于 9/76 或 17/68 划分，
-        # 官方测试集作为论文中所称的验证/评估集。
-        validation_manifest = os.path.join(manifest_dir, 'test.csv')
-
-        dataset_train_unsup = imagefloder_itn(
-            manifest_path=unlabeled_manifest,
-            data_transform_1=data_transforms['train'],
-            data_normalize_1=data_normalize,
-            sup=False,
-            dual_view_config=dual_view_cfg,
-            training=True,
-        )
-        dataset_train_sup_unique = imagefloder_itn(
-            manifest_path=labeled_manifest,
-            data_transform_1=data_transforms['train'],
-            data_normalize_1=data_normalize,
-            sup=True,
-            dual_view_config=dual_view_cfg,
-            training=True,
-        )
-        dataset_train_sup = imagefloder_itn(
-            manifest_path=labeled_manifest,
-            data_transform_1=data_transforms['train'],
-            data_normalize_1=data_normalize,
-            sup=True,
-            num_images=len(dataset_train_unsup),
-            dual_view_config=dual_view_cfg,
-            training=True,
-        )
-        dataset_val = imagefloder_itn(
-            manifest_path=validation_manifest,
-            data_transform_1=data_transforms['val'],
-            data_normalize_1=data_normalize,
-            sup=True,
-            dual_view_config=dual_view_cfg,
-            training=False,
-        )
-    else:
-        dataset_train_unsup = imagefloder_itn(
-            data_dir=args.path_dataset + '/train_unsup_' + args.unsup_mark,
-            input1=args.input1,
-            data_transform_1=data_transforms['train'],
-            data_normalize_1=data_normalize,
-            sup=False,
-            dual_view_config=dual_view_cfg,
-            training=True,
-        )
-        dataset_train_sup_unique = imagefloder_itn(
-            data_dir=args.path_dataset + '/train_sup_' + args.sup_mark,
-            input1=args.input1,
-            data_transform_1=data_transforms['train'],
-            data_normalize_1=data_normalize,
-            sup=True,
-            dual_view_config=dual_view_cfg,
-            training=True,
-        )
-        dataset_train_sup = imagefloder_itn(
-            data_dir=args.path_dataset + '/train_sup_' + args.sup_mark,
-            input1=args.input1,
-            data_transform_1=data_transforms['train'],
-            data_normalize_1=data_normalize,
-            sup=True,
-            num_images=len(dataset_train_unsup),
-            dual_view_config=dual_view_cfg,
-            training=True,
-        )
-        dataset_val = imagefloder_itn(
-            data_dir=args.path_dataset + '/val',
-            input1=args.input1,
-            data_transform_1=data_transforms['val'],
-            data_normalize_1=data_normalize,
-            sup=True,
-            dual_view_config=dual_view_cfg,
-            training=False,
-        )
+def main():
+    args = parse_args()
+    init_seeds(args.sd)
+    cfg = dataset_cfg(args.dataset_name)
+    datasets, manifest_dir, use_manifests = build_datasets(args, cfg)
 
     if args.check_data:
-        sup_sample = dataset_train_sup[0]
-        unsup_sample = dataset_train_unsup[0]
-        val_sample = dataset_val[0]
-        print('Data source:', manifest_dir if use_manifests else args.path_dataset)
-        print('Unique samples: supervised={}, unsupervised={}, validation={}'.format(
-            len(dataset_train_sup_unique), len(dataset_train_unsup), len(dataset_val)
-        ))
-        print('Effective epoch samples after supervised oversampling: supervised={}'.format(
-            len(dataset_train_sup)
-        ))
-        print('Supervised image:', tuple(sup_sample['image'].shape), sup_sample['image'].dtype)
-        if 'image_structure' in sup_sample:
-            print('Supervised dual views:', tuple(sup_sample['image_appearance'].shape),
-                  tuple(sup_sample['image_structure'].shape))
-        print('Supervised mask:', tuple(sup_sample['mask'].shape), sup_sample['mask'].dtype,
-              'classes={}'.format(torch.unique(sup_sample['mask']).tolist()))
-        print('Unsupervised image:', tuple(unsup_sample['image'].shape), unsup_sample['image'].dtype)
-        if 'image_structure' in unsup_sample:
-            print('Unsupervised dual views:', tuple(unsup_sample['image_appearance'].shape),
-                  tuple(unsup_sample['image_structure'].shape))
-        print('Validation image/mask:', tuple(val_sample['image'].shape),
-              tuple(val_sample['mask'].shape))
-        sys.exit(0)
-
+        print_data_summary(args, datasets, manifest_dir, use_manifests)
+        return
     if not torch.cuda.is_available():
-        raise RuntimeError('FDCL training requires a CUDA GPU; use --check_data to validate input only.')
+        raise RuntimeError(
+            'FDCL training requires a CUDA GPU; '
+            'use --check_data to validate input only.'
+        )
 
-    init_seeds(args.sd)
-
-    split_sup_mark = (
-        str(len(dataset_train_sup_unique)) if use_manifests else str(args.sup_mark)
-    )
-    split_unsup_mark = (
-        str(len(dataset_train_unsup)) if use_manifests else str(args.unsup_mark)
-    )
-
-    # trained model save
-    path_trained_models = args.path_trained_models + '/' + str(os.path.split(args.path_dataset)[1])
-    os.makedirs(path_trained_models, exist_ok=True)
-    path_trained_models = path_trained_models+'/'+'CPS'+'-l='+str(args.lr)+'-e='+str(args.num_epochs)+'-s='+str(args.step_size)+'-g='+str(args.gamma)+'-b='+str(args.batch_size)+'-cw='+str(args.unsup_weight)+'-w='+str(args.warm_up_duration)+'-'+split_sup_mark+'-'+split_unsup_mark+'-'+str(args.input1)
-    os.makedirs(path_trained_models, exist_ok=True)
-
-    # seg results save
-    path_seg_results = args.path_seg_results + '/' + str(os.path.split(args.path_dataset)[1])
-    os.makedirs(path_seg_results, exist_ok=True)
-    path_seg_results = path_seg_results+'/'+'CPS'+'-l='+str(args.lr)+'-e='+str(args.num_epochs)+'-s='+str(args.step_size)+'-g='+str(args.gamma)+'-b='+str(args.batch_size)+'-cw='+str(args.unsup_weight)+'-w='+str(args.warm_up_duration)+'-'+split_sup_mark+'-'+split_unsup_mark+'-'+str(args.input1)
-    os.makedirs(path_seg_results, exist_ok=True)
-
-    run_id = time.strftime('%Y%m%d-%H%M%S')
-    log_path = os.path.join(path_trained_models, 'train_{}.log'.format(run_id))
-    metrics_path = os.path.join(path_trained_models, 'metrics_{}.csv'.format(run_id))
-    logger = logging.getLogger('fdcl.train')
-    logger.setLevel(logging.INFO)
-    logger.handlers.clear()
-    log_handler = logging.FileHandler(log_path, mode='w', encoding='utf-8')
-    log_handler.setFormatter(logging.Formatter('%(asctime)s | %(levelname)s | %(message)s'))
-    logger.addHandler(log_handler)
-
-    metric_fields = [
-        'epoch', 'lr_model1', 'lr_model2', 'unsup_weight',
-        'train_loss_sup1', 'train_loss_sup2', 'train_loss_unsup', 'train_loss_total',
-        'train_threshold1', 'train_jaccard1', 'train_dice1',
-        'train_threshold2', 'train_jaccard2', 'train_dice2',
-        'val_loss1', 'val_loss2',
-        'val_threshold1', 'val_jaccard1', 'val_dice1',
-        'val_threshold2', 'val_jaccard2', 'val_dice2',
-        'best_val_jaccard', 'epoch_seconds',
-    ]
-    metrics_file = open(metrics_path, 'w', newline='', encoding='utf-8')
-    metrics_writer = csv.DictWriter(metrics_file, fieldnames=metric_fields)
-    metrics_writer.writeheader()
-    metrics_file.flush()
-    logger.info('Training started | dataset=%s | labeled_ratio=%s | network=%s',
-                args.dataset_name, args.labeled_ratio, args.network)
-    logger.info('Arguments: %s', vars(args))
-    print('Training log:', log_path)
-    print('Metrics CSV:', metrics_path)
-
-    dataloaders = dict()
-    dataloaders['train_sup'] = DataLoader(dataset_train_sup, batch_size=args.batch_size, shuffle=True, pin_memory=True, num_workers=8)
-    dataloaders['train_unsup'] = DataLoader(dataset_train_unsup, batch_size=args.batch_size, shuffle=True, pin_memory=True, num_workers=8)
-    dataloaders['val'] = DataLoader(dataset_val, batch_size=args.batch_size, shuffle=False, pin_memory=True, num_workers=8)
-
-    num_batches = {'train_sup': len(dataloaders['train_sup']), 'train_unsup': len(dataloaders['train_unsup']), 'val': len(dataloaders['val'])}
+    train_model(args, cfg, datasets, use_manifests)
 
 
-    model1 = get_network(args.network, cfg['IN_CHANNELS'], cfg['NUM_CLASSES'])
-    model2 = get_network(args.network, cfg['IN_CHANNELS'], cfg['NUM_CLASSES'])
-
-    model1 = model1.cuda()
-    model2 = model2.cuda()
-
-    criterion = segmentation_loss(args.loss, False).cuda()
-
-    optimizer1 = optim.SGD(model1.parameters(), lr=args.lr, momentum=args.momentum, weight_decay=5*10 ** args.wd)
-    exp_lr_scheduler1 = lr_scheduler.StepLR(optimizer1, step_size=args.step_size, gamma=args.gamma)
-    scheduler_warmup1 = GradualWarmupScheduler(optimizer1, multiplier=1.0, total_epoch=args.warm_up_duration, after_scheduler=exp_lr_scheduler1)
-
-    optimizer2 = optim.SGD(model2.parameters(), lr=args.lr, momentum=args.momentum, weight_decay=5*10 ** args.wd)
-    exp_lr_scheduler2 = lr_scheduler.StepLR(optimizer2, step_size=args.step_size, gamma=args.gamma)
-    scheduler_warmup2 = GradualWarmupScheduler(optimizer2, multiplier=1.0, total_epoch=args.warm_up_duration, after_scheduler=exp_lr_scheduler2)
-
-
-    since = time.time()
-    count_iter = 0
-
-    best_model = model1
-    best_result = 'Result1'
-    best_val_eval_list = [0 for i in range(4)]
-
-    for epoch in range(args.num_epochs):
-
-        count_iter += 1
-        begin_time = time.time()
-
-        model1.train()
-        model2.train()
-
-        train_loss_sup_1 = 0.0
-        train_loss_sup_2 = 0.0
-        train_loss_unsup = 0.0
-        train_loss = 0.0
-
-        val_loss_sup_1 = 0.0
-        val_loss_sup_2 = 0.0
-
-        unsup_weight = args.unsup_weight * (epoch+1) / args.num_epochs
-
-        dataset_train_sup = iter(dataloaders['train_sup'])
-        dataset_train_unsup = iter(dataloaders['train_unsup'])
-
-        for i in range(num_batches['train_sup']):
-            
-            unsup_index = next(dataset_train_unsup)
-            img_train_unsup1, img_train_unsup2 = get_model_inputs(unsup_index)
-            img_train_unsup1 = Variable(img_train_unsup1.cuda(non_blocking=True))
-            img_train_unsup2 = Variable(img_train_unsup2.cuda(non_blocking=True))
-            
-            optimizer1.zero_grad()
-            optimizer2.zero_grad()
-            
-            pred_train_unsup1, f1_unsup = model1(img_train_unsup1)
-            pred_train_unsup2, f2_unsup = model2(img_train_unsup2)
-
-            max_train1 = torch.max(pred_train_unsup1, dim=1)[1]
-            max_train2 = torch.max(pred_train_unsup2, dim=1)[1]
-            max_train1 = max_train1.long()
-            max_train2 = max_train2.long()
-
-
-            loss_l2_un1 = 1 / (torch.square(f1_unsup.detach() - f2_unsup).mean() + 1e-6)
-            loss_l2_un2 = 1 / (torch.square(f2_unsup.detach() - f1_unsup).mean() + 1e-6)
-            loss_dis_un = (loss_l2_un1 + loss_l2_un2) / 2
-
-            loss_train_unsup = criterion(pred_train_unsup1, max_train2) + criterion(pred_train_unsup2, max_train1)
-            loss_train_unsup = (loss_train_unsup + args.w_dis * loss_dis_un) * unsup_weight 
-            loss_train_unsup.backward(retain_graph=True)
-            torch.cuda.empty_cache()
-            
-            sup_index = next(dataset_train_sup)
-            img_train_sup1, img_train_sup2 = get_model_inputs(sup_index)
-            img_train_sup1 = Variable(img_train_sup1.cuda(non_blocking=True))
-            img_train_sup2 = Variable(img_train_sup2.cuda(non_blocking=True))
-            mask_train_sup = sup_index['mask']
-            mask_train_sup = Variable(mask_train_sup.cuda(non_blocking=True))
-
-            pred_train_sup1, f1_sup = model1(img_train_sup1)
-            pred_train_sup2, f2_sup = model2(img_train_sup2)
-            
-            if i == 0:
-                score_list_train1 = pred_train_sup1.detach()
-                score_list_train2 = pred_train_sup2.detach()
-                mask_list_train = mask_train_sup.detach()
-            elif 0 < i <= num_batches['train_sup'] / 32:
-                score_list_train1 = torch.cat((score_list_train1, pred_train_sup1.detach()), dim=0)
-                score_list_train2 = torch.cat((score_list_train2, pred_train_sup2.detach()), dim=0)
-                mask_list_train = torch.cat((mask_list_train, mask_train_sup.detach()), dim=0)
-            
-            loss_train_sup1 = criterion(pred_train_sup1, mask_train_sup)
-            loss_train_sup2 = criterion(pred_train_sup2, mask_train_sup)
-
-
-            loss_l2_sup1 = 1 / (torch.square(f1_sup.detach() - f2_sup).mean() + 1e-6)
-            loss_l2_sup2 = 1 / (torch.square(f2_sup.detach() - f1_sup).mean() + 1e-6)
-            loss_dis_sup = (loss_l2_sup1 + loss_l2_sup2) / 2
-
-
-            loss_train_sup = loss_train_sup1 + loss_train_sup2 + args.w_dis * loss_dis_sup
-            loss_train_sup.backward()
-            
-            optimizer1.step()
-            optimizer2.step()
-            torch.cuda.empty_cache()
-
-            loss_train = loss_train_unsup + loss_train_sup
-            train_loss_unsup += loss_train_unsup.item()
-            train_loss_sup_1 += loss_train_sup1.item()
-            train_loss_sup_2 += loss_train_sup2.item()
-            train_loss += loss_train.item()
-
-        scheduler_warmup1.step()
-        scheduler_warmup2.step()
-        torch.cuda.empty_cache()
-
-        # Validation and metric persistence intentionally run after every epoch.
-        if count_iter:
-            torch.cuda.empty_cache()
-            print('=' * print_num)
-            print('| Epoch {}/{}'.format(epoch+1, args.num_epochs).ljust(print_num_minus, ' '), '|')
-            train_epoch_loss_sup1, train_epoch_loss_sup2, train_epoch_loss_cps, train_epoch_loss = print_train_loss(train_loss_sup_1, train_loss_sup_2, train_loss_unsup, train_loss, num_batches, print_num, print_num_half)
-            train_eval_list1, train_eval_list2, train_m_jc1, train_m_jc2 = print_train_eval(cfg['NUM_CLASSES'], score_list_train1, score_list_train2, mask_list_train, print_num_half)
-            torch.cuda.empty_cache()
-
-            with torch.no_grad():
-                model1.eval()
-                model2.eval()
-
-                for i, data in enumerate(dataloaders['val']):
-
-                    inputs_val1, inputs_val2 = get_model_inputs(data)
-                    inputs_val1 = Variable(inputs_val1.cuda(non_blocking=True))
-                    inputs_val2 = Variable(inputs_val2.cuda(non_blocking=True))
-                    mask_val = Variable(data['mask'].cuda(non_blocking=True))
-                    name_val = data['ID']
-
-                    optimizer1.zero_grad()
-                    optimizer2.zero_grad()
-
-                    outputs_val1 = model1(inputs_val1)[0]
-                    outputs_val2 = model2(inputs_val2)[0]
-                    torch.cuda.empty_cache()
-
-                    if i == 0:
-                        score_list_val1 = outputs_val1
-                        score_list_val2 = outputs_val2
-                        mask_list_val = mask_val
-                        name_list_val = name_val
-                    else:
-                        score_list_val1 = torch.cat((score_list_val1, outputs_val1), dim=0)
-                        score_list_val2 = torch.cat((score_list_val2, outputs_val2), dim=0)
-                        mask_list_val = torch.cat((mask_list_val, mask_val), dim=0)
-                        name_list_val = np.append(name_list_val, name_val, axis=0)
-
-                    loss_val_sup1 = criterion(outputs_val1, mask_val)
-                    loss_val_sup2 = criterion(outputs_val2, mask_val)
-
-                    val_loss_sup_1 += loss_val_sup1.item()
-                    val_loss_sup_2 += loss_val_sup2.item()
-
-                torch.cuda.empty_cache()
-                val_epoch_loss_sup1, val_epoch_loss_sup2 = print_val_loss(val_loss_sup_1, val_loss_sup_2, num_batches, print_num, print_num_half)
-                val_eval_list1, val_eval_list2, val_m_jc1, val_m_jc2 = print_val_eval(cfg['NUM_CLASSES'], score_list_val1, score_list_val2, mask_list_val, print_num_half)
-                best_val_eval_list, best_model, best_result = save_val_best_2d(cfg['NUM_CLASSES'], best_model, best_val_eval_list, best_result, model1, model2, score_list_val1, score_list_val2, name_list_val, val_eval_list1, val_eval_list2, path_trained_models, path_seg_results, cfg['PALETTE'])
-                torch.cuda.empty_cache()
-
-                print('-' * print_num)
-                epoch_seconds = time.time() - begin_time
-                print('| Epoch Time: {:.4f}s'.format(epoch_seconds).ljust(print_num_minus, ' '), '|')
-
-                metrics = {
-                    'epoch': epoch + 1,
-                    'lr_model1': optimizer1.param_groups[0]['lr'],
-                    'lr_model2': optimizer2.param_groups[0]['lr'],
-                    'unsup_weight': unsup_weight,
-                    'train_loss_sup1': train_epoch_loss_sup1,
-                    'train_loss_sup2': train_epoch_loss_sup2,
-                    'train_loss_unsup': train_epoch_loss_cps,
-                    'train_loss_total': train_epoch_loss,
-                    'train_threshold1': train_eval_list1[0],
-                    'train_jaccard1': train_eval_list1[1],
-                    'train_dice1': train_eval_list1[2],
-                    'train_threshold2': train_eval_list2[0],
-                    'train_jaccard2': train_eval_list2[1],
-                    'train_dice2': train_eval_list2[2],
-                    'val_loss1': val_epoch_loss_sup1,
-                    'val_loss2': val_epoch_loss_sup2,
-                    'val_threshold1': val_eval_list1[0],
-                    'val_jaccard1': val_eval_list1[1],
-                    'val_dice1': val_eval_list1[2],
-                    'val_threshold2': val_eval_list2[0],
-                    'val_jaccard2': val_eval_list2[1],
-                    'val_dice2': val_eval_list2[2],
-                    'best_val_jaccard': best_val_eval_list[1],
-                    'epoch_seconds': epoch_seconds,
-                }
-                metrics_writer.writerow(metrics)
-                metrics_file.flush()
-                logger.info(
-                    'Epoch %d/%d | train_loss=%.6f (sup1=%.6f, sup2=%.6f, unsup=%.6f) '
-                    '| train_jaccard1=%.6f | train_dice1=%.6f '
-                    '| train_jaccard2=%.6f | train_dice2=%.6f '
-                    '| val_loss1=%.6f | val_loss2=%.6f '
-                    '| val_jaccard1=%.6f | val_dice1=%.6f '
-                    '| val_jaccard2=%.6f | val_dice2=%.6f '
-                    '| best_jaccard=%.6f | lr=%.8g | time=%.2fs',
-                    epoch + 1, args.num_epochs, train_epoch_loss,
-                    train_epoch_loss_sup1, train_epoch_loss_sup2, train_epoch_loss_cps,
-                    train_eval_list1[1], train_eval_list1[2],
-                    train_eval_list2[1], train_eval_list2[2],
-                    val_epoch_loss_sup1, val_epoch_loss_sup2,
-                    val_eval_list1[1], val_eval_list1[2],
-                    val_eval_list2[1], val_eval_list2[2],
-                    best_val_eval_list[1], optimizer1.param_groups[0]['lr'], epoch_seconds,
-                )
-            torch.cuda.empty_cache()
-        torch.cuda.empty_cache()
-
-    time_elapsed = time.time() - since
-    m, s = divmod(time_elapsed, 60)
-    h, m = divmod(m, 60)
-
-    print('=' * print_num)
-    print('| Training Completed In {:.0f}h {:.0f}mins {:.0f}s'.format(h, m, s).ljust(print_num_minus, ' '), '|')
-    print('-' * print_num)
-    print_best(cfg['NUM_CLASSES'], best_val_eval_list, best_model, best_result, path_trained_models, print_num_minus)
-    print('=' * print_num)
-    logger.info('Training completed | best_result=%s | best_val_jaccard=%.6f',
-                best_result, best_val_eval_list[1])
-    metrics_file.close()
+if __name__ == '__main__':
+    main()
