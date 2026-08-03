@@ -185,7 +185,7 @@ class XNet_sb(nn.Module):
                 if m.bias is not None:
                     nn.init.constant_(m.bias, 0)
 
-    def forward(self, input1):
+    def forward(self, input1, return_feature_pyramid=False):
         # code
         # branch1
         x1_1 = self.b1_1_1(input1)
@@ -219,10 +219,16 @@ class XNet_sb(nn.Module):
 
         x1_3 = torch.cat((x1_3, x1_4_2), dim=1)
         x1_3 = self.b1_3_3(x1_3)
+        # HETERO-FDCL ADDITION: capture the H/4 semantic decoder feature before
+        # upsampling. The default return path below remains unchanged.
+        semantic_feature = x1_3
         x1_3 = self.b1_3_4_up(x1_3)
 
         x1_2 = torch.cat((x1_2, x1_3), dim=1)
         x1_2 = self.b1_2_3(x1_2)
+        # HETERO-FDCL ADDITION: capture the H/2 private/detail decoder feature
+        # before upsampling for modality-complementarity learning.
+        private_feature = x1_2
         x1_2 = self.b1_2_4_up(x1_2)
 
         x1_1 = torch.cat((x1_1, x1_2), dim=1)
@@ -231,5 +237,13 @@ class XNet_sb(nn.Module):
 
         # return x1_1
         prediction = self.b1_1_4(x1_1)  # Final prediction
+        if return_feature_pyramid:
+            # HETERO-FDCL ADDITION: this opt-in dictionary is used only by the
+            # semantic_private training mode. Original FDCL still receives
+            # exactly ``(prediction, x1_1)`` from the default call.
+            return prediction, {
+                'semantic': semantic_feature,
+                'private': private_feature,
+                'final': x1_1,
+            }
         return prediction, x1_1
-

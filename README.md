@@ -83,6 +83,59 @@ Train with the 10% labeled split:
 python main.py --labeled_ratio 10
 ```
 
+### Optional heterogeneous semantic/private feature objective
+
+The original reciprocal-MSE FDCL feature loss is still the default and its
+implementation is unchanged:
+
+```bash
+python main.py --feature_loss_mode original
+```
+
+Enable the optional heterogeneous-view adaptation with:
+
+```bash
+python main.py \
+  --dual_view \
+  --feature_loss_mode semantic_private \
+  --w_sem 0.1 \
+  --w_comp 0.05
+```
+
+This mode adds two training-only projection pairs at different decoder levels:
+
+- semantic consistency uses the `b1_3_3` output before upsampling
+  (`[B, 256, H/4, W/4]`);
+- private complementarity uses the `b1_2_3` output before upsampling
+  (`[B, 128, H/2, W/2]`);
+- the final `[B, 64, H, W]` feature remains dedicated to segmentation.
+
+Class prototypes in the shared-semantic projections are aligned with cosine
+distance. Private projections use a bounded cosine-margin complementarity term
+plus a small variance floor to prevent collapse. Labeled images use
+ground-truth masks; unlabeled images use only pixels on which both branches
+agree and both confidence values exceed
+`--feature_confidence_threshold` (default `0.7`).
+
+Relevant options:
+
+- `--feature_loss_mode original`: unchanged FDCL loss (default).
+- `--feature_loss_mode semantic_private`: semantic consistency and private
+  complementarity (`--w_dis` is not used in this mode).
+- `--feature_loss_mode none`: no feature-level objective, for ablation.
+- `--semantic_feature_channels 256`: H/4 semantic feature width.
+- `--private_feature_channels 128`: H/2 private feature width.
+- `--feature_projection_dim 32`: semantic/private projection width.
+- `--feature_margin 0.2`: unpenalized private cosine-similarity margin.
+- `--private_variance_weight 0.1`: private projection anti-collapse weight.
+
+The auxiliary projection heads shape training but are not part of inference
+checkpoints. New code paths are marked `HETERO-FDCL ADDITION`; the preserved
+loss is marked `ORIGINAL FDCL LOSS`. Metrics CSV files additionally report
+`train_loss_feature`, `train_loss_semantic`, `train_loss_complement`, and
+`train_feature_valid_ratio`; the last field is the unlabeled high-confidence
+consensus-pixel coverage.
+
 Aligned dual views are enabled by the dataset configuration. The existing
 `image` field aliases the normalized RGB `image_appearance`, while
 `image_structure` contains `[hematoxylin, gray, sobel]`. Disable the extension

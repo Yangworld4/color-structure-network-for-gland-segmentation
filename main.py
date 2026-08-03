@@ -25,6 +25,7 @@ from config.train_test_config.train_test_config import (
 )
 from config.warmup_config.warmup import GradualWarmupScheduler
 from dataload.dataset_2d import imagefloder_itn
+from loss.heterogeneous_feature_loss import HeterogeneousFeatureLoss
 from loss.loss_function import segmentation_loss
 from models.getnetwork import get_network
 
@@ -40,6 +41,10 @@ METRIC_FIELDS = [
     'val_threshold1', 'val_jaccard1', 'val_dice1',
     'val_threshold2', 'val_jaccard2', 'val_dice2',
     'best_val_jaccard', 'epoch_seconds',
+    # HETERO-FDCL ADDITION: these fields expose the optional objective without
+    # changing any of the original FDCL metric columns.
+    'train_loss_feature', 'train_loss_semantic',
+    'train_loss_complement', 'train_feature_valid_ratio',
 ]
 
 def init_seeds(seed):
@@ -229,7 +234,7 @@ def build_dataloaders(datasets, batch_size):
 
 
 def _experiment_name(args, split_sup_mark, split_unsup_mark):
-    return (
+    experiment_name = (
         'CPS-l={}-e={}-s={}-g={}-b={}-cw={}-w={}-{}-{}-{}'.format(
             args.lr,
             args.num_epochs,
@@ -243,6 +248,24 @@ def _experiment_name(args, split_sup_mark, split_unsup_mark):
             args.input1,
         )
     )
+    # HETERO-FDCL ADDITION: only non-original modes receive a suffix, so the
+    # default command keeps the exact legacy output directory convention.
+    feature_loss_mode = getattr(args, 'feature_loss_mode', 'original')
+    if feature_loss_mode != 'original':
+        experiment_name += (
+            '-fl={}-sem={}-comp={}-m={}-ct={}-pd={}-sc={}-pc={}-sd={}'
+        ).format(
+            feature_loss_mode,
+            getattr(args, 'w_sem', 0.0),
+            getattr(args, 'w_comp', 0.0),
+            getattr(args, 'feature_margin', 0.0),
+            getattr(args, 'feature_confidence_threshold', 0.0),
+            getattr(args, 'feature_projection_dim', 0),
+            getattr(args, 'semantic_feature_channels', 0),
+            getattr(args, 'private_feature_channels', 0),
+            args.sd,
+        )
+    return experiment_name
 
 
 def build_output_paths(args, datasets, use_manifests):
@@ -302,9 +325,16 @@ def create_run_outputs(args, trained_models_path):
     return logger, metrics_path
 
 
-def _build_optimizer_and_scheduler(model, args):
+def _build_optimizer_and_scheduler(
+    model, args, additional_parameters=None
+):
+    parameters = list(model.parameters())
+    if additional_parameters is not None:
+        # HETERO-FDCL ADDITION: projection heads are training-only auxiliary
+        # modules and are optimized with their corresponding view network.
+        parameters.extend(list(additional_parameters))
     optimizer = optim.SGD(
-        model.parameters(),
+        parameters,
         lr=args.lr,
         momentum=args.momentum,
         weight_decay=5 * 10 ** args.wd,
@@ -330,17 +360,56 @@ def build_training_components(args, cfg):
         args.network, cfg['IN_CHANNELS'], cfg['NUM_CLASSES']
     ).cuda()
     criterion = segmentation_loss(args.loss, False).cuda()
-    optimizer1, scheduler1 = _build_optimizer_and_scheduler(model1, args)
-    optimizer2, scheduler2 = _build_optimizer_and_scheduler(model2, args)
+
+    # HETERO-FDCL ADDITION: this auxiliary module is constructed only when
+    # explicitly requested. The default "original" path allocates no heads and
+    # keeps the original optimizer parameter sets.
+    heterogeneous_feature_loss = None
+    if getattr(args, 'feature_loss_mode', 'original') == 'semantic_private':
+        if args.network != 'xnet_sb':
+            raise ValueError(
+                'semantic_private hierarchical features currently require '
+                '--network xnet_sb'
+            )
+        heterogeneous_feature_loss = HeterogeneousFeatureLoss(
+            semantic_in_channels=args.semantic_feature_channels,
+            private_in_channels=args.private_feature_channels,
+            num_classes=cfg['NUM_CLASSES'],
+            projection_dim=args.feature_projection_dim,
+            margin=args.feature_margin,
+            confidence_threshold=args.feature_confidence_threshold,
+            private_variance_weight=args.private_variance_weight,
+            private_target_std=args.private_target_std,
+        ).cuda()
+
+    appearance_head_parameters = (
+        heterogeneous_feature_loss.appearance_parameters()
+        if heterogeneous_feature_loss is not None
+        else None
+    )
+    structure_head_parameters = (
+        heterogeneous_feature_loss.structure_parameters()
+        if heterogeneous_feature_loss is not None
+        else None
+    )
+    optimizer1, scheduler1 = _build_optimizer_and_scheduler(
+        model1, args, appearance_head_parameters
+    )
+    optimizer2, scheduler2 = _build_optimizer_and_scheduler(
+        model2, args, structure_head_parameters
+    )
     return (
         (model1, model2),
         (optimizer1, optimizer2),
         (scheduler1, scheduler2),
         criterion,
+        heterogeneous_feature_loss,
     )
 
 
 def _feature_diversification_loss(feature1, feature2):
+    # ORIGINAL FDCL LOSS: intentionally preserved byte-for-byte so legacy
+    # experiments remain directly reproducible.
     distance1 = 1 / (
         torch.square(feature1.detach() - feature2).mean() + 1e-6
     )
@@ -350,6 +419,95 @@ def _feature_diversification_loss(feature1, feature2):
     return (distance1 + distance2) / 2
 
 
+def _forward_training_model(model, model_input, feature_loss_mode):
+    """Request hierarchical features only for the optional heterogeneous loss."""
+
+    if feature_loss_mode == 'semantic_private':
+        # HETERO-FDCL ADDITION: XNet keeps its legacy output by default; this
+        # keyword explicitly requests H/4 semantic and H/2 private features.
+        prediction, features = model(
+            model_input, return_feature_pyramid=True
+        )
+        if not isinstance(features, Mapping):
+            raise TypeError(
+                'semantic_private mode requires a feature dictionary'
+            )
+        required = {'semantic', 'private', 'final'}
+        missing = required.difference(features)
+        if missing:
+            raise KeyError(
+                'hierarchical feature output is missing: {}'.format(
+                    sorted(missing)
+                )
+            )
+        return prediction, features
+    return model(model_input)
+
+
+def _compute_feature_objective(
+    args,
+    heterogeneous_feature_loss,
+    feature1,
+    feature2,
+    *,
+    labels=None,
+    prediction1=None,
+    prediction2=None,
+):
+    """Select the original or optional heterogeneous feature objective."""
+
+    mode = getattr(args, 'feature_loss_mode', 'original')
+
+    if mode == 'original':
+        zero = feature1.new_zeros(())
+        original_loss = _feature_diversification_loss(feature1, feature2)
+        return {
+            'weighted': args.w_dis * original_loss,
+            'semantic': zero,
+            'complement': zero,
+            'valid_ratio': zero.detach(),
+        }
+    if mode == 'none':
+        zero = feature1.new_zeros(())
+        return {
+            'weighted': zero,
+            'semantic': zero,
+            'complement': zero,
+            'valid_ratio': zero.detach(),
+        }
+    if mode != 'semantic_private':
+        raise ValueError('Unsupported feature_loss_mode: {}'.format(mode))
+    if heterogeneous_feature_loss is None:
+        raise RuntimeError(
+            'semantic_private mode requires HeterogeneousFeatureLoss'
+        )
+    if not isinstance(feature1, Mapping) or not isinstance(feature2, Mapping):
+        raise TypeError(
+            'semantic_private mode requires hierarchical feature dictionaries'
+        )
+
+    # HETERO-FDCL ADDITION: supervised calls use labels; unlabeled calls use
+    # detached, high-confidence consensus predictions inside the loss module.
+    result = heterogeneous_feature_loss(
+        feature1['semantic'],
+        feature2['semantic'],
+        appearance_private_feature=feature1['private'],
+        structure_private_feature=feature2['private'],
+        labels=labels,
+        appearance_logits=prediction1,
+        structure_logits=prediction2,
+    )
+    return {
+        'weighted': (
+            args.w_sem * result.semantic
+            + args.w_comp * result.complement
+        ),
+        'semantic': result.semantic,
+        'complement': result.complement,
+        'valid_ratio': result.valid_ratio,
+    }
+
+
 def train_one_epoch(
     args,
     epoch,
@@ -357,17 +515,24 @@ def train_one_epoch(
     optimizers,
     criterion,
     dataloaders,
+    heterogeneous_feature_loss=None,
 ):
     model1, model2 = models
     optimizer1, optimizer2 = optimizers
     model1.train()
     model2.train()
+    feature_loss_mode = getattr(args, 'feature_loss_mode', 'original')
 
     loss_totals = {
         'sup1': 0.0,
         'sup2': 0.0,
         'unsup': 0.0,
         'total': 0.0,
+        # HETERO-FDCL ADDITION: diagnostic-only accumulators.
+        'feature': 0.0,
+        'semantic': 0.0,
+        'complement': 0.0,
+        'feature_valid_ratio': 0.0,
     }
     unsup_weight = args.unsup_weight * (epoch + 1) / args.num_epochs
     supervised_batches = iter(dataloaders['train_sup'])
@@ -387,18 +552,27 @@ def train_one_epoch(
         optimizer1.zero_grad()
         optimizer2.zero_grad()
 
-        unsup_prediction1, unsup_feature1 = model1(unsup_input1)
-        unsup_prediction2, unsup_feature2 = model2(unsup_input2)
+        unsup_prediction1, unsup_feature1 = _forward_training_model(
+            model1, unsup_input1, feature_loss_mode
+        )
+        unsup_prediction2, unsup_feature2 = _forward_training_model(
+            model2, unsup_input2, feature_loss_mode
+        )
         pseudo_label1 = unsup_prediction1.argmax(dim=1)
         pseudo_label2 = unsup_prediction2.argmax(dim=1)
 
-        unsup_diversification = _feature_diversification_loss(
-            unsup_feature1, unsup_feature2
+        unsup_feature_objective = _compute_feature_objective(
+            args,
+            heterogeneous_feature_loss,
+            unsup_feature1,
+            unsup_feature2,
+            prediction1=unsup_prediction1,
+            prediction2=unsup_prediction2,
         )
         unsup_loss = (
             criterion(unsup_prediction1, pseudo_label2)
             + criterion(unsup_prediction2, pseudo_label1)
-            + args.w_dis * unsup_diversification
+            + unsup_feature_objective['weighted']
         ) * unsup_weight
         unsup_loss.backward()
 
@@ -408,8 +582,12 @@ def train_one_epoch(
         sup_input2 = sup_input2.cuda(non_blocking=True)
         sup_mask = sup_batch['mask'].cuda(non_blocking=True)
 
-        sup_prediction1, sup_feature1 = model1(sup_input1)
-        sup_prediction2, sup_feature2 = model2(sup_input2)
+        sup_prediction1, sup_feature1 = _forward_training_model(
+            model1, sup_input1, feature_loss_mode
+        )
+        sup_prediction2, sup_feature2 = _forward_training_model(
+            model2, sup_input2, feature_loss_mode
+        )
 
         if batch_index == 0:
             score_list1 = sup_prediction1.detach()
@@ -426,13 +604,17 @@ def train_one_epoch(
 
         supervised_loss1 = criterion(sup_prediction1, sup_mask)
         supervised_loss2 = criterion(sup_prediction2, sup_mask)
-        sup_diversification = _feature_diversification_loss(
-            sup_feature1, sup_feature2
+        sup_feature_objective = _compute_feature_objective(
+            args,
+            heterogeneous_feature_loss,
+            sup_feature1,
+            sup_feature2,
+            labels=sup_mask,
         )
         supervised_loss = (
             supervised_loss1
             + supervised_loss2
-            + args.w_dis * sup_diversification
+            + sup_feature_objective['weighted']
         )
         supervised_loss.backward()
 
@@ -444,6 +626,25 @@ def train_one_epoch(
         loss_totals['sup1'] += supervised_loss1.item()
         loss_totals['sup2'] += supervised_loss2.item()
         loss_totals['total'] += total_loss.item()
+        # HETERO-FDCL ADDITION: report the exact weighted contribution to the
+        # total loss plus the two raw components used for ablations.
+        loss_totals['feature'] += (
+            unsup_weight * unsup_feature_objective['weighted']
+            + sup_feature_objective['weighted']
+        ).item()
+        loss_totals['semantic'] += (
+            unsup_feature_objective['semantic']
+            + sup_feature_objective['semantic']
+        ).item()
+        loss_totals['complement'] += (
+            unsup_feature_objective['complement']
+            + sup_feature_objective['complement']
+        ).item()
+        # Only unlabeled coverage is reported; supervised coverage is always
+        # one (apart from an ignore label) and would obscure this diagnostic.
+        loss_totals['feature_valid_ratio'] += unsup_feature_objective[
+            'valid_ratio'
+        ].item()
 
     return loss_totals, unsup_weight, (score_list1, score_list2, mask_list)
 
@@ -496,6 +697,7 @@ def _collect_epoch_metrics(
     val_losses,
     val_evaluations,
     best_val_eval_list,
+    feature_metrics,
 ):
     train_eval1, train_eval2 = train_evaluations
     val_eval1, val_eval2 = val_evaluations
@@ -525,6 +727,11 @@ def _collect_epoch_metrics(
         'val_dice2': val_eval2[2],
         'best_val_jaccard': best_val_eval_list[1],
         'epoch_seconds': epoch_seconds,
+        # HETERO-FDCL ADDITION: auxiliary feature diagnostics.
+        'train_loss_feature': feature_metrics['feature'],
+        'train_loss_semantic': feature_metrics['semantic'],
+        'train_loss_complement': feature_metrics['complement'],
+        'train_feature_valid_ratio': feature_metrics['valid_ratio'],
     }
 
 
@@ -536,6 +743,7 @@ def _log_epoch(logger, args, metrics):
         '| val_loss1=%.6f | val_loss2=%.6f '
         '| val_jaccard1=%.6f | val_dice1=%.6f '
         '| val_jaccard2=%.6f | val_dice2=%.6f '
+        '| feature=%.6f (semantic=%.6f, complement=%.6f, valid=%.4f) '
         '| best_jaccard=%.6f | lr=%.8g | time=%.2fs',
         metrics['epoch'],
         args.num_epochs,
@@ -553,6 +761,10 @@ def _log_epoch(logger, args, metrics):
         metrics['val_dice1'],
         metrics['val_jaccard2'],
         metrics['val_dice2'],
+        metrics['train_loss_feature'],
+        metrics['train_loss_semantic'],
+        metrics['train_loss_complement'],
+        metrics['train_feature_valid_ratio'],
         metrics['best_val_jaccard'],
         metrics['lr_model1'],
         metrics['epoch_seconds'],
@@ -574,9 +786,13 @@ def train_model(
         args, datasets, use_manifests
     )
     logger, metrics_path = create_run_outputs(args, trained_models_path)
-    models, optimizers, schedulers, criterion = build_training_components(
-        args, cfg
-    )
+    (
+        models,
+        optimizers,
+        schedulers,
+        criterion,
+        heterogeneous_feature_loss,
+    ) = build_training_components(args, cfg)
 
     model1, model2 = models
     best_model = model1
@@ -602,6 +818,7 @@ def train_model(
                 optimizers,
                 criterion,
                 dataloaders,
+                heterogeneous_feature_loss,
             )
             schedulers[0].step()
             schedulers[1].step()
@@ -668,6 +885,19 @@ def train_model(
                 ),
                 '|',
             )
+            # HETERO-FDCL ADDITION: normalize per-step feature diagnostics
+            # before writing them to the shared metrics CSV.
+            train_batch_count = num_batches['train_sup']
+            feature_metrics = {
+                'feature': loss_totals['feature'] / train_batch_count,
+                'semantic': loss_totals['semantic'] / train_batch_count,
+                'complement': (
+                    loss_totals['complement'] / train_batch_count
+                ),
+                'valid_ratio': (
+                    loss_totals['feature_valid_ratio'] / train_batch_count
+                ),
+            }
             metrics = _collect_epoch_metrics(
                 epoch,
                 epoch_seconds,
@@ -678,6 +908,7 @@ def train_model(
                 val_losses,
                 (val_eval1, val_eval2),
                 best_val_eval_list,
+                feature_metrics,
             )
             metrics_writer.writerow(metrics)
             metrics_file.flush()
@@ -771,6 +1002,71 @@ def parse_args():
         default=1.0,
         type=float,
         help='weight of the feature diversification loss',
+    )
+    # HETERO-FDCL ADDITION: default="original" guarantees that existing
+    # commands retain the original reciprocal-MSE diversified loss.
+    parser.add_argument(
+        '--feature_loss_mode',
+        default='original',
+        choices=['original', 'semantic_private', 'none'],
+        help=(
+            'feature objective: original FDCL, optional semantic/private '
+            'heterogeneous objective, or no feature objective'
+        ),
+    )
+    parser.add_argument(
+        '--w_sem',
+        default=0.1,
+        type=float,
+        help='weight of semantic prototype consistency',
+    )
+    parser.add_argument(
+        '--w_comp',
+        default=0.05,
+        type=float,
+        help='weight of private feature complementarity',
+    )
+    parser.add_argument(
+        '--semantic_feature_channels',
+        default=256,
+        type=int,
+        help='channel count of the H/4 semantic decoder feature',
+    )
+    parser.add_argument(
+        '--private_feature_channels',
+        default=128,
+        type=int,
+        help='channel count of the H/2 private decoder feature',
+    )
+    parser.add_argument(
+        '--feature_projection_dim',
+        default=32,
+        type=int,
+        help='channel count of each semantic/private projection',
+    )
+    parser.add_argument(
+        '--feature_margin',
+        default=0.2,
+        type=float,
+        help='maximum unpenalized private-feature cosine similarity',
+    )
+    parser.add_argument(
+        '--feature_confidence_threshold',
+        default=0.7,
+        type=float,
+        help='minimum confidence of both branches for unlabeled feature loss',
+    )
+    parser.add_argument(
+        '--private_variance_weight',
+        default=0.1,
+        type=float,
+        help='anti-collapse variance weight inside private complementarity',
+    )
+    parser.add_argument(
+        '--private_target_std',
+        default=0.1,
+        type=float,
+        help='minimum target standard deviation of private projections',
     )
     parser.add_argument('--sd', default=4, type=int, help='random seed')
     parser.add_argument('-n', '--network', default='xnet_sb')
