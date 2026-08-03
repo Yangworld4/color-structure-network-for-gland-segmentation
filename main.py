@@ -25,7 +25,7 @@ from config.train_test_config.train_test_config import (
 )
 from config.warmup_config.warmup import GradualWarmupScheduler
 from dataload.dataset_2d import imagefloder_itn
-from loss.heterogeneous_feature_loss import HeterogeneousFeatureLoss
+from loss.heterogeneous_feature_loss import ComplementarityFeatureLoss
 from loss.loss_function import segmentation_loss
 from models.getnetwork import get_network
 
@@ -43,8 +43,8 @@ METRIC_FIELDS = [
     'best_val_jaccard', 'epoch_seconds',
     # HETERO-FDCL ADDITION: these fields expose the optional objective without
     # changing any of the original FDCL metric columns.
-    'train_loss_feature', 'train_loss_semantic',
-    'train_loss_complement', 'train_feature_valid_ratio',
+    'train_loss_feature', 'train_loss_complement',
+    'train_feature_valid_ratio',
 ]
 
 def init_seeds(seed):
@@ -253,15 +253,13 @@ def _experiment_name(args, split_sup_mark, split_unsup_mark):
     feature_loss_mode = getattr(args, 'feature_loss_mode', 'original')
     if feature_loss_mode != 'original':
         experiment_name += (
-            '-fl={}-sem={}-comp={}-m={}-ct={}-pd={}-sc={}-pc={}-sd={}'
+            '-fl={}-comp={}-m={}-ct={}-pd={}-pc={}-sd={}'
         ).format(
             feature_loss_mode,
-            getattr(args, 'w_sem', 0.0),
             getattr(args, 'w_comp', 0.0),
             getattr(args, 'feature_margin', 0.0),
             getattr(args, 'feature_confidence_threshold', 0.0),
             getattr(args, 'feature_projection_dim', 0),
-            getattr(args, 'semantic_feature_channels', 0),
             getattr(args, 'private_feature_channels', 0),
             args.sd,
         )
@@ -364,15 +362,14 @@ def build_training_components(args, cfg):
     # HETERO-FDCL ADDITION: this auxiliary module is constructed only when
     # explicitly requested. The default "original" path allocates no heads and
     # keeps the original optimizer parameter sets.
-    heterogeneous_feature_loss = None
-    if getattr(args, 'feature_loss_mode', 'original') == 'semantic_private':
+    complementarity_feature_loss = None
+    if getattr(args, 'feature_loss_mode', 'original') == 'complementarity':
         if args.network != 'xnet_sb':
             raise ValueError(
-                'semantic_private hierarchical features currently require '
+                'complementarity features currently require '
                 '--network xnet_sb'
             )
-        heterogeneous_feature_loss = HeterogeneousFeatureLoss(
-            semantic_in_channels=args.semantic_feature_channels,
+        complementarity_feature_loss = ComplementarityFeatureLoss(
             private_in_channels=args.private_feature_channels,
             num_classes=cfg['NUM_CLASSES'],
             projection_dim=args.feature_projection_dim,
@@ -383,13 +380,13 @@ def build_training_components(args, cfg):
         ).cuda()
 
     appearance_head_parameters = (
-        heterogeneous_feature_loss.appearance_parameters()
-        if heterogeneous_feature_loss is not None
+        complementarity_feature_loss.appearance_parameters()
+        if complementarity_feature_loss is not None
         else None
     )
     structure_head_parameters = (
-        heterogeneous_feature_loss.structure_parameters()
-        if heterogeneous_feature_loss is not None
+        complementarity_feature_loss.structure_parameters()
+        if complementarity_feature_loss is not None
         else None
     )
     optimizer1, scheduler1 = _build_optimizer_and_scheduler(
@@ -403,7 +400,7 @@ def build_training_components(args, cfg):
         (optimizer1, optimizer2),
         (scheduler1, scheduler2),
         criterion,
-        heterogeneous_feature_loss,
+        complementarity_feature_loss,
     )
 
 
@@ -422,17 +419,17 @@ def _feature_diversification_loss(feature1, feature2):
 def _forward_training_model(model, model_input, feature_loss_mode):
     """Request hierarchical features only for the optional heterogeneous loss."""
 
-    if feature_loss_mode == 'semantic_private':
+    if feature_loss_mode == 'complementarity':
         # HETERO-FDCL ADDITION: XNet keeps its legacy output by default; this
-        # keyword explicitly requests H/4 semantic and H/2 private features.
+        # keyword explicitly requests the H/2 private feature.
         prediction, features = model(
             model_input, return_feature_pyramid=True
         )
         if not isinstance(features, Mapping):
             raise TypeError(
-                'semantic_private mode requires a feature dictionary'
+                'complementarity mode requires a feature dictionary'
             )
-        required = {'semantic', 'private', 'final'}
+        required = {'private', 'final'}
         missing = required.difference(features)
         if missing:
             raise KeyError(
@@ -446,7 +443,7 @@ def _forward_training_model(model, model_input, feature_loss_mode):
 
 def _compute_feature_objective(
     args,
-    heterogeneous_feature_loss,
+    complementarity_feature_loss,
     feature1,
     feature2,
     *,
@@ -463,7 +460,6 @@ def _compute_feature_objective(
         original_loss = _feature_diversification_loss(feature1, feature2)
         return {
             'weighted': args.w_dis * original_loss,
-            'semantic': zero,
             'complement': zero,
             'valid_ratio': zero.detach(),
         }
@@ -471,38 +467,31 @@ def _compute_feature_objective(
         zero = feature1.new_zeros(())
         return {
             'weighted': zero,
-            'semantic': zero,
             'complement': zero,
             'valid_ratio': zero.detach(),
         }
-    if mode != 'semantic_private':
+    if mode != 'complementarity':
         raise ValueError('Unsupported feature_loss_mode: {}'.format(mode))
-    if heterogeneous_feature_loss is None:
+    if complementarity_feature_loss is None:
         raise RuntimeError(
-            'semantic_private mode requires HeterogeneousFeatureLoss'
+            'complementarity mode requires ComplementarityFeatureLoss'
         )
     if not isinstance(feature1, Mapping) or not isinstance(feature2, Mapping):
         raise TypeError(
-            'semantic_private mode requires hierarchical feature dictionaries'
+            'complementarity mode requires hierarchical feature dictionaries'
         )
 
     # HETERO-FDCL ADDITION: supervised calls use labels; unlabeled calls use
     # detached, high-confidence consensus predictions inside the loss module.
-    result = heterogeneous_feature_loss(
-        feature1['semantic'],
-        feature2['semantic'],
-        appearance_private_feature=feature1['private'],
-        structure_private_feature=feature2['private'],
+    result = complementarity_feature_loss(
+        feature1['private'],
+        feature2['private'],
         labels=labels,
         appearance_logits=prediction1,
         structure_logits=prediction2,
     )
     return {
-        'weighted': (
-            args.w_sem * result.semantic
-            + args.w_comp * result.complement
-        ),
-        'semantic': result.semantic,
+        'weighted': args.w_comp * result.complement,
         'complement': result.complement,
         'valid_ratio': result.valid_ratio,
     }
@@ -515,7 +504,7 @@ def train_one_epoch(
     optimizers,
     criterion,
     dataloaders,
-    heterogeneous_feature_loss=None,
+    complementarity_feature_loss=None,
 ):
     model1, model2 = models
     optimizer1, optimizer2 = optimizers
@@ -530,7 +519,6 @@ def train_one_epoch(
         'total': 0.0,
         # HETERO-FDCL ADDITION: diagnostic-only accumulators.
         'feature': 0.0,
-        'semantic': 0.0,
         'complement': 0.0,
         'feature_valid_ratio': 0.0,
     }
@@ -563,7 +551,7 @@ def train_one_epoch(
 
         unsup_feature_objective = _compute_feature_objective(
             args,
-            heterogeneous_feature_loss,
+            complementarity_feature_loss,
             unsup_feature1,
             unsup_feature2,
             prediction1=unsup_prediction1,
@@ -606,7 +594,7 @@ def train_one_epoch(
         supervised_loss2 = criterion(sup_prediction2, sup_mask)
         sup_feature_objective = _compute_feature_objective(
             args,
-            heterogeneous_feature_loss,
+            complementarity_feature_loss,
             sup_feature1,
             sup_feature2,
             labels=sup_mask,
@@ -627,14 +615,10 @@ def train_one_epoch(
         loss_totals['sup2'] += supervised_loss2.item()
         loss_totals['total'] += total_loss.item()
         # HETERO-FDCL ADDITION: report the exact weighted contribution to the
-        # total loss plus the two raw components used for ablations.
+        # total loss plus the raw component used for diagnostics.
         loss_totals['feature'] += (
             unsup_weight * unsup_feature_objective['weighted']
             + sup_feature_objective['weighted']
-        ).item()
-        loss_totals['semantic'] += (
-            unsup_feature_objective['semantic']
-            + sup_feature_objective['semantic']
         ).item()
         loss_totals['complement'] += (
             unsup_feature_objective['complement']
@@ -729,7 +713,6 @@ def _collect_epoch_metrics(
         'epoch_seconds': epoch_seconds,
         # HETERO-FDCL ADDITION: auxiliary feature diagnostics.
         'train_loss_feature': feature_metrics['feature'],
-        'train_loss_semantic': feature_metrics['semantic'],
         'train_loss_complement': feature_metrics['complement'],
         'train_feature_valid_ratio': feature_metrics['valid_ratio'],
     }
@@ -743,7 +726,7 @@ def _log_epoch(logger, args, metrics):
         '| val_loss1=%.6f | val_loss2=%.6f '
         '| val_jaccard1=%.6f | val_dice1=%.6f '
         '| val_jaccard2=%.6f | val_dice2=%.6f '
-        '| feature=%.6f (semantic=%.6f, complement=%.6f, valid=%.4f) '
+        '| feature=%.6f (complement=%.6f, valid=%.4f) '
         '| best_jaccard=%.6f | lr=%.8g | time=%.2fs',
         metrics['epoch'],
         args.num_epochs,
@@ -762,7 +745,6 @@ def _log_epoch(logger, args, metrics):
         metrics['val_jaccard2'],
         metrics['val_dice2'],
         metrics['train_loss_feature'],
-        metrics['train_loss_semantic'],
         metrics['train_loss_complement'],
         metrics['train_feature_valid_ratio'],
         metrics['best_val_jaccard'],
@@ -791,7 +773,7 @@ def train_model(
         optimizers,
         schedulers,
         criterion,
-        heterogeneous_feature_loss,
+        complementarity_feature_loss,
     ) = build_training_components(args, cfg)
 
     model1, model2 = models
@@ -818,7 +800,7 @@ def train_model(
                 optimizers,
                 criterion,
                 dataloaders,
-                heterogeneous_feature_loss,
+                complementarity_feature_loss,
             )
             schedulers[0].step()
             schedulers[1].step()
@@ -890,7 +872,6 @@ def train_model(
             train_batch_count = num_batches['train_sup']
             feature_metrics = {
                 'feature': loss_totals['feature'] / train_batch_count,
-                'semantic': loss_totals['semantic'] / train_batch_count,
                 'complement': (
                     loss_totals['complement'] / train_batch_count
                 ),
@@ -1008,29 +989,17 @@ def parse_args():
     parser.add_argument(
         '--feature_loss_mode',
         default='original',
-        choices=['original', 'semantic_private', 'none'],
+        choices=['original', 'complementarity', 'none'],
         help=(
-            'feature objective: original FDCL, optional semantic/private '
-            'heterogeneous objective, or no feature objective'
+            'feature objective: original FDCL, optional private-feature '
+            'complementarity, or no feature objective'
         ),
-    )
-    parser.add_argument(
-        '--w_sem',
-        default=0.1,
-        type=float,
-        help='weight of semantic prototype consistency',
     )
     parser.add_argument(
         '--w_comp',
         default=0.05,
         type=float,
         help='weight of private feature complementarity',
-    )
-    parser.add_argument(
-        '--semantic_feature_channels',
-        default=256,
-        type=int,
-        help='channel count of the H/4 semantic decoder feature',
     )
     parser.add_argument(
         '--private_feature_channels',
@@ -1042,7 +1011,7 @@ def parse_args():
         '--feature_projection_dim',
         default=32,
         type=int,
-        help='channel count of each semantic/private projection',
+        help='channel count of each private-feature projection',
     )
     parser.add_argument(
         '--feature_margin',

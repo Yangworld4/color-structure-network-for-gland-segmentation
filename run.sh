@@ -8,22 +8,56 @@ source /data/software/miniconda3/etc/profile.d/conda.sh
 # 2. 激活指定的虚拟环境
 conda activate cg-seg
 
-echo "=== 开始运行实验 1/6 ==="
-python main.py --dataset_name GlaS --path_dataset datasets/GLaS --labeled_ratio 10 --path_trained_models checkpoints/semi_fdcl_10_w_sc_seed-14 --feature_loss_mode semantic_private --w_sem 0.1 --w_comp 0 --sd 14
+echo "=== 开始运行实验 1 with complementarity ==="
 
-echo "=== 开始运行实验 2/6 ==="
-python main.py --dataset_name GlaS --path_dataset datasets/GLaS --labeled_ratio 10 --path_trained_models checkpoints/semi_fdcl_10_w_sc_seed-24 --feature_loss_mode semantic_private --w_sem 0.1 --w_comp 0 --sd 24
+python main.py \
+    --dataset_name GlaS      \
+    --path_dataset datasets/GLaS \
+    --path_trained_models checkpoints/semi_fdcl_10_w_comp_seed-4 \
+    --feature_loss_mode complementarity \
+    --w_comp 0.01 \
+    --sd 4
 
-echo "=== 开始运行实验 3/6 ==="
-python main.py --dataset_name GlaS --path_dataset datasets/GLaS --labeled_ratio 10 --path_trained_models checkpoints/semi_fdcl_10_w_sc_comp_seed-14 --feature_loss_mode semantic_private --w_sem 0.1 --w_comp 0.01 --sd 14
+python main.py \
+    --dataset_name GlaS      \
+    --path_dataset datasets/GLaS \
+    --path_trained_models checkpoints/semi_fdcl_10_w_comp_seed-14 \
+    --feature_loss_mode complementarity \
+    --w_comp 0.01 \
+    --sd 14
 
-echo "=== 开始运行实验 4/6 ==="
-python main.py --dataset_name GlaS --path_dataset datasets/GLaS --labeled_ratio 10 --path_trained_models checkpoints/semi_fdcl_10_w_sc_comp_seed-24 --feature_loss_mode semantic_private --w_sem 0.1 --w_comp 0.01 --sd 24
+python main.py \
+    --dataset_name GlaS      \
+    --path_dataset datasets/GLaS \
+    --path_trained_models checkpoints/semi_fdcl_10_w_comp_seed-24 \
+    --feature_loss_mode complementarity \
+    --w_comp 0.01 \
+    --sd 24
 
-echo "=== 开始运行实验 5/6 ==="
-python main.py --dataset_name GlaS --path_dataset datasets/GLaS --labeled_ratio 10 --path_trained_models checkpoints/semi_fdcl_10_w-o_sc_comp_seed-14 --feature_loss_mode semantic_private --w_sem 0 --w_comp 0 --sd 14
+echo "=== 开始运行实验 2 without complementarity ==="
 
-echo "=== 开始运行实验 6/6 ==="
-python main.py --dataset_name GlaS --path_dataset datasets/GLaS --labeled_ratio 10 --path_trained_models checkpoints/semi_fdcl_10_w-o_sc_comp_seed-24 --feature_loss_mode semantic_private --w_sem 0 --w_comp 0 --sd 24
+python main.py \
+    --dataset_name GlaS      \
+    --path_dataset datasets/GLaS \
+    --path_trained_models checkpoints/semi_fdcl_10_w-o_comp_seed-4 \
+    --feature_loss_mode complementarity \
+    --w_comp 0 \
+    --sd 4
+
+python main.py \
+    --dataset_name GlaS      \
+    --path_dataset datasets/GLaS \
+    --path_trained_models checkpoints/semi_fdcl_10_w-o_comp_seed-14 \
+    --feature_loss_mode complementarity \
+    --w_comp 0 \
+    --sd 14
+
+python main.py \
+    --dataset_name GlaS      \
+    --path_dataset datasets/GLaS \
+    --path_trained_models checkpoints/semi_fdcl_10_w-o_comp_seed-24 \
+    --feature_loss_mode complementarity \
+    --w_comp 0 \
+    --sd 24
 
 echo "=== 所有实验已全部完成！ ==="

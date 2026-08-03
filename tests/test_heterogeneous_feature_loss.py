@@ -1,19 +1,19 @@
-"""CPU tests for the optional heterogeneous FDCL feature objective."""
+"""CPU tests for the optional complementarity feature objective."""
 
 import unittest
 from types import SimpleNamespace
 
 import torch
 
-from loss.heterogeneous_feature_loss import HeterogeneousFeatureLoss
+from loss.heterogeneous_feature_loss import ComplementarityFeatureLoss
 from main import _compute_feature_objective, _feature_diversification_loss
 
 
-class HeterogeneousFeatureLossTest(unittest.TestCase):
+class ComplementarityFeatureLossTest(unittest.TestCase):
     def setUp(self):
         torch.manual_seed(7)
-        self.loss = HeterogeneousFeatureLoss(
-            semantic_in_channels=4,
+        self.loss = ComplementarityFeatureLoss(
+            private_in_channels=4,
             num_classes=2,
             projection_dim=4,
             margin=0.2,
@@ -29,7 +29,6 @@ class HeterogeneousFeatureLossTest(unittest.TestCase):
         output.total.backward()
 
         self.assertTrue(torch.isfinite(output.total))
-        self.assertTrue(torch.isfinite(output.semantic))
         self.assertTrue(torch.isfinite(output.complement))
         self.assertEqual(output.valid_ratio.item(), 1.0)
         self.assertIsNotNone(appearance.grad)
@@ -59,34 +58,18 @@ class HeterogeneousFeatureLossTest(unittest.TestCase):
         self.assertEqual(output.valid_ratio.item(), 1.0)
         self.assertTrue(torch.isfinite(output.total))
 
-    def test_hierarchical_semantic_and_private_features(self):
-        hierarchical_loss = HeterogeneousFeatureLoss(
-            semantic_in_channels=8,
-            private_in_channels=4,
-            num_classes=2,
-            projection_dim=4,
-        )
-        semantic_a = torch.randn(2, 8, 4, 4, requires_grad=True)
-        semantic_s = torch.randn(2, 8, 4, 4, requires_grad=True)
-        private_a = torch.randn(2, 4, 8, 8, requires_grad=True)
-        private_s = torch.randn(2, 4, 8, 8, requires_grad=True)
+    def test_feature_mask_is_resized_to_private_resolution(self):
+        appearance = torch.randn(2, 4, 4, 4, requires_grad=True)
+        structure = torch.randn(2, 4, 4, 4, requires_grad=True)
         labels = torch.randint(0, 2, (2, 16, 16))
 
-        output = hierarchical_loss(
-            semantic_a,
-            semantic_s,
-            appearance_private_feature=private_a,
-            structure_private_feature=private_s,
-            labels=labels,
-        )
+        output = self.loss(appearance, structure, labels=labels)
         output.total.backward()
 
         self.assertTrue(torch.isfinite(output.total))
         self.assertEqual(output.valid_ratio.item(), 1.0)
-        self.assertIsNotNone(semantic_a.grad)
-        self.assertIsNotNone(semantic_s.grad)
-        self.assertIsNotNone(private_a.grad)
-        self.assertIsNotNone(private_s.grad)
+        self.assertIsNotNone(appearance.grad)
+        self.assertIsNotNone(structure.grad)
 
     def test_no_consensus_returns_differentiable_zero(self):
         appearance = torch.randn(1, 4, 4, 4, requires_grad=True)
@@ -125,6 +108,34 @@ class HeterogeneousFeatureLossTest(unittest.TestCase):
         )
 
         torch.testing.assert_close(selected['weighted'], expected)
+
+    def test_complementarity_mode_applies_only_complement_weight(self):
+        args = SimpleNamespace(
+            feature_loss_mode='complementarity',
+            w_comp=0.05,
+        )
+        features_a = {
+            'private': torch.randn(2, 4, 8, 8),
+            'final': torch.randn(2, 4, 16, 16),
+        }
+        features_s = {
+            'private': torch.randn(2, 4, 8, 8),
+            'final': torch.randn(2, 4, 16, 16),
+        }
+        labels = torch.randint(0, 2, (2, 16, 16))
+
+        selected = _compute_feature_objective(
+            args,
+            self.loss,
+            features_a,
+            features_s,
+            labels=labels,
+        )
+
+        torch.testing.assert_close(
+            selected['weighted'], 0.05 * selected['complement']
+        )
+        self.assertNotIn('semantic', selected)
 
 
 if __name__ == '__main__':
