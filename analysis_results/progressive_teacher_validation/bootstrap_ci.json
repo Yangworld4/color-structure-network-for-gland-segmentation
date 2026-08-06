@@ -1,0 +1,30 @@
+{
+  "HRR_union": {
+    "mean": 0.6670423161279446,
+    "ci95_low": 0.587917851228862,
+    "ci95_high": 0.7462885281709034,
+    "sampling_unit": "image",
+    "num_images": 17,
+    "iterations": 2000,
+    "seed": 2026
+  },
+  "historical_oracle_gain": {
+    "mean": 0.09438982585693827,
+    "ci95_low": 0.06773647273561849,
+    "ci95_high": 0.12269474708801345,
+    "sampling_unit": "image",
+    "num_images": 17,
+    "iterations": 2000,
+    "seed": 2026
+  },
+  "current_oracle_gain": {
+    "mean": 0.01193644099569694,
+    "ci95_low": 0.0065191405773304305,
+    "ci95_high": 0.01969343639349343,
+    "sampling_unit": "image",
+    "num_images": 17,
+    "iterations": 2000,
+    "seed": 2026
+  },
+  "method": "Image-level nonparametric bootstrap of image-wise metrics; pixels are not resampling units."
+}

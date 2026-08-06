@@ -1,0 +1,33 @@
+{
+  "best_appearance": {
+    "dice": 0.8552205561083531,
+    "iou": 0.7470614192730906
+  },
+  "best_structure": {
+    "dice": 0.8649511314829011,
+    "iou": 0.76203867117451
+  },
+  "current_oracle": {
+    "dice": 0.8763912221755477,
+    "iou": 0.7799789744188622
+  },
+  "historical_oracle": {
+    "tp": 466556,
+    "tn": 598061,
+    "fp": 29623,
+    "fn": 19872,
+    "iou": 0.904088936946137,
+    "dice": 0.9496288953772877,
+    "precision": 0.9402977554471079,
+    "recall": 0.9591470885721841,
+    "sensitivity": 0.9591470885721841,
+    "specificity": 0.9528058704698391,
+    "accuracy": 0.9555744844324363,
+    "fpr": 0.04719412953014499,
+    "fnr": 0.040852911427795256
+  },
+  "current_oracle_gain_over_best_single": 0.01144009069264651,
+  "historical_oracle_gain_over_best_single": 0.08467776389438653,
+  "historical_oracle_gain_over_current_oracle": 0.07323767320174002,
+  "warning": "All oracle values use validation GT and are analysis-only theoretical upper bounds; they are not deployable."
+}

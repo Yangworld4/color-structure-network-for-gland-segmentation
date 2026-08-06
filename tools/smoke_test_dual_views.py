@@ -136,7 +136,7 @@ def main() -> None:
     manifest_root = dataset_root / "manifests" / "paper_seed_2026"
     labeled_manifest = manifest_root / "labeled_{}.csv".format(args.labeled_ratio)
     unlabeled_manifest = manifest_root / "unlabeled_{}.csv".format(args.labeled_ratio)
-    validation_manifest = manifest_root / "test.csv"
+    validation_manifest = manifest_root / "validation.csv"
     dual_config = cfg["dual_view"]
 
     seed_everything(args.seed)

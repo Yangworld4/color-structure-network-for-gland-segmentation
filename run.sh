@@ -8,56 +8,34 @@ source /data/software/miniconda3/etc/profile.d/conda.sh
 # 2. 激活指定的虚拟环境
 conda activate cg-seg
 
-echo "=== 开始运行实验 1 with complementarity ==="
+echo "=== 开始运行实验 ==="
 
 python main.py \
     --dataset_name GlaS      \
     --path_dataset datasets/GLaS \
-    --path_trained_models checkpoints/semi_fdcl_10_w_comp_seed-4 \
-    --feature_loss_mode complementarity \
-    --w_comp 0.01 \
-    --sd 4
+    --path_trained_models checkpoints/semi__10_seed \
+    --labeled_ratio 10 \
+    --sd 1337
 
 python main.py \
     --dataset_name GlaS      \
     --path_dataset datasets/GLaS \
-    --path_trained_models checkpoints/semi_fdcl_10_w_comp_seed-14 \
-    --feature_loss_mode complementarity \
-    --w_comp 0.01 \
-    --sd 14
+    --path_trained_models checkpoints/semi_cps_20_seed \
+    --labeled_ratio 20 \
+    --sd 1337
 
-python main.py \
-    --dataset_name GlaS      \
-    --path_dataset datasets/GLaS \
-    --path_trained_models checkpoints/semi_fdcl_10_w_comp_seed-24 \
-    --feature_loss_mode complementarity \
-    --w_comp 0.01 \
-    --sd 24
+# python main.py \
+#     --dataset_name CRAG      \
+#     --path_dataset datasets/CRAG \
+#     --path_trained_models checkpoints/semi_fdcl_10_seed-4 \
+#     --labeled_ratio 10 \
+#     --sd 4
 
-echo "=== 开始运行实验 2 without complementarity ==="
-
-python main.py \
-    --dataset_name GlaS      \
-    --path_dataset datasets/GLaS \
-    --path_trained_models checkpoints/semi_fdcl_10_w-o_comp_seed-4 \
-    --feature_loss_mode complementarity \
-    --w_comp 0 \
-    --sd 4
-
-python main.py \
-    --dataset_name GlaS      \
-    --path_dataset datasets/GLaS \
-    --path_trained_models checkpoints/semi_fdcl_10_w-o_comp_seed-14 \
-    --feature_loss_mode complementarity \
-    --w_comp 0 \
-    --sd 14
-
-python main.py \
-    --dataset_name GlaS      \
-    --path_dataset datasets/GLaS \
-    --path_trained_models checkpoints/semi_fdcl_10_w-o_comp_seed-24 \
-    --feature_loss_mode complementarity \
-    --w_comp 0 \
-    --sd 24
+# python main.py \
+#     --dataset_name CRAG      \
+#     --path_dataset datasets/CRAG \
+#     --path_trained_models checkpoints/semi_fdcl_20_seed-4 \
+#     --labeled_ratio 20 \
+#     --sd 4
 
 echo "=== 所有实验已全部完成！ ==="

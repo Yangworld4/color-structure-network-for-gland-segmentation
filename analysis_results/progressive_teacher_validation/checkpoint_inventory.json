@@ -1,0 +1,529 @@
+{
+  "best_appearance": "/data/mission/models/Exp/DUAL/checkpoints/semi_10_seed/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image/best_result1_Jc_0.7471.pth",
+  "best_structure": "/data/mission/models/Exp/DUAL/checkpoints/semi_10_seed/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image/best_result2_Jc_0.7620.pth",
+  "history_semantics": "best_so_far_snapshots_inferred_from_filenames",
+  "pairs": [
+    {
+      "epoch": 10,
+      "appearance": "/data/mission/models/Exp/DUAL/checkpoints/semi_10_seed/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image/periodic_best/epoch_0010_best_A_Jc_0.5281.pth",
+      "structure": "/data/mission/models/Exp/DUAL/checkpoints/semi_10_seed/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image/periodic_best/epoch_0010_best_S_Jc_0.5611.pth"
+    },
+    {
+      "epoch": 20,
+      "appearance": "/data/mission/models/Exp/DUAL/checkpoints/semi_10_seed/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image/periodic_best/epoch_0020_best_A_Jc_0.5896.pth",
+      "structure": "/data/mission/models/Exp/DUAL/checkpoints/semi_10_seed/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image/periodic_best/epoch_0020_best_S_Jc_0.6444.pth"
+    },
+    {
+      "epoch": 30,
+      "appearance": "/data/mission/models/Exp/DUAL/checkpoints/semi_10_seed/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image/periodic_best/epoch_0030_best_A_Jc_0.6634.pth",
+      "structure": "/data/mission/models/Exp/DUAL/checkpoints/semi_10_seed/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image/periodic_best/epoch_0030_best_S_Jc_0.6726.pth"
+    },
+    {
+      "epoch": 40,
+      "appearance": "/data/mission/models/Exp/DUAL/checkpoints/semi_10_seed/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image/periodic_best/epoch_0040_best_A_Jc_0.6748.pth",
+      "structure": "/data/mission/models/Exp/DUAL/checkpoints/semi_10_seed/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image/periodic_best/epoch_0040_best_S_Jc_0.6980.pth"
+    },
+    {
+      "epoch": 50,
+      "appearance": "/data/mission/models/Exp/DUAL/checkpoints/semi_10_seed/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image/periodic_best/epoch_0050_best_A_Jc_0.7157.pth",
+      "structure": "/data/mission/models/Exp/DUAL/checkpoints/semi_10_seed/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image/periodic_best/epoch_0050_best_S_Jc_0.7081.pth"
+    },
+    {
+      "epoch": 60,
+      "appearance": "/data/mission/models/Exp/DUAL/checkpoints/semi_10_seed/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image/periodic_best/epoch_0060_best_A_Jc_0.7165.pth",
+      "structure": "/data/mission/models/Exp/DUAL/checkpoints/semi_10_seed/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image/periodic_best/epoch_0060_best_S_Jc_0.7117.pth"
+    },
+    {
+      "epoch": 70,
+      "appearance": "/data/mission/models/Exp/DUAL/checkpoints/semi_10_seed/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image/periodic_best/epoch_0070_best_A_Jc_0.7337.pth",
+      "structure": "/data/mission/models/Exp/DUAL/checkpoints/semi_10_seed/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image/periodic_best/epoch_0070_best_S_Jc_0.7238.pth"
+    },
+    {
+      "epoch": 80,
+      "appearance": "/data/mission/models/Exp/DUAL/checkpoints/semi_10_seed/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image/periodic_best/epoch_0080_best_A_Jc_0.7337.pth",
+      "structure": "/data/mission/models/Exp/DUAL/checkpoints/semi_10_seed/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image/periodic_best/epoch_0080_best_S_Jc_0.7238.pth"
+    },
+    {
+      "epoch": 90,
+      "appearance": "/data/mission/models/Exp/DUAL/checkpoints/semi_10_seed/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image/periodic_best/epoch_0090_best_A_Jc_0.7337.pth",
+      "structure": "/data/mission/models/Exp/DUAL/checkpoints/semi_10_seed/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image/periodic_best/epoch_0090_best_S_Jc_0.7412.pth"
+    },
+    {
+      "epoch": 100,
+      "appearance": "/data/mission/models/Exp/DUAL/checkpoints/semi_10_seed/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image/periodic_best/epoch_0100_best_A_Jc_0.7337.pth",
+      "structure": "/data/mission/models/Exp/DUAL/checkpoints/semi_10_seed/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image/periodic_best/epoch_0100_best_S_Jc_0.7464.pth"
+    },
+    {
+      "epoch": 110,
+      "appearance": "/data/mission/models/Exp/DUAL/checkpoints/semi_10_seed/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image/periodic_best/epoch_0110_best_A_Jc_0.7337.pth",
+      "structure": "/data/mission/models/Exp/DUAL/checkpoints/semi_10_seed/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image/periodic_best/epoch_0110_best_S_Jc_0.7467.pth"
+    },
+    {
+      "epoch": 120,
+      "appearance": "/data/mission/models/Exp/DUAL/checkpoints/semi_10_seed/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image/periodic_best/epoch_0120_best_A_Jc_0.7337.pth",
+      "structure": "/data/mission/models/Exp/DUAL/checkpoints/semi_10_seed/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image/periodic_best/epoch_0120_best_S_Jc_0.7467.pth"
+    },
+    {
+      "epoch": 130,
+      "appearance": "/data/mission/models/Exp/DUAL/checkpoints/semi_10_seed/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image/periodic_best/epoch_0130_best_A_Jc_0.7337.pth",
+      "structure": "/data/mission/models/Exp/DUAL/checkpoints/semi_10_seed/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image/periodic_best/epoch_0130_best_S_Jc_0.7518.pth"
+    },
+    {
+      "epoch": 140,
+      "appearance": "/data/mission/models/Exp/DUAL/checkpoints/semi_10_seed/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image/periodic_best/epoch_0140_best_A_Jc_0.7471.pth",
+      "structure": "/data/mission/models/Exp/DUAL/checkpoints/semi_10_seed/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image/periodic_best/epoch_0140_best_S_Jc_0.7518.pth"
+    },
+    {
+      "epoch": 150,
+      "appearance": "/data/mission/models/Exp/DUAL/checkpoints/semi_10_seed/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image/periodic_best/epoch_0150_best_A_Jc_0.7471.pth",
+      "structure": "/data/mission/models/Exp/DUAL/checkpoints/semi_10_seed/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image/periodic_best/epoch_0150_best_S_Jc_0.7571.pth"
+    },
+    {
+      "epoch": 160,
+      "appearance": "/data/mission/models/Exp/DUAL/checkpoints/semi_10_seed/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image/periodic_best/epoch_0160_best_A_Jc_0.7471.pth",
+      "structure": "/data/mission/models/Exp/DUAL/checkpoints/semi_10_seed/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image/periodic_best/epoch_0160_best_S_Jc_0.7571.pth"
+    },
+    {
+      "epoch": 170,
+      "appearance": "/data/mission/models/Exp/DUAL/checkpoints/semi_10_seed/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image/periodic_best/epoch_0170_best_A_Jc_0.7471.pth",
+      "structure": "/data/mission/models/Exp/DUAL/checkpoints/semi_10_seed/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image/periodic_best/epoch_0170_best_S_Jc_0.7571.pth"
+    },
+    {
+      "epoch": 180,
+      "appearance": "/data/mission/models/Exp/DUAL/checkpoints/semi_10_seed/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image/periodic_best/epoch_0180_best_A_Jc_0.7471.pth",
+      "structure": "/data/mission/models/Exp/DUAL/checkpoints/semi_10_seed/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image/periodic_best/epoch_0180_best_S_Jc_0.7620.pth"
+    },
+    {
+      "epoch": 190,
+      "appearance": "/data/mission/models/Exp/DUAL/checkpoints/semi_10_seed/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image/periodic_best/epoch_0190_best_A_Jc_0.7471.pth",
+      "structure": "/data/mission/models/Exp/DUAL/checkpoints/semi_10_seed/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image/periodic_best/epoch_0190_best_S_Jc_0.7620.pth"
+    },
+    {
+      "epoch": 200,
+      "appearance": "/data/mission/models/Exp/DUAL/checkpoints/semi_10_seed/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image/periodic_best/epoch_0200_best_A_Jc_0.7471.pth",
+      "structure": "/data/mission/models/Exp/DUAL/checkpoints/semi_10_seed/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image/periodic_best/epoch_0200_best_S_Jc_0.7620.pth"
+    }
+  ],
+  "inference": {
+    "best_A": {
+      "checkpoint": "/data/mission/models/Exp/DUAL/checkpoints/semi_10_seed/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image/best_result1_Jc_0.7471.pth",
+      "branch": "appearance",
+      "network": "unet",
+      "threshold": 0.38,
+      "threshold_source": "same validation split, project 0.02 Jaccard grid",
+      "threshold_search_jaccard": 0.7470614192730906,
+      "manifest": "/data/mission/models/Exp/DUAL/datasets/GLaS/manifests/paper_seed_2026/validation.csv",
+      "cache_hit": false
+    },
+    "best_S": {
+      "checkpoint": "/data/mission/models/Exp/DUAL/checkpoints/semi_10_seed/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image/best_result2_Jc_0.7620.pth",
+      "branch": "structure",
+      "network": "unet",
+      "threshold": 0.34,
+      "threshold_source": "same validation split, project 0.02 Jaccard grid",
+      "threshold_search_jaccard": 0.76203867117451,
+      "manifest": "/data/mission/models/Exp/DUAL/datasets/GLaS/manifests/paper_seed_2026/validation.csv",
+      "cache_hit": false
+    },
+    "epoch_10_A": {
+      "checkpoint": "/data/mission/models/Exp/DUAL/checkpoints/semi_10_seed/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image/periodic_best/epoch_0010_best_A_Jc_0.5281.pth",
+      "branch": "appearance",
+      "network": "unet",
+      "threshold": 0.3,
+      "threshold_source": "same validation split, project 0.02 Jaccard grid",
+      "threshold_search_jaccard": 0.5281236289820839,
+      "manifest": "/data/mission/models/Exp/DUAL/datasets/GLaS/manifests/paper_seed_2026/validation.csv",
+      "cache_hit": false
+    },
+    "epoch_10_S": {
+      "checkpoint": "/data/mission/models/Exp/DUAL/checkpoints/semi_10_seed/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image/periodic_best/epoch_0010_best_S_Jc_0.5611.pth",
+      "branch": "structure",
+      "network": "unet",
+      "threshold": 0.56,
+      "threshold_source": "same validation split, project 0.02 Jaccard grid",
+      "threshold_search_jaccard": 0.5610668371376765,
+      "manifest": "/data/mission/models/Exp/DUAL/datasets/GLaS/manifests/paper_seed_2026/validation.csv",
+      "cache_hit": false
+    },
+    "epoch_20_A": {
+      "checkpoint": "/data/mission/models/Exp/DUAL/checkpoints/semi_10_seed/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image/periodic_best/epoch_0020_best_A_Jc_0.5896.pth",
+      "branch": "appearance",
+      "network": "unet",
+      "threshold": 0.28,
+      "threshold_source": "same validation split, project 0.02 Jaccard grid",
+      "threshold_search_jaccard": 0.5895556230655009,
+      "manifest": "/data/mission/models/Exp/DUAL/datasets/GLaS/manifests/paper_seed_2026/validation.csv",
+      "cache_hit": false
+    },
+    "epoch_20_S": {
+      "checkpoint": "/data/mission/models/Exp/DUAL/checkpoints/semi_10_seed/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image/periodic_best/epoch_0020_best_S_Jc_0.6444.pth",
+      "branch": "structure",
+      "network": "unet",
+      "threshold": 0.16,
+      "threshold_source": "same validation split, project 0.02 Jaccard grid",
+      "threshold_search_jaccard": 0.6443543581350347,
+      "manifest": "/data/mission/models/Exp/DUAL/datasets/GLaS/manifests/paper_seed_2026/validation.csv",
+      "cache_hit": false
+    },
+    "epoch_30_A": {
+      "checkpoint": "/data/mission/models/Exp/DUAL/checkpoints/semi_10_seed/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image/periodic_best/epoch_0030_best_A_Jc_0.6634.pth",
+      "branch": "appearance",
+      "network": "unet",
+      "threshold": 0.14,
+      "threshold_source": "same validation split, project 0.02 Jaccard grid",
+      "threshold_search_jaccard": 0.6634416239116613,
+      "manifest": "/data/mission/models/Exp/DUAL/datasets/GLaS/manifests/paper_seed_2026/validation.csv",
+      "cache_hit": false
+    },
+    "epoch_30_S": {
+      "checkpoint": "/data/mission/models/Exp/DUAL/checkpoints/semi_10_seed/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image/periodic_best/epoch_0030_best_S_Jc_0.6726.pth",
+      "branch": "structure",
+      "network": "unet",
+      "threshold": 0.54,
+      "threshold_source": "same validation split, project 0.02 Jaccard grid",
+      "threshold_search_jaccard": 0.6726104295257576,
+      "manifest": "/data/mission/models/Exp/DUAL/datasets/GLaS/manifests/paper_seed_2026/validation.csv",
+      "cache_hit": false
+    },
+    "epoch_40_A": {
+      "checkpoint": "/data/mission/models/Exp/DUAL/checkpoints/semi_10_seed/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image/periodic_best/epoch_0040_best_A_Jc_0.6748.pth",
+      "branch": "appearance",
+      "network": "unet",
+      "threshold": 0.62,
+      "threshold_source": "same validation split, project 0.02 Jaccard grid",
+      "threshold_search_jaccard": 0.6748003511578075,
+      "manifest": "/data/mission/models/Exp/DUAL/datasets/GLaS/manifests/paper_seed_2026/validation.csv",
+      "cache_hit": false
+    },
+    "epoch_40_S": {
+      "checkpoint": "/data/mission/models/Exp/DUAL/checkpoints/semi_10_seed/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image/periodic_best/epoch_0040_best_S_Jc_0.6980.pth",
+      "branch": "structure",
+      "network": "unet",
+      "threshold": 0.58,
+      "threshold_source": "same validation split, project 0.02 Jaccard grid",
+      "threshold_search_jaccard": 0.6980015326836512,
+      "manifest": "/data/mission/models/Exp/DUAL/datasets/GLaS/manifests/paper_seed_2026/validation.csv",
+      "cache_hit": false
+    },
+    "epoch_50_A": {
+      "checkpoint": "/data/mission/models/Exp/DUAL/checkpoints/semi_10_seed/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image/periodic_best/epoch_0050_best_A_Jc_0.7157.pth",
+      "branch": "appearance",
+      "network": "unet",
+      "threshold": 0.74,
+      "threshold_source": "same validation split, project 0.02 Jaccard grid",
+      "threshold_search_jaccard": 0.7156544253348175,
+      "manifest": "/data/mission/models/Exp/DUAL/datasets/GLaS/manifests/paper_seed_2026/validation.csv",
+      "cache_hit": false
+    },
+    "epoch_50_S": {
+      "checkpoint": "/data/mission/models/Exp/DUAL/checkpoints/semi_10_seed/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image/periodic_best/epoch_0050_best_S_Jc_0.7081.pth",
+      "branch": "structure",
+      "network": "unet",
+      "threshold": 0.38,
+      "threshold_source": "same validation split, project 0.02 Jaccard grid",
+      "threshold_search_jaccard": 0.7081357168916329,
+      "manifest": "/data/mission/models/Exp/DUAL/datasets/GLaS/manifests/paper_seed_2026/validation.csv",
+      "cache_hit": false
+    },
+    "epoch_60_A": {
+      "checkpoint": "/data/mission/models/Exp/DUAL/checkpoints/semi_10_seed/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image/periodic_best/epoch_0060_best_A_Jc_0.7165.pth",
+      "branch": "appearance",
+      "network": "unet",
+      "threshold": 0.62,
+      "threshold_source": "same validation split, project 0.02 Jaccard grid",
+      "threshold_search_jaccard": 0.7165021599138002,
+      "manifest": "/data/mission/models/Exp/DUAL/datasets/GLaS/manifests/paper_seed_2026/validation.csv",
+      "cache_hit": false
+    },
+    "epoch_60_S": {
+      "checkpoint": "/data/mission/models/Exp/DUAL/checkpoints/semi_10_seed/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image/periodic_best/epoch_0060_best_S_Jc_0.7117.pth",
+      "branch": "structure",
+      "network": "unet",
+      "threshold": 0.5,
+      "threshold_source": "same validation split, project 0.02 Jaccard grid",
+      "threshold_search_jaccard": 0.7117477980613404,
+      "manifest": "/data/mission/models/Exp/DUAL/datasets/GLaS/manifests/paper_seed_2026/validation.csv",
+      "cache_hit": false
+    },
+    "epoch_70_A": {
+      "checkpoint": "/data/mission/models/Exp/DUAL/checkpoints/semi_10_seed/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image/periodic_best/epoch_0070_best_A_Jc_0.7337.pth",
+      "branch": "appearance",
+      "network": "unet",
+      "threshold": 0.44,
+      "threshold_source": "same validation split, project 0.02 Jaccard grid",
+      "threshold_search_jaccard": 0.733735881903347,
+      "manifest": "/data/mission/models/Exp/DUAL/datasets/GLaS/manifests/paper_seed_2026/validation.csv",
+      "cache_hit": false
+    },
+    "epoch_70_S": {
+      "checkpoint": "/data/mission/models/Exp/DUAL/checkpoints/semi_10_seed/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image/periodic_best/epoch_0070_best_S_Jc_0.7238.pth",
+      "branch": "structure",
+      "network": "unet",
+      "threshold": 0.66,
+      "threshold_source": "same validation split, project 0.02 Jaccard grid",
+      "threshold_search_jaccard": 0.7238349614493595,
+      "manifest": "/data/mission/models/Exp/DUAL/datasets/GLaS/manifests/paper_seed_2026/validation.csv",
+      "cache_hit": false
+    },
+    "epoch_80_A": {
+      "checkpoint": "/data/mission/models/Exp/DUAL/checkpoints/semi_10_seed/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image/periodic_best/epoch_0080_best_A_Jc_0.7337.pth",
+      "branch": "appearance",
+      "network": "unet",
+      "threshold": 0.44,
+      "threshold_source": "same validation split, project 0.02 Jaccard grid",
+      "threshold_search_jaccard": 0.733735881903347,
+      "manifest": "/data/mission/models/Exp/DUAL/datasets/GLaS/manifests/paper_seed_2026/validation.csv",
+      "cache_hit": false
+    },
+    "epoch_80_S": {
+      "checkpoint": "/data/mission/models/Exp/DUAL/checkpoints/semi_10_seed/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image/periodic_best/epoch_0080_best_S_Jc_0.7238.pth",
+      "branch": "structure",
+      "network": "unet",
+      "threshold": 0.66,
+      "threshold_source": "same validation split, project 0.02 Jaccard grid",
+      "threshold_search_jaccard": 0.7238349614493595,
+      "manifest": "/data/mission/models/Exp/DUAL/datasets/GLaS/manifests/paper_seed_2026/validation.csv",
+      "cache_hit": false
+    },
+    "epoch_90_A": {
+      "checkpoint": "/data/mission/models/Exp/DUAL/checkpoints/semi_10_seed/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image/periodic_best/epoch_0090_best_A_Jc_0.7337.pth",
+      "branch": "appearance",
+      "network": "unet",
+      "threshold": 0.44,
+      "threshold_source": "same validation split, project 0.02 Jaccard grid",
+      "threshold_search_jaccard": 0.733735881903347,
+      "manifest": "/data/mission/models/Exp/DUAL/datasets/GLaS/manifests/paper_seed_2026/validation.csv",
+      "cache_hit": false
+    },
+    "epoch_90_S": {
+      "checkpoint": "/data/mission/models/Exp/DUAL/checkpoints/semi_10_seed/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image/periodic_best/epoch_0090_best_S_Jc_0.7412.pth",
+      "branch": "structure",
+      "network": "unet",
+      "threshold": 0.36,
+      "threshold_source": "same validation split, project 0.02 Jaccard grid",
+      "threshold_search_jaccard": 0.7411607432594364,
+      "manifest": "/data/mission/models/Exp/DUAL/datasets/GLaS/manifests/paper_seed_2026/validation.csv",
+      "cache_hit": false
+    },
+    "epoch_100_A": {
+      "checkpoint": "/data/mission/models/Exp/DUAL/checkpoints/semi_10_seed/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image/periodic_best/epoch_0100_best_A_Jc_0.7337.pth",
+      "branch": "appearance",
+      "network": "unet",
+      "threshold": 0.44,
+      "threshold_source": "same validation split, project 0.02 Jaccard grid",
+      "threshold_search_jaccard": 0.733735881903347,
+      "manifest": "/data/mission/models/Exp/DUAL/datasets/GLaS/manifests/paper_seed_2026/validation.csv",
+      "cache_hit": false
+    },
+    "epoch_100_S": {
+      "checkpoint": "/data/mission/models/Exp/DUAL/checkpoints/semi_10_seed/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image/periodic_best/epoch_0100_best_S_Jc_0.7464.pth",
+      "branch": "structure",
+      "network": "unet",
+      "threshold": 0.66,
+      "threshold_source": "same validation split, project 0.02 Jaccard grid",
+      "threshold_search_jaccard": 0.7463956274118677,
+      "manifest": "/data/mission/models/Exp/DUAL/datasets/GLaS/manifests/paper_seed_2026/validation.csv",
+      "cache_hit": false
+    },
+    "epoch_110_A": {
+      "checkpoint": "/data/mission/models/Exp/DUAL/checkpoints/semi_10_seed/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image/periodic_best/epoch_0110_best_A_Jc_0.7337.pth",
+      "branch": "appearance",
+      "network": "unet",
+      "threshold": 0.44,
+      "threshold_source": "same validation split, project 0.02 Jaccard grid",
+      "threshold_search_jaccard": 0.733735881903347,
+      "manifest": "/data/mission/models/Exp/DUAL/datasets/GLaS/manifests/paper_seed_2026/validation.csv",
+      "cache_hit": false
+    },
+    "epoch_110_S": {
+      "checkpoint": "/data/mission/models/Exp/DUAL/checkpoints/semi_10_seed/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image/periodic_best/epoch_0110_best_S_Jc_0.7467.pth",
+      "branch": "structure",
+      "network": "unet",
+      "threshold": 0.52,
+      "threshold_source": "same validation split, project 0.02 Jaccard grid",
+      "threshold_search_jaccard": 0.7467147311615037,
+      "manifest": "/data/mission/models/Exp/DUAL/datasets/GLaS/manifests/paper_seed_2026/validation.csv",
+      "cache_hit": false
+    },
+    "epoch_120_A": {
+      "checkpoint": "/data/mission/models/Exp/DUAL/checkpoints/semi_10_seed/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image/periodic_best/epoch_0120_best_A_Jc_0.7337.pth",
+      "branch": "appearance",
+      "network": "unet",
+      "threshold": 0.44,
+      "threshold_source": "same validation split, project 0.02 Jaccard grid",
+      "threshold_search_jaccard": 0.733735881903347,
+      "manifest": "/data/mission/models/Exp/DUAL/datasets/GLaS/manifests/paper_seed_2026/validation.csv",
+      "cache_hit": false
+    },
+    "epoch_120_S": {
+      "checkpoint": "/data/mission/models/Exp/DUAL/checkpoints/semi_10_seed/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image/periodic_best/epoch_0120_best_S_Jc_0.7467.pth",
+      "branch": "structure",
+      "network": "unet",
+      "threshold": 0.52,
+      "threshold_source": "same validation split, project 0.02 Jaccard grid",
+      "threshold_search_jaccard": 0.7467147311615037,
+      "manifest": "/data/mission/models/Exp/DUAL/datasets/GLaS/manifests/paper_seed_2026/validation.csv",
+      "cache_hit": false
+    },
+    "epoch_130_A": {
+      "checkpoint": "/data/mission/models/Exp/DUAL/checkpoints/semi_10_seed/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image/periodic_best/epoch_0130_best_A_Jc_0.7337.pth",
+      "branch": "appearance",
+      "network": "unet",
+      "threshold": 0.44,
+      "threshold_source": "same validation split, project 0.02 Jaccard grid",
+      "threshold_search_jaccard": 0.733735881903347,
+      "manifest": "/data/mission/models/Exp/DUAL/datasets/GLaS/manifests/paper_seed_2026/validation.csv",
+      "cache_hit": false
+    },
+    "epoch_130_S": {
+      "checkpoint": "/data/mission/models/Exp/DUAL/checkpoints/semi_10_seed/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image/periodic_best/epoch_0130_best_S_Jc_0.7518.pth",
+      "branch": "structure",
+      "network": "unet",
+      "threshold": 0.52,
+      "threshold_source": "same validation split, project 0.02 Jaccard grid",
+      "threshold_search_jaccard": 0.7518095721441987,
+      "manifest": "/data/mission/models/Exp/DUAL/datasets/GLaS/manifests/paper_seed_2026/validation.csv",
+      "cache_hit": false
+    },
+    "epoch_140_A": {
+      "checkpoint": "/data/mission/models/Exp/DUAL/checkpoints/semi_10_seed/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image/periodic_best/epoch_0140_best_A_Jc_0.7471.pth",
+      "branch": "appearance",
+      "network": "unet",
+      "threshold": 0.38,
+      "threshold_source": "same validation split, project 0.02 Jaccard grid",
+      "threshold_search_jaccard": 0.7470614192730906,
+      "manifest": "/data/mission/models/Exp/DUAL/datasets/GLaS/manifests/paper_seed_2026/validation.csv",
+      "cache_hit": false
+    },
+    "epoch_140_S": {
+      "checkpoint": "/data/mission/models/Exp/DUAL/checkpoints/semi_10_seed/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image/periodic_best/epoch_0140_best_S_Jc_0.7518.pth",
+      "branch": "structure",
+      "network": "unet",
+      "threshold": 0.52,
+      "threshold_source": "same validation split, project 0.02 Jaccard grid",
+      "threshold_search_jaccard": 0.7518095721441987,
+      "manifest": "/data/mission/models/Exp/DUAL/datasets/GLaS/manifests/paper_seed_2026/validation.csv",
+      "cache_hit": false
+    },
+    "epoch_150_A": {
+      "checkpoint": "/data/mission/models/Exp/DUAL/checkpoints/semi_10_seed/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image/periodic_best/epoch_0150_best_A_Jc_0.7471.pth",
+      "branch": "appearance",
+      "network": "unet",
+      "threshold": 0.38,
+      "threshold_source": "same validation split, project 0.02 Jaccard grid",
+      "threshold_search_jaccard": 0.7470614192730906,
+      "manifest": "/data/mission/models/Exp/DUAL/datasets/GLaS/manifests/paper_seed_2026/validation.csv",
+      "cache_hit": false
+    },
+    "epoch_150_S": {
+      "checkpoint": "/data/mission/models/Exp/DUAL/checkpoints/semi_10_seed/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image/periodic_best/epoch_0150_best_S_Jc_0.7571.pth",
+      "branch": "structure",
+      "network": "unet",
+      "threshold": 0.54,
+      "threshold_source": "same validation split, project 0.02 Jaccard grid",
+      "threshold_search_jaccard": 0.7571236501618958,
+      "manifest": "/data/mission/models/Exp/DUAL/datasets/GLaS/manifests/paper_seed_2026/validation.csv",
+      "cache_hit": false
+    },
+    "epoch_160_A": {
+      "checkpoint": "/data/mission/models/Exp/DUAL/checkpoints/semi_10_seed/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image/periodic_best/epoch_0160_best_A_Jc_0.7471.pth",
+      "branch": "appearance",
+      "network": "unet",
+      "threshold": 0.38,
+      "threshold_source": "same validation split, project 0.02 Jaccard grid",
+      "threshold_search_jaccard": 0.7470614192730906,
+      "manifest": "/data/mission/models/Exp/DUAL/datasets/GLaS/manifests/paper_seed_2026/validation.csv",
+      "cache_hit": false
+    },
+    "epoch_160_S": {
+      "checkpoint": "/data/mission/models/Exp/DUAL/checkpoints/semi_10_seed/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image/periodic_best/epoch_0160_best_S_Jc_0.7571.pth",
+      "branch": "structure",
+      "network": "unet",
+      "threshold": 0.54,
+      "threshold_source": "same validation split, project 0.02 Jaccard grid",
+      "threshold_search_jaccard": 0.7571236501618958,
+      "manifest": "/data/mission/models/Exp/DUAL/datasets/GLaS/manifests/paper_seed_2026/validation.csv",
+      "cache_hit": false
+    },
+    "epoch_170_A": {
+      "checkpoint": "/data/mission/models/Exp/DUAL/checkpoints/semi_10_seed/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image/periodic_best/epoch_0170_best_A_Jc_0.7471.pth",
+      "branch": "appearance",
+      "network": "unet",
+      "threshold": 0.38,
+      "threshold_source": "same validation split, project 0.02 Jaccard grid",
+      "threshold_search_jaccard": 0.7470614192730906,
+      "manifest": "/data/mission/models/Exp/DUAL/datasets/GLaS/manifests/paper_seed_2026/validation.csv",
+      "cache_hit": false
+    },
+    "epoch_170_S": {
+      "checkpoint": "/data/mission/models/Exp/DUAL/checkpoints/semi_10_seed/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image/periodic_best/epoch_0170_best_S_Jc_0.7571.pth",
+      "branch": "structure",
+      "network": "unet",
+      "threshold": 0.54,
+      "threshold_source": "same validation split, project 0.02 Jaccard grid",
+      "threshold_search_jaccard": 0.7571236501618958,
+      "manifest": "/data/mission/models/Exp/DUAL/datasets/GLaS/manifests/paper_seed_2026/validation.csv",
+      "cache_hit": false
+    },
+    "epoch_180_A": {
+      "checkpoint": "/data/mission/models/Exp/DUAL/checkpoints/semi_10_seed/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image/periodic_best/epoch_0180_best_A_Jc_0.7471.pth",
+      "branch": "appearance",
+      "network": "unet",
+      "threshold": 0.38,
+      "threshold_source": "same validation split, project 0.02 Jaccard grid",
+      "threshold_search_jaccard": 0.7470614192730906,
+      "manifest": "/data/mission/models/Exp/DUAL/datasets/GLaS/manifests/paper_seed_2026/validation.csv",
+      "cache_hit": false
+    },
+    "epoch_180_S": {
+      "checkpoint": "/data/mission/models/Exp/DUAL/checkpoints/semi_10_seed/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image/periodic_best/epoch_0180_best_S_Jc_0.7620.pth",
+      "branch": "structure",
+      "network": "unet",
+      "threshold": 0.34,
+      "threshold_source": "same validation split, project 0.02 Jaccard grid",
+      "threshold_search_jaccard": 0.76203867117451,
+      "manifest": "/data/mission/models/Exp/DUAL/datasets/GLaS/manifests/paper_seed_2026/validation.csv",
+      "cache_hit": false
+    },
+    "epoch_190_A": {
+      "checkpoint": "/data/mission/models/Exp/DUAL/checkpoints/semi_10_seed/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image/periodic_best/epoch_0190_best_A_Jc_0.7471.pth",
+      "branch": "appearance",
+      "network": "unet",
+      "threshold": 0.38,
+      "threshold_source": "same validation split, project 0.02 Jaccard grid",
+      "threshold_search_jaccard": 0.7470614192730906,
+      "manifest": "/data/mission/models/Exp/DUAL/datasets/GLaS/manifests/paper_seed_2026/validation.csv",
+      "cache_hit": false
+    },
+    "epoch_190_S": {
+      "checkpoint": "/data/mission/models/Exp/DUAL/checkpoints/semi_10_seed/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image/periodic_best/epoch_0190_best_S_Jc_0.7620.pth",
+      "branch": "structure",
+      "network": "unet",
+      "threshold": 0.34,
+      "threshold_source": "same validation split, project 0.02 Jaccard grid",
+      "threshold_search_jaccard": 0.76203867117451,
+      "manifest": "/data/mission/models/Exp/DUAL/datasets/GLaS/manifests/paper_seed_2026/validation.csv",
+      "cache_hit": false
+    },
+    "epoch_200_A": {
+      "checkpoint": "/data/mission/models/Exp/DUAL/checkpoints/semi_10_seed/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image/periodic_best/epoch_0200_best_A_Jc_0.7471.pth",
+      "branch": "appearance",
+      "network": "unet",
+      "threshold": 0.38,
+      "threshold_source": "same validation split, project 0.02 Jaccard grid",
+      "threshold_search_jaccard": 0.7470614192730906,
+      "manifest": "/data/mission/models/Exp/DUAL/datasets/GLaS/manifests/paper_seed_2026/validation.csv",
+      "cache_hit": false
+    },
+    "epoch_200_S": {
+      "checkpoint": "/data/mission/models/Exp/DUAL/checkpoints/semi_10_seed/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image/periodic_best/epoch_0200_best_S_Jc_0.7620.pth",
+      "branch": "structure",
+      "network": "unet",
+      "threshold": 0.34,
+      "threshold_source": "same validation split, project 0.02 Jaccard grid",
+      "threshold_search_jaccard": 0.76203867117451,
+      "manifest": "/data/mission/models/Exp/DUAL/datasets/GLaS/manifests/paper_seed_2026/validation.csv",
+      "cache_hit": false
+    }
+  }
+}

@@ -1,7 +1,7 @@
-"""Evaluate an FDCL model at 256x256 on the configured test manifest.
+"""Evaluate an FDCL model on a validation or test manifest at 256x256.
 
-With ``--threshold auto``, the threshold is selected directly on the test
-manifest to reproduce the paper/released-code evaluation protocol.
+With ``--threshold auto``, the threshold is selected on the validation
+manifest and then applied unchanged to the selected evaluation split.
 """
 
 import argparse
@@ -236,8 +236,25 @@ def parse_args():
                         choices=['auto', 'GlaS', 'CRAG', 'MoNuSeg'],
                         help='infer from an explicit checkpoint or the available checkpoint directory')
     parser.add_argument('--path_dataset', default=None)
+    parser.add_argument(
+        '--split',
+        default='test',
+        choices=['validation', 'test'],
+        help='dataset split to evaluate (default: test)',
+    )
     parser.add_argument('--manifest', default=None,
-                        help='defaults to PATH_DATASET/manifests/paper_seed_2026/test.csv')
+                        help=(
+                            'evaluation manifest override; defaults to '
+                            'PATH_DATASET/manifests/paper_seed_2026/SPLIT.csv'
+                        ))
+    parser.add_argument(
+        '--validation_manifest',
+        default=None,
+        help=(
+            'validation data used only by --threshold auto; defaults to '
+            'PATH_DATASET/manifests/paper_seed_2026/validation.csv'
+        ),
+    )
     parser.add_argument('--checkpoint', default=None,
                         help='checkpoint file; when omitted, select the highest-Jc best checkpoint')
     parser.add_argument('--checkpoint_root', default='checkpoints')
@@ -256,7 +273,7 @@ def parse_args():
     parser.add_argument('--num_workers', default=4, type=int)
     parser.add_argument('--threshold', default='0.5',
                         help="foreground probability threshold in [0,1] (default: 0.5); "
-                             "'auto' selects the Jaccard-optimal threshold on the test manifest")
+                             "'auto' selects the Jaccard-optimal threshold on the validation manifest")
     parser.add_argument('--device', default='auto', choices=['auto', 'cuda', 'cpu'])
     parser.add_argument(
         '--dual_view',
@@ -316,13 +333,38 @@ def main():
             )
         )
     manifest_path = Path(args.manifest) if args.manifest else (
-        dataset_root / 'manifests' / 'paper_seed_2026' / 'test.csv'
+        dataset_root / 'manifests' / 'paper_seed_2026'
+        / '{}.csv'.format(args.split)
     )
     manifest_dataset = infer_dataset_from_path(manifest_path)
     if manifest_dataset and manifest_dataset != dataset_name:
         raise ValueError(
-            'Test manifest belongs to {}, but the selected checkpoint belongs to {}: {}'.format(
-                manifest_dataset, dataset_name, manifest_path
+            '{} manifest belongs to {}, but the selected checkpoint belongs '
+            'to {}: {}'.format(
+                args.split.capitalize(),
+                manifest_dataset,
+                dataset_name,
+                manifest_path,
+            )
+        )
+    validation_manifest_path = (
+        Path(args.validation_manifest)
+        if args.validation_manifest
+        else dataset_root / 'manifests' / 'paper_seed_2026' / 'validation.csv'
+    )
+    validation_manifest_dataset = infer_dataset_from_path(
+        validation_manifest_path
+    )
+    if (
+        validation_manifest_dataset
+        and validation_manifest_dataset != dataset_name
+    ):
+        raise ValueError(
+            'Validation manifest belongs to {}, but the selected checkpoint '
+            'belongs to {}: {}'.format(
+                validation_manifest_dataset,
+                dataset_name,
+                validation_manifest_path,
             )
         )
 
@@ -335,16 +377,19 @@ def main():
 
     transforms = data_transform_2d()
     normalize = data_normalize_2d(cfg['MEAN'], cfg['STD'])
-    test_dataset = imagefloder_itn(
+    evaluation_transform = transforms[
+        'val' if args.split == 'validation' else 'test'
+    ]
+    evaluation_dataset = imagefloder_itn(
         manifest_path=str(manifest_path),
-        data_transform_1=transforms['test'],
+        data_transform_1=evaluation_transform,
         data_normalize_1=normalize,
         sup=True,
         dual_view_config=dual_view_cfg,
         training=False,
     )
-    test_loader = DataLoader(
-        test_dataset,
+    evaluation_loader = DataLoader(
+        evaluation_dataset,
         batch_size=args.batch_size,
         shuffle=False,
         num_workers=args.num_workers,
@@ -357,27 +402,53 @@ def main():
     model.eval()
 
     if requested_threshold is None:
+        if args.split == 'validation' and args.validation_manifest is None:
+            validation_loader = evaluation_loader
+            threshold_manifest_path = manifest_path
+        else:
+            validation_dataset = imagefloder_itn(
+                manifest_path=str(validation_manifest_path),
+                data_transform_1=transforms['val'],
+                data_normalize_1=normalize,
+                sup=True,
+                dual_view_config=dual_view_cfg,
+                training=False,
+            )
+            validation_loader = DataLoader(
+                validation_dataset,
+                batch_size=args.batch_size,
+                shuffle=False,
+                num_workers=args.num_workers,
+                pin_memory=device.type == 'cuda',
+            )
+            threshold_manifest_path = validation_manifest_path
         threshold, threshold_search_jaccard = select_best_threshold(
-            model, test_loader, device, input_view
+            model, validation_loader, device, input_view
         )
-        threshold_source = 'test'
+        threshold_source = 'validation'
+        threshold_manifest = str(threshold_manifest_path)
     else:
         threshold = requested_threshold
         threshold_search_jaccard = None
         threshold_source = 'fixed'
+        threshold_manifest = None
 
     output_dir = Path(args.output_dir) if args.output_dir else (
         Path('test_results') / dataset_name
-        / '{}_{}'.format(checkpoint_path.stem, input_view)
+        / '{}_{}'.format(checkpoint_path.stem, input_view) / args.split
     )
     prediction_dir = output_dir / 'predictions'
     prediction_dir.mkdir(parents=True, exist_ok=True)
 
-    logger = logging.getLogger('fdcl.test')
+    logger = logging.getLogger('fdcl.evaluate')
     logger.setLevel(logging.INFO)
     logger.handlers.clear()
     stream_handler = logging.StreamHandler()
-    file_handler = logging.FileHandler(output_dir / 'test.log', mode='w', encoding='utf-8')
+    file_handler = logging.FileHandler(
+        output_dir / '{}.log'.format(args.split),
+        mode='w',
+        encoding='utf-8',
+    )
     formatter = logging.Formatter('%(asctime)s | %(levelname)s | %(message)s')
     stream_handler.setFormatter(formatter)
     file_handler.setFormatter(formatter)
@@ -386,19 +457,21 @@ def main():
 
     logger.info('Checkpoint: %s', checkpoint_path)
     logger.info('Dataset: %s', dataset_name)
+    logger.info('Evaluation split: %s', args.split)
     logger.info('Manifest: %s', manifest_path)
     logger.info('Input view: %s', input_view)
     if threshold_search_jaccard is None:
         logger.info(
             'Device: %s | samples=%d | evaluation_size=256x256 '
             '| threshold=%.4f (fixed)',
-            device, len(test_dataset), threshold,
+            device, len(evaluation_dataset), threshold,
         )
     else:
+        logger.info('Threshold validation manifest: %s', threshold_manifest)
         logger.info(
             'Device: %s | samples=%d | evaluation_size=256x256 '
-            '| threshold=%.4f (selected on test, test Jaccard=%.6f)',
-            device, len(test_dataset), threshold, threshold_search_jaccard,
+            '| threshold=%.4f (selected on validation, validation Jaccard=%.6f)',
+            device, len(evaluation_dataset), threshold, threshold_search_jaccard,
         )
 
     total_tp = total_tn = total_fp = total_fn = 0
@@ -406,7 +479,7 @@ def main():
     per_image_rows = []
 
     with torch.inference_mode():
-        for batch in test_loader:
+        for batch in evaluation_loader:
             images = select_model_input(batch, input_view).to(
                 device, non_blocking=True
             )
@@ -433,14 +506,16 @@ def main():
 
     aggregate = metrics_from_counts(total_tp, total_tn, total_fp, total_fn)
     aggregate.update({
-        'loss': total_loss / len(test_dataset),
+        'loss': total_loss / len(evaluation_dataset),
         'threshold': threshold,
         'threshold_source': threshold_source,
+        'threshold_manifest': threshold_manifest,
         'threshold_search_jaccard': threshold_search_jaccard,
         'evaluation_size': [256, 256],
-        'samples': len(test_dataset),
+        'samples': len(evaluation_dataset),
         'checkpoint': str(checkpoint_path),
         'input_view': input_view,
+        'split': args.split,
         'manifest': str(manifest_path),
     })
 
@@ -456,8 +531,9 @@ def main():
         writer.writerows(per_image_rows)
 
     logger.info(
-        'Test completed | loss=%.6f | Jaccard=%.6f | Dice=%.6f '
+        '%s completed | loss=%.6f | Jaccard=%.6f | Dice=%.6f '
         '| Precision=%.6f | Recall=%.6f | Specificity=%.6f | Accuracy=%.6f',
+        args.split.capitalize(),
         aggregate['loss'], aggregate['jaccard'], aggregate['dice'],
         aggregate['precision'], aggregate['recall'],
         aggregate['specificity'], aggregate['accuracy'],

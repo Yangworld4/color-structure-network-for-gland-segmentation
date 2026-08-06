@@ -50,12 +50,25 @@ datasets/GLaS/
     ├── unlabeled_10.csv
     ├── labeled_20.csv
     ├── unlabeled_20.csv
-    └── validation.csv
+    ├── validation.csv
+    └── test.csv
 ```
 
 Paths in each CSV are resolved relative to that CSV file. Supervised manifests
 must contain `image` and `mask` columns; unlabeled manifests only need `image`.
 Binary masks may use either `0/1` or `0/255` values.
+
+`paper_seed_2026` first separates the official training split into a training
+pool and a validation set. The 10%/20% labeled subsets are then sampled from
+the training pool (rounding up), and the remainder is used as unlabeled data:
+
+| Dataset | Train pool | 10% labeled | 10% unlabeled | 20% labeled | 20% unlabeled | Validation | Test |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| CRAG | 153 | 16 | 137 | 31 | 122 | 20 | 40 |
+| GLaS | 68 | 7 | 61 | 14 | 54 | 17 | 80 |
+
+Training and checkpoint selection use `validation.csv`; `test.csv` is reserved
+for the final evaluation.
 
 ## Training FDCL
 
@@ -83,52 +96,52 @@ Train with the 10% labeled split:
 python main.py --labeled_ratio 10
 ```
 
-### Optional heterogeneous-view complementarity objective
-
-The original reciprocal-MSE FDCL feature loss is still the default and its
-implementation is unchanged:
+Choose how inputs are routed to the two CPS branches:
 
 ```bash
-python main.py --feature_loss_mode original
+# Heterogeneous: Result1=RGB appearance, Result2=H+Gray+Sobel structure.
+python main.py --branch_input_mode heterogeneous
+
+# Homogeneous ablation: both branches receive the same augmented RGB tensor.
+python main.py --branch_input_mode homogeneous
 ```
 
-Enable the optional heterogeneous-view adaptation with:
+The legacy `--dual_view` / `--no-dual_view` flags remain supported. Homogeneous
+runs receive an `-input=homogeneous` experiment-directory suffix so they do not
+overwrite heterogeneous checkpoints or metrics.
+
+#### Stage-1 complementarity diagnostics
+
+The diagnostic path is disabled by default and does not change the training
+loss, regular metrics CSV, best-model selection, or standard checkpoints. Run
+the isolated seed-4 experiment with:
 
 ```bash
-python main.py \
-  --dual_view \
-  --feature_loss_mode complementarity \
-  --w_comp 0.01
+./run_diagnostics.sh
 ```
 
-This mode adds one private-feature projection head to each training branch.
-Both heads consume the `b1_2_3` decoder output before upsampling
-(`[B, 128, H/2, W/2]`); the final `[B, 64, H, W]` feature remains dedicated
-to segmentation.
+When `--complementarity_diagnostics` is enabled, validation logits that are
+already in memory are additionally used to evaluate mean-probability fusion,
+entropy-weighted fusion, and a ground-truth oracle upper bound. The default
+five-epoch interval limits diagnostic overhead. By default, results are written
+under the experiment's `complementarity_diagnostics/` subdirectory; the
+provided script uses the predictable path
+`outputs/complementarity_stage1/glas_10_seed4/`:
 
-Private projections use a bounded cosine-margin complementarity term plus a
-small variance floor to prevent collapse. Labeled images use all valid pixels;
-unlabeled images use only pixels on which both branches agree and both
-confidence values exceed
-`--feature_confidence_threshold` (default `0.7`).
+- `diagnostics_metrics.csv`: epoch-level branch, fusion, oracle, and
+  boundary/interior statistics;
+- `best_summary.json`: the best mean-fusion epoch and its key gains;
+- `best_per_image.csv`: per-image overlap and exclusive-correctness ratios;
+- `best_predictions.npz`: paired probabilities, masks, and boundary maps;
+- `best_pair_model1.pth` / `best_pair_model2.pth`: both branches from the same
+  best mean-fusion epoch;
+- `visualizations/`: GT, branch, fusion, and error-region panels. Orange means
+  appearance-only correct, cyan means structure-only correct, and red means
+  both branches are wrong.
 
-Relevant options:
-
-- `--feature_loss_mode original`: unchanged FDCL loss (default).
-- `--feature_loss_mode complementarity`: private-feature complementarity
-  (`--w_dis` is not used in this mode).
-- `--feature_loss_mode none`: no feature-level objective, for ablation.
-- `--private_feature_channels 128`: H/2 private feature width.
-- `--feature_projection_dim 32`: private projection width.
-- `--feature_margin 0.2`: unpenalized private cosine-similarity margin.
-- `--private_variance_weight 0.1`: private projection anti-collapse weight.
-
-The auxiliary projection heads shape training but are not part of inference
-checkpoints. New code paths are marked `HETERO-FDCL ADDITION`; the preserved
-loss is marked `ORIGINAL FDCL LOSS`. Metrics CSV files additionally report
-`train_loss_feature`, `train_loss_complement`, and
-`train_feature_valid_ratio`. The last field is the unlabeled high-confidence
-consensus-pixel coverage.
+The oracle uses ground truth only to quantify the theoretical value of a
+perfect per-pixel branch selector. It is never used by the optimizer or pseudo
+label generation.
 
 Aligned dual views are enabled by the dataset configuration. The existing
 `image` field aliases the normalized RGB `image_appearance`, while
@@ -173,6 +186,19 @@ After training, test the checkpoint with the highest validation Jaccard:
 ```bash
 python test.py --dataset_name GlaS --path_dataset datasets/GLaS
 ```
+
+Evaluate the same checkpoint on the validation split instead:
+
+```bash
+python test.py \
+  --dataset_name GlaS \
+  --path_dataset datasets/GLaS \
+  --split validation
+```
+
+`--split test` is the default. The selected split controls the default manifest
+(`test.csv` or `validation.csv`) and its separate output subdirectory. An
+explicit `--manifest` overrides that default.
 
 When checkpoints exist for only one dataset, `python test.py` identifies that
 dataset automatically. An explicit checkpoint also determines the dataset from

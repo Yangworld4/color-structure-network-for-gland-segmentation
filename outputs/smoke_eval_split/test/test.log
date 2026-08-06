@@ -1,0 +1,8 @@
+2026-08-06 10:38:04,968 | INFO | Checkpoint: checkpoints/semi_cps_10_seed/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image/best_result2_Jc_0.7585.pth
+2026-08-06 10:38:04,969 | INFO | Dataset: GlaS
+2026-08-06 10:38:04,969 | INFO | Evaluation split: test
+2026-08-06 10:38:04,969 | INFO | Manifest: datasets/GLaS/manifests/paper_seed_2026/test.csv
+2026-08-06 10:38:04,969 | INFO | Input view: structure
+2026-08-06 10:38:04,969 | INFO | Device: cuda | samples=80 | evaluation_size=256x256 | threshold=0.5000 (fixed)
+2026-08-06 10:38:07,698 | INFO | Test completed | loss=0.676393 | Jaccard=0.758885 | Dice=0.862916 | Precision=0.823266 | Recall=0.906577 | Specificity=0.795633 | Accuracy=0.852460
+2026-08-06 10:38:07,698 | INFO | Results saved to: outputs/smoke_eval_split/test

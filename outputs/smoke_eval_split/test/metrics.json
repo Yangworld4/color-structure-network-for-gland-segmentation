@@ -1,0 +1,22 @@
+{
+  "jaccard": 0.7588845121735662,
+  "dice": 0.8629156797062975,
+  "precision": 0.8232663894499361,
+  "recall": 0.9065773025660432,
+  "specificity": 0.795632808018494,
+  "accuracy": 0.8524604797363264,
+  "loss": 0.676393173635006,
+  "threshold": 0.5,
+  "threshold_source": "fixed",
+  "threshold_manifest": null,
+  "threshold_search_jaccard": null,
+  "evaluation_size": [
+    256,
+    256
+  ],
+  "samples": 80,
+  "checkpoint": "checkpoints/semi_cps_10_seed/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image/best_result2_Jc_0.7585.pth",
+  "input_view": "structure",
+  "split": "test",
+  "manifest": "datasets/GLaS/manifests/paper_seed_2026/test.csv"
+}

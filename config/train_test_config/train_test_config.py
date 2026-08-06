@@ -222,68 +222,124 @@ def save_val_best_sup_3d(num_classes, best_list, model, score_list_val, mask_lis
 
     return best_list
 
-def save_val_best_2d(num_classes, best_model, best_list, best_result, model1, model2, score_list_val_1, score_list_val_2, name_list_val, eval_list_1, eval_list_2, path_trained_model, path_seg_results, palette):
+def save_val_best_2d(
+    best_lists,
+    best_states,
+    best_epochs,
+    model1,
+    model2,
+    eval_list_1,
+    eval_list_2,
+    epoch,
+):
+    """独立更新 Result1 和 Result2 的验证集历史最佳权重快照。"""
+    updated_lists = list(best_lists)
+    updated_states = list(best_states)
+    updated_epochs = list(best_epochs)
+    for index, (model, evaluation) in enumerate(
+        ((model1, eval_list_1), (model2, eval_list_2))
+    ):
+        if updated_states[index] is None or updated_lists[index][1] < evaluation[1]:
+            updated_lists[index] = list(evaluation)
+            updated_states[index] = _snapshot_model_state(model)
+            updated_epochs[index] = epoch + 1
+    return tuple(updated_lists), tuple(updated_states), tuple(updated_epochs)
 
-    if eval_list_1[1] < eval_list_2[1]:
-        if best_list[1] < eval_list_2[1]:
 
-            # 最佳模型必须保存独立权重快照，不能只保存仍在训练的模型引用。
-            best_model = _snapshot_model_state(model2)
-            best_list = eval_list_2
-            best_result = 'Result2'
+def save_periodic_branch_bests(
+    best_lists,
+    best_states,
+    best_epochs,
+    path_trained_model,
+    current_epoch,
+):
+    """额外保存当前 epoch 为止两个分支各自的历史最佳权重。"""
+    periodic_dir = os.path.join(path_trained_model, 'periodic_best')
+    os.makedirs(periodic_dir, exist_ok=True)
 
-            torch.save(best_model, os.path.join(path_trained_model, 'best_{}_Jc_{:.4f}.pth'.format('result2', best_list[1])))
+    saved_paths = []
+    for branch_name, best_list, best_state, best_epoch in zip(
+        ('A', 'S'), best_lists, best_states, best_epochs
+    ):
+        if best_state is None:
+            raise RuntimeError(
+                'Branch {} has no validation checkpoint at epoch {}'.format(
+                    branch_name, current_epoch
+                )
+            )
+        checkpoint_name = 'epoch_{:04d}_best_{}_Jc_{:.4f}.pth'.format(
+            current_epoch, branch_name, best_list[1]
+        )
+        checkpoint_path = os.path.join(periodic_dir, checkpoint_name)
+        torch.save(best_state, checkpoint_path)
+        saved_paths.append(
+            {
+                'branch': branch_name,
+                'path': checkpoint_path,
+                'best_epoch': best_epoch,
+                'best_jaccard': best_list[1],
+            }
+        )
+    return saved_paths
 
-            if num_classes == 2:
-                score_list_val_2 = torch.softmax(score_list_val_2, dim=1)
-                pred_results = score_list_val_2[:, 1, ...].cpu().numpy()
-                pred_results[pred_results > eval_list_2[0]] = 1
-                pred_results[pred_results <= eval_list_2[0]] = 0
-            else:
-                pred_results = torch.max(score_list_val_2, 1)[1]
-                pred_results = pred_results.cpu().numpy()
 
-            assert len(name_list_val) == pred_results.shape[0]
-            for i in range(len(name_list_val)):
-                color_results = Image.fromarray(pred_results[i].astype(np.uint8), mode='P')
-                color_results.putpalette(palette)
-                color_results.save(os.path.join(path_seg_results, name_list_val[i]))
+def print_and_save_branch_bests(
+    num_classes,
+    best_lists,
+    best_states,
+    best_epochs,
+    path_trained_model,
+    print_num,
+):
+    """训练结束时分别保存两个分支各自的验证集历史最优权重。"""
+    for index, (best_list, best_state, best_epoch) in enumerate(
+        zip(best_lists, best_states, best_epochs),
+        start=1,
+    ):
+        if best_state is None:
+            raise RuntimeError('Result{} has no validation checkpoint'.format(index))
+        checkpoint_name = 'best_result{}_Jc_{:.4f}.pth'.format(
+            index, best_list[1]
+        )
+        torch.save(best_state, os.path.join(path_trained_model, checkpoint_name))
+        print(
+            '| Best Result{} Epoch: {}'.format(index, best_epoch).ljust(
+                print_num, ' '
+            ),
+            '|',
+        )
+        if num_classes == 2:
+            print(
+                '| Best Result{} Val Thr: {:.4f}'.format(
+                    index, best_list[0]
+                ).ljust(print_num, ' '),
+                '|',
+            )
+            print(
+                '| Best Result{} Val  Jc: {:.4f}'.format(
+                    index, best_list[1]
+                ).ljust(print_num, ' '),
+                '|',
+            )
+            print(
+                '| Best Result{} Val  Dc: {:.4f}'.format(
+                    index, best_list[2]
+                ).ljust(print_num, ' '),
+                '|',
+            )
         else:
-            best_model = best_model
-            best_list = best_list
-            best_result = best_result
-
-    else:
-        if best_list[1] < eval_list_1[1]:
-
-            # 最佳模型必须保存独立权重快照，不能只保存仍在训练的模型引用。
-            best_model = _snapshot_model_state(model1)
-            best_list = eval_list_1
-            best_result = 'Result1'
-
-            torch.save(best_model, os.path.join(path_trained_model, 'best_{}_Jc_{:.4f}.pth'.format('result1', best_list[1])))
-
-            if num_classes == 2:
-                score_list_val_1 = torch.softmax(score_list_val_1, dim=1)
-                pred_results = score_list_val_1[:, 1, ...].cpu().numpy()
-                pred_results[pred_results > eval_list_1[0]] = 1
-                pred_results[pred_results <= eval_list_1[0]] = 0
-            else:
-                pred_results = torch.max(score_list_val_1, 1)[1]
-                pred_results = pred_results.cpu().numpy()
-
-            assert len(name_list_val) == pred_results.shape[0]
-            for i in range(len(name_list_val)):
-                color_results = Image.fromarray(pred_results[i].astype(np.uint8), mode='P')
-                color_results.putpalette(palette)
-                color_results.save(os.path.join(path_seg_results, name_list_val[i]))
-        else:
-            best_model = best_model
-            best_list = best_list
-            best_result = best_result
-
-
-    return best_list, best_model, best_result
+            print(
+                '| Best Result{} Val mJc: {:.4f}'.format(
+                    index, best_list[1]
+                ).ljust(print_num, ' '),
+                '|',
+            )
+            print(
+                '| Best Result{} Val mDc: {:.4f}'.format(
+                    index, best_list[3]
+                ).ljust(print_num, ' '),
+                '|',
+            )
 
 
 def save_val_best_3d(num_classes, best_model, best_list, best_result, model1, model2, score_list_val_1, score_list_val_2, mask_list_val, eval_list_1, eval_list_2, path_trained_model, path_seg_results, path_mask_results, format):
@@ -445,5 +501,3 @@ def save_test_3d(num_classes, score_test, name_test, threshold, path_seg_results
 
         output_image = tio.ScalarImage(tensor=pred_results.unsqueeze(0), affine=affine)
         output_image.save(os.path.join(path_seg_results, name_test))
-
-

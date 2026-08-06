@@ -1,0 +1,8 @@
+2026-08-06 10:37:58,445 | INFO | Checkpoint: checkpoints/semi_cps_10_seed/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image/best_result2_Jc_0.7585.pth
+2026-08-06 10:37:58,445 | INFO | Dataset: GlaS
+2026-08-06 10:37:58,445 | INFO | Evaluation split: validation
+2026-08-06 10:37:58,445 | INFO | Manifest: datasets/GLaS/manifests/paper_seed_2026/validation.csv
+2026-08-06 10:37:58,445 | INFO | Input view: structure
+2026-08-06 10:37:58,445 | INFO | Device: cuda | samples=17 | evaluation_size=256x256 | threshold=0.5000 (fixed)
+2026-08-06 10:37:59,245 | INFO | Validation completed | loss=0.618581 | Jaccard=0.758502 | Dice=0.862668 | Precision=0.866401 | Recall=0.858968 | Specificity=0.897354 | Accuracy=0.880595
+2026-08-06 10:37:59,245 | INFO | Results saved to: outputs/smoke_eval_split/validation

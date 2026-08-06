@@ -16,16 +16,16 @@ from torch.utils.data import DataLoader
 from config.augmentation.online_aug import data_normalize_2d, data_transform_2d
 from config.dataset_config.dataset_cfg import dataset_cfg
 from config.train_test_config.train_test_config import (
-    print_best,
+    print_and_save_branch_bests,
     print_train_eval,
     print_train_loss,
     print_val_eval,
     print_val_loss,
+    save_periodic_branch_bests,
     save_val_best_2d,
 )
 from config.warmup_config.warmup import GradualWarmupScheduler
 from dataload.dataset_2d import imagefloder_itn
-from loss.heterogeneous_feature_loss import ComplementarityFeatureLoss
 from loss.loss_function import segmentation_loss
 from models.getnetwork import get_network
 
@@ -40,11 +40,8 @@ METRIC_FIELDS = [
     'val_loss1', 'val_loss2',
     'val_threshold1', 'val_jaccard1', 'val_dice1',
     'val_threshold2', 'val_jaccard2', 'val_dice2',
+    'best_val_jaccard1', 'best_val_jaccard2',
     'best_val_jaccard', 'epoch_seconds',
-    # HETERO-FDCL ADDITION: these fields expose the optional objective without
-    # changing any of the original FDCL metric columns.
-    'train_loss_feature', 'train_loss_complement',
-    'train_feature_valid_ratio',
 ]
 
 def init_seeds(seed):
@@ -61,7 +58,7 @@ def init_seeds(seed):
 def get_model_inputs(
     batch: Mapping[str, torch.Tensor],
 ) -> Tuple[torch.Tensor, torch.Tensor]:
-    """Route RGB appearance to model1 and H/Gray/Sobel structure to model2."""
+    """Route heterogeneous views, or the same augmented RGB image, to branches."""
     appearance = batch.get('image_appearance', batch['image'])
     structure = batch.get('image_structure', batch['image'])
     return appearance, structure
@@ -76,8 +73,15 @@ def _normalization_keys(input_name):
 def build_datasets(args, cfg):
     """Build the supervised, unlabeled, and validation datasets."""
     dual_view_cfg = cfg['dual_view']
-    if args.dual_view is not None:
+    if args.branch_input_mode is not None:
+        dual_view_cfg['enabled'] = (
+            args.branch_input_mode == 'heterogeneous'
+        )
+    elif args.dual_view is not None:
         dual_view_cfg['enabled'] = args.dual_view
+    args.effective_branch_input_mode = (
+        'heterogeneous' if dual_view_cfg['enabled'] else 'homogeneous'
+    )
 
     manifest_dir = args.manifest_dir or os.path.join(
         args.path_dataset, 'manifests', 'paper_seed_2026'
@@ -104,7 +108,7 @@ def build_datasets(args, cfg):
             )
         }
         validation_source = {
-            'manifest_path': os.path.join(manifest_dir, 'test.csv')
+            'manifest_path': os.path.join(manifest_dir, 'validation.csv')
         }
     else:
         labeled_source = {
@@ -169,6 +173,7 @@ def print_data_summary(args, datasets, manifest_dir, use_manifests):
     val_sample = datasets['val'][0]
 
     print('Data source:', manifest_dir if use_manifests else args.path_dataset)
+    print('Branch input mode:', args.effective_branch_input_mode)
     print(
         'Unique samples: supervised={}, unsupervised={}, validation={}'.format(
             len(datasets['train_sup_unique']),
@@ -248,21 +253,8 @@ def _experiment_name(args, split_sup_mark, split_unsup_mark):
             args.input1,
         )
     )
-    # HETERO-FDCL ADDITION: only non-original modes receive a suffix, so the
-    # default command keeps the exact legacy output directory convention.
-    feature_loss_mode = getattr(args, 'feature_loss_mode', 'original')
-    if feature_loss_mode != 'original':
-        experiment_name += (
-            '-fl={}-comp={}-m={}-ct={}-pd={}-pc={}-sd={}'
-        ).format(
-            feature_loss_mode,
-            getattr(args, 'w_comp', 0.0),
-            getattr(args, 'feature_margin', 0.0),
-            getattr(args, 'feature_confidence_threshold', 0.0),
-            getattr(args, 'feature_projection_dim', 0),
-            getattr(args, 'private_feature_channels', 0),
-            args.sd,
-        )
+    if args.effective_branch_input_mode == 'homogeneous':
+        experiment_name += '-input=homogeneous'
     return experiment_name
 
 
@@ -311,10 +303,12 @@ def create_run_outputs(args, trained_models_path):
     )
     logger.addHandler(log_handler)
     logger.info(
-        'Training started | dataset=%s | labeled_ratio=%s | network=%s',
+        'Training started | dataset=%s | labeled_ratio=%s | network=%s '
+        '| branch_input_mode=%s',
         args.dataset_name,
         args.labeled_ratio,
         args.network,
+        args.effective_branch_input_mode,
     )
     logger.info('Arguments: %s', vars(args))
 
@@ -323,16 +317,9 @@ def create_run_outputs(args, trained_models_path):
     return logger, metrics_path
 
 
-def _build_optimizer_and_scheduler(
-    model, args, additional_parameters=None
-):
-    parameters = list(model.parameters())
-    if additional_parameters is not None:
-        # HETERO-FDCL ADDITION: projection heads are training-only auxiliary
-        # modules and are optimized with their corresponding view network.
-        parameters.extend(list(additional_parameters))
+def _build_optimizer_and_scheduler(model, args):
     optimizer = optim.SGD(
-        parameters,
+        model.parameters(),
         lr=args.lr,
         momentum=args.momentum,
         weight_decay=5 * 10 ** args.wd,
@@ -359,142 +346,14 @@ def build_training_components(args, cfg):
     ).cuda()
     criterion = segmentation_loss(args.loss, False).cuda()
 
-    # HETERO-FDCL ADDITION: this auxiliary module is constructed only when
-    # explicitly requested. The default "original" path allocates no heads and
-    # keeps the original optimizer parameter sets.
-    complementarity_feature_loss = None
-    if getattr(args, 'feature_loss_mode', 'original') == 'complementarity':
-        if args.network != 'xnet_sb':
-            raise ValueError(
-                'complementarity features currently require '
-                '--network xnet_sb'
-            )
-        complementarity_feature_loss = ComplementarityFeatureLoss(
-            private_in_channels=args.private_feature_channels,
-            num_classes=cfg['NUM_CLASSES'],
-            projection_dim=args.feature_projection_dim,
-            margin=args.feature_margin,
-            confidence_threshold=args.feature_confidence_threshold,
-            private_variance_weight=args.private_variance_weight,
-            private_target_std=args.private_target_std,
-        ).cuda()
-
-    appearance_head_parameters = (
-        complementarity_feature_loss.appearance_parameters()
-        if complementarity_feature_loss is not None
-        else None
-    )
-    structure_head_parameters = (
-        complementarity_feature_loss.structure_parameters()
-        if complementarity_feature_loss is not None
-        else None
-    )
-    optimizer1, scheduler1 = _build_optimizer_and_scheduler(
-        model1, args, appearance_head_parameters
-    )
-    optimizer2, scheduler2 = _build_optimizer_and_scheduler(
-        model2, args, structure_head_parameters
-    )
+    optimizer1, scheduler1 = _build_optimizer_and_scheduler(model1, args)
+    optimizer2, scheduler2 = _build_optimizer_and_scheduler(model2, args)
     return (
         (model1, model2),
         (optimizer1, optimizer2),
         (scheduler1, scheduler2),
         criterion,
-        complementarity_feature_loss,
     )
-
-
-def _feature_diversification_loss(feature1, feature2):
-    # ORIGINAL FDCL LOSS: intentionally preserved byte-for-byte so legacy
-    # experiments remain directly reproducible.
-    distance1 = 1 / (
-        torch.square(feature1.detach() - feature2).mean() + 1e-6
-    )
-    distance2 = 1 / (
-        torch.square(feature2.detach() - feature1).mean() + 1e-6
-    )
-    return (distance1 + distance2) / 2
-
-
-def _forward_training_model(model, model_input, feature_loss_mode):
-    """Request hierarchical features only for the optional heterogeneous loss."""
-
-    if feature_loss_mode == 'complementarity':
-        # HETERO-FDCL ADDITION: XNet keeps its legacy output by default; this
-        # keyword explicitly requests the H/2 private feature.
-        prediction, features = model(
-            model_input, return_feature_pyramid=True
-        )
-        if not isinstance(features, Mapping):
-            raise TypeError(
-                'complementarity mode requires a feature dictionary'
-            )
-        required = {'private', 'final'}
-        missing = required.difference(features)
-        if missing:
-            raise KeyError(
-                'hierarchical feature output is missing: {}'.format(
-                    sorted(missing)
-                )
-            )
-        return prediction, features
-    return model(model_input)
-
-
-def _compute_feature_objective(
-    args,
-    complementarity_feature_loss,
-    feature1,
-    feature2,
-    *,
-    labels=None,
-    prediction1=None,
-    prediction2=None,
-):
-    """Select the original or optional heterogeneous feature objective."""
-
-    mode = getattr(args, 'feature_loss_mode', 'original')
-
-    if mode == 'original':
-        zero = feature1.new_zeros(())
-        original_loss = _feature_diversification_loss(feature1, feature2)
-        return {
-            'weighted': args.w_dis * original_loss,
-            'complement': zero,
-            'valid_ratio': zero.detach(),
-        }
-    if mode == 'none':
-        zero = feature1.new_zeros(())
-        return {
-            'weighted': zero,
-            'complement': zero,
-            'valid_ratio': zero.detach(),
-        }
-    if mode != 'complementarity':
-        raise ValueError('Unsupported feature_loss_mode: {}'.format(mode))
-    if complementarity_feature_loss is None:
-        raise RuntimeError(
-            'complementarity mode requires ComplementarityFeatureLoss'
-        )
-    if not isinstance(feature1, Mapping) or not isinstance(feature2, Mapping):
-        raise TypeError(
-            'complementarity mode requires hierarchical feature dictionaries'
-        )
-
-    # HETERO-FDCL ADDITION: supervised calls use labels; unlabeled calls use
-    # detached, high-confidence consensus predictions inside the loss module.
-    result = complementarity_feature_loss(
-        feature1['private'],
-        feature2['private'],
-        labels=labels,
-        appearance_logits=prediction1,
-        structure_logits=prediction2,
-    )
-    return {
-        'weighted': args.w_comp * result.complement,
-        'complement': result.complement,
-        'valid_ratio': result.valid_ratio,
-    }
 
 
 def train_one_epoch(
@@ -504,23 +363,16 @@ def train_one_epoch(
     optimizers,
     criterion,
     dataloaders,
-    complementarity_feature_loss=None,
 ):
     model1, model2 = models
     optimizer1, optimizer2 = optimizers
     model1.train()
     model2.train()
-    feature_loss_mode = getattr(args, 'feature_loss_mode', 'original')
-
     loss_totals = {
         'sup1': 0.0,
         'sup2': 0.0,
         'unsup': 0.0,
         'total': 0.0,
-        # HETERO-FDCL ADDITION: diagnostic-only accumulators.
-        'feature': 0.0,
-        'complement': 0.0,
-        'feature_valid_ratio': 0.0,
     }
     unsup_weight = args.unsup_weight * (epoch + 1) / args.num_epochs
     supervised_batches = iter(dataloaders['train_sup'])
@@ -540,27 +392,14 @@ def train_one_epoch(
         optimizer1.zero_grad()
         optimizer2.zero_grad()
 
-        unsup_prediction1, unsup_feature1 = _forward_training_model(
-            model1, unsup_input1, feature_loss_mode
-        )
-        unsup_prediction2, unsup_feature2 = _forward_training_model(
-            model2, unsup_input2, feature_loss_mode
-        )
+        unsup_prediction1 = model1(unsup_input1)[0]
+        unsup_prediction2 = model2(unsup_input2)[0]
         pseudo_label1 = unsup_prediction1.argmax(dim=1)
         pseudo_label2 = unsup_prediction2.argmax(dim=1)
 
-        unsup_feature_objective = _compute_feature_objective(
-            args,
-            complementarity_feature_loss,
-            unsup_feature1,
-            unsup_feature2,
-            prediction1=unsup_prediction1,
-            prediction2=unsup_prediction2,
-        )
         unsup_loss = (
             criterion(unsup_prediction1, pseudo_label2)
             + criterion(unsup_prediction2, pseudo_label1)
-            + unsup_feature_objective['weighted']
         ) * unsup_weight
         unsup_loss.backward()
 
@@ -570,12 +409,8 @@ def train_one_epoch(
         sup_input2 = sup_input2.cuda(non_blocking=True)
         sup_mask = sup_batch['mask'].cuda(non_blocking=True)
 
-        sup_prediction1, sup_feature1 = _forward_training_model(
-            model1, sup_input1, feature_loss_mode
-        )
-        sup_prediction2, sup_feature2 = _forward_training_model(
-            model2, sup_input2, feature_loss_mode
-        )
+        sup_prediction1 = model1(sup_input1)[0]
+        sup_prediction2 = model2(sup_input2)[0]
 
         if batch_index == 0:
             score_list1 = sup_prediction1.detach()
@@ -592,18 +427,7 @@ def train_one_epoch(
 
         supervised_loss1 = criterion(sup_prediction1, sup_mask)
         supervised_loss2 = criterion(sup_prediction2, sup_mask)
-        sup_feature_objective = _compute_feature_objective(
-            args,
-            complementarity_feature_loss,
-            sup_feature1,
-            sup_feature2,
-            labels=sup_mask,
-        )
-        supervised_loss = (
-            supervised_loss1
-            + supervised_loss2
-            + sup_feature_objective['weighted']
-        )
+        supervised_loss = supervised_loss1 + supervised_loss2
         supervised_loss.backward()
 
         optimizer1.step()
@@ -614,22 +438,6 @@ def train_one_epoch(
         loss_totals['sup1'] += supervised_loss1.item()
         loss_totals['sup2'] += supervised_loss2.item()
         loss_totals['total'] += total_loss.item()
-        # HETERO-FDCL ADDITION: report the exact weighted contribution to the
-        # total loss plus the raw component used for diagnostics.
-        loss_totals['feature'] += (
-            unsup_weight * unsup_feature_objective['weighted']
-            + sup_feature_objective['weighted']
-        ).item()
-        loss_totals['complement'] += (
-            unsup_feature_objective['complement']
-            + sup_feature_objective['complement']
-        ).item()
-        # Only unlabeled coverage is reported; supervised coverage is always
-        # one (apart from an ignore label) and would obscure this diagnostic.
-        loss_totals['feature_valid_ratio'] += unsup_feature_objective[
-            'valid_ratio'
-        ].item()
-
     return loss_totals, unsup_weight, (score_list1, score_list2, mask_list)
 
 
@@ -680,8 +488,7 @@ def _collect_epoch_metrics(
     train_evaluations,
     val_losses,
     val_evaluations,
-    best_val_eval_list,
-    feature_metrics,
+    best_val_eval_lists,
 ):
     train_eval1, train_eval2 = train_evaluations
     val_eval1, val_eval2 = val_evaluations
@@ -709,12 +516,12 @@ def _collect_epoch_metrics(
         'val_threshold2': val_eval2[0],
         'val_jaccard2': val_eval2[1],
         'val_dice2': val_eval2[2],
-        'best_val_jaccard': best_val_eval_list[1],
+        'best_val_jaccard1': best_val_eval_lists[0][1],
+        'best_val_jaccard2': best_val_eval_lists[1][1],
+        'best_val_jaccard': max(
+            best_val_eval_lists[0][1], best_val_eval_lists[1][1]
+        ),
         'epoch_seconds': epoch_seconds,
-        # HETERO-FDCL ADDITION: auxiliary feature diagnostics.
-        'train_loss_feature': feature_metrics['feature'],
-        'train_loss_complement': feature_metrics['complement'],
-        'train_feature_valid_ratio': feature_metrics['valid_ratio'],
     }
 
 
@@ -726,7 +533,7 @@ def _log_epoch(logger, args, metrics):
         '| val_loss1=%.6f | val_loss2=%.6f '
         '| val_jaccard1=%.6f | val_dice1=%.6f '
         '| val_jaccard2=%.6f | val_dice2=%.6f '
-        '| feature=%.6f (complement=%.6f, valid=%.4f) '
+        '| best_jaccard1=%.6f | best_jaccard2=%.6f '
         '| best_jaccard=%.6f | lr=%.8g | time=%.2fs',
         metrics['epoch'],
         args.num_epochs,
@@ -744,9 +551,8 @@ def _log_epoch(logger, args, metrics):
         metrics['val_dice1'],
         metrics['val_jaccard2'],
         metrics['val_dice2'],
-        metrics['train_loss_feature'],
-        metrics['train_loss_complement'],
-        metrics['train_feature_valid_ratio'],
+        metrics['best_val_jaccard1'],
+        metrics['best_val_jaccard2'],
         metrics['best_val_jaccard'],
         metrics['lr_model1'],
         metrics['epoch_seconds'],
@@ -768,18 +574,49 @@ def train_model(
         args, datasets, use_manifests
     )
     logger, metrics_path = create_run_outputs(args, trained_models_path)
+    diagnostics = None
+    if getattr(args, 'complementarity_diagnostics', False):
+        if cfg['NUM_CLASSES'] != 2:
+            raise ValueError(
+                'complementarity diagnostics currently support binary '
+                'segmentation only'
+            )
+        from tools.complementarity_diagnostics import (
+            ComplementarityDiagnostics,
+        )
+
+        diagnostics_dir = args.diagnostics_output_dir or os.path.join(
+            trained_models_path,
+            'complementarity_diagnostics',
+        )
+        diagnostics = ComplementarityDiagnostics(
+            output_dir=diagnostics_dir,
+            interval=args.diagnostics_interval,
+            boundary_width=args.diagnostics_boundary_width,
+            max_visualizations=args.diagnostics_max_visualizations,
+            save_paired_checkpoints=(
+                args.diagnostics_save_paired_checkpoints
+            ),
+        )
+        logger.info(
+            'Complementarity diagnostics enabled | output=%s | interval=%d',
+            diagnostics_dir,
+            args.diagnostics_interval,
+        )
     (
         models,
         optimizers,
         schedulers,
         criterion,
-        complementarity_feature_loss,
     ) = build_training_components(args, cfg)
 
     model1, model2 = models
-    best_model = model1
-    best_result = 'Result1'
-    best_val_eval_list = [0 for _ in range(4)]
+    best_val_eval_lists = (
+        [0 for _ in range(4)],
+        [0 for _ in range(4)],
+    )
+    best_model_states = (None, None)
+    best_epochs = (0, 0)
     print_num = 77 + (cfg['NUM_CLASSES'] - 3) * 14
     print_num_minus = print_num - 2
     print_num_half = int(print_num / 2 - 1)
@@ -800,7 +637,6 @@ def train_model(
                 optimizers,
                 criterion,
                 dataloaders,
-                complementarity_feature_loss,
             )
             schedulers[0].step()
             schedulers[1].step()
@@ -842,22 +678,67 @@ def train_model(
                 validation['masks'],
                 print_num_half,
             )
-            best_val_eval_list, best_model, best_result = save_val_best_2d(
-                cfg['NUM_CLASSES'],
-                best_model,
-                best_val_eval_list,
-                best_result,
+            if diagnostics is not None:
+                diagnostic_summary = diagnostics.update(
+                    epoch,
+                    models,
+                    validation,
+                )
+                if diagnostic_summary is not None:
+                    logger.info(
+                        'Complementarity diagnostics | epoch=%d '
+                        '| mean_jaccard=%.6f | entropy_jaccard=%.6f '
+                        '| oracle_jaccard=%.6f | oracle_gain=%.6f',
+                        diagnostic_summary['epoch'],
+                        diagnostic_summary['mean_jaccard'],
+                        diagnostic_summary['entropy_jaccard'],
+                        diagnostic_summary['oracle_jaccard'],
+                        diagnostic_summary[
+                            'oracle_gain_over_best_branch'
+                        ],
+                    )
+            (
+                best_val_eval_lists,
+                best_model_states,
+                best_epochs,
+            ) = save_val_best_2d(
+                best_val_eval_lists,
+                best_model_states,
+                best_epochs,
                 model1,
                 model2,
-                validation['scores1'],
-                validation['scores2'],
-                validation['names'],
                 val_eval1,
                 val_eval2,
-                trained_models_path,
-                segmentation_results_path,
-                cfg['PALETTE'],
+                epoch,
             )
+            current_epoch = epoch + 1
+            if (
+                args.best_save_interval > 0
+                and current_epoch % args.best_save_interval == 0
+            ):
+                periodic_checkpoints = save_periodic_branch_bests(
+                    best_val_eval_lists,
+                    best_model_states,
+                    best_epochs,
+                    trained_models_path,
+                    current_epoch,
+                )
+                for checkpoint in periodic_checkpoints:
+                    logger.info(
+                        'Periodic best saved | current_epoch=%d | branch=%s '
+                        '| best_epoch=%d | best_val_jaccard=%.6f | path=%s',
+                        current_epoch,
+                        checkpoint['branch'],
+                        checkpoint['best_epoch'],
+                        checkpoint['best_jaccard'],
+                        checkpoint['path'],
+                    )
+                print(
+                    '| Periodic best_A/best_S saved at epoch {}'.format(
+                        current_epoch
+                    ).ljust(print_num_minus, ' '),
+                    '|',
+                )
 
             epoch_seconds = time.time() - epoch_start
             print('-' * print_num)
@@ -867,18 +748,6 @@ def train_model(
                 ),
                 '|',
             )
-            # HETERO-FDCL ADDITION: normalize per-step feature diagnostics
-            # before writing them to the shared metrics CSV.
-            train_batch_count = num_batches['train_sup']
-            feature_metrics = {
-                'feature': loss_totals['feature'] / train_batch_count,
-                'complement': (
-                    loss_totals['complement'] / train_batch_count
-                ),
-                'valid_ratio': (
-                    loss_totals['feature_valid_ratio'] / train_batch_count
-                ),
-            }
             metrics = _collect_epoch_metrics(
                 epoch,
                 epoch_seconds,
@@ -888,8 +757,7 @@ def train_model(
                 (train_eval1, train_eval2),
                 val_losses,
                 (val_eval1, val_eval2),
-                best_val_eval_list,
-                feature_metrics,
+                best_val_eval_lists,
             )
             metrics_writer.writerow(metrics)
             metrics_file.flush()
@@ -906,19 +774,23 @@ def train_model(
         '|',
     )
     print('-' * print_num)
-    print_best(
+    print_and_save_branch_bests(
         cfg['NUM_CLASSES'],
-        best_val_eval_list,
-        best_model,
-        best_result,
+        best_val_eval_lists,
+        best_model_states,
+        best_epochs,
         trained_models_path,
         print_num_minus,
     )
     print('=' * print_num)
     logger.info(
-        'Training completed | best_result=%s | best_val_jaccard=%.6f',
-        best_result,
-        best_val_eval_list[1],
+        'Training completed | result1_best_epoch=%d '
+        '| result1_best_val_jaccard=%.6f | result2_best_epoch=%d '
+        '| result2_best_val_jaccard=%.6f',
+        best_epochs[0],
+        best_val_eval_lists[0][1],
+        best_epochs[1],
+        best_val_eval_lists[1][1],
     )
 
 
@@ -966,10 +838,33 @@ def parse_args():
         default=None,
         help='enable aligned appearance/structure dataset views (default: dataset config)',
     )
+    parser.add_argument(
+        '--branch_input_mode',
+        '--branch-input-mode',
+        dest='branch_input_mode',
+        choices=['heterogeneous', 'homogeneous'],
+        default=None,
+        help=(
+            'branch inputs: heterogeneous routes RGB to Result1 and '
+            'H+Gray+Sobel to Result2; homogeneous routes the same augmented '
+            'RGB image to both branches (default: dataset config)'
+        ),
+    )
     parser.add_argument('--sup_mark', default='9')
     parser.add_argument('--unsup_mark', default='76')
     parser.add_argument('-b', '--batch_size', default=2, type=int)
     parser.add_argument('-e', '--num_epochs', default=200, type=int)
+    parser.add_argument(
+        '--best_save_interval',
+        '--best-save-interval',
+        dest='best_save_interval',
+        default=10,
+        type=int,
+        help=(
+            '每 N 个 epoch 额外保存截至当前的 best_A 和 best_S；'
+            '设为 0 可关闭（默认：10）'
+        ),
+    )
     parser.add_argument('-s', '--step_size', default=50, type=int)
     parser.add_argument('-l', '--lr', default=0.5, type=float)
     parser.add_argument('-g', '--gamma', default=0.5, type=float)
@@ -979,68 +874,63 @@ def parse_args():
     parser.add_argument('--momentum', default=0.9, type=float)
     parser.add_argument('--wd', default=-5, type=float, help='weight decay exponent')
     parser.add_argument(
-        '--w_dis',
-        default=1.0,
-        type=float,
-        help='weight of the feature diversification loss',
-    )
-    # HETERO-FDCL ADDITION: default="original" guarantees that existing
-    # commands retain the original reciprocal-MSE diversified loss.
-    parser.add_argument(
-        '--feature_loss_mode',
-        default='original',
-        choices=['original', 'complementarity', 'none'],
+        '--complementarity_diagnostics',
+        action='store_true',
         help=(
-            'feature objective: original FDCL, optional private-feature '
-            'complementarity, or no feature objective'
+            'enable separate dual-branch fusion/oracle diagnostics; disabled '
+            'by default and does not change training or checkpoint selection'
         ),
     )
     parser.add_argument(
-        '--w_comp',
-        default=0.05,
-        type=float,
-        help='weight of private feature complementarity',
+        '--diagnostics_output_dir',
+        default=None,
+        help=(
+            'diagnostics directory; defaults to a separate subdirectory of '
+            'the current experiment checkpoint directory'
+        ),
     )
     parser.add_argument(
-        '--private_feature_channels',
-        default=128,
+        '--diagnostics_interval',
+        default=5,
         type=int,
-        help='channel count of the H/2 private decoder feature',
+        help='run optional complementarity diagnostics every N epochs',
     )
     parser.add_argument(
-        '--feature_projection_dim',
-        default=32,
+        '--diagnostics_boundary_width',
+        default=3,
         type=int,
-        help='channel count of each private-feature projection',
+        help='ground-truth boundary half-width in pixels for diagnostics',
     )
     parser.add_argument(
-        '--feature_margin',
-        default=0.2,
-        type=float,
-        help='maximum unpenalized private-feature cosine similarity',
+        '--diagnostics_max_visualizations',
+        default=8,
+        type=int,
+        help='maximum number of best-epoch diagnostic panels to save',
     )
     parser.add_argument(
-        '--feature_confidence_threshold',
-        default=0.7,
-        type=float,
-        help='minimum confidence of both branches for unlabeled feature loss',
-    )
-    parser.add_argument(
-        '--private_variance_weight',
-        default=0.1,
-        type=float,
-        help='anti-collapse variance weight inside private complementarity',
-    )
-    parser.add_argument(
-        '--private_target_std',
-        default=0.1,
-        type=float,
-        help='minimum target standard deviation of private projections',
+        '--diagnostics_save_paired_checkpoints',
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help='save both branch weights at the best mean-fusion epoch',
     )
     parser.add_argument('--sd', default=4, type=int, help='random seed')
     parser.add_argument('-n', '--network', default='xnet_sb')
 
     args = parser.parse_args()
+    if args.branch_input_mode is not None and args.dual_view is not None:
+        requested_dual_view = args.branch_input_mode == 'heterogeneous'
+        if requested_dual_view != args.dual_view:
+            parser.error(
+                '--branch_input_mode conflicts with --dual_view/--no-dual_view'
+            )
+    if args.best_save_interval < 0:
+        parser.error('--best_save_interval must be non-negative')
+    if args.diagnostics_interval < 1:
+        parser.error('--diagnostics_interval must be at least one')
+    if args.diagnostics_boundary_width < 1:
+        parser.error('--diagnostics_boundary_width must be at least one')
+    if args.diagnostics_max_visualizations < 0:
+        parser.error('--diagnostics_max_visualizations must be non-negative')
     if args.path_trained_models is None:
         args.path_trained_models = 'checkpoints/semi_fdcl_paper_{}'.format(
             args.labeled_ratio
