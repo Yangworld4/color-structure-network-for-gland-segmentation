@@ -12,6 +12,7 @@ from typing import Any, Dict
 
 import numpy as np
 import torch
+import torch.nn as nn
 from torch.utils.data import DataLoader
 
 
@@ -24,6 +25,7 @@ from config.dataset_config.dataset_cfg import dataset_cfg
 from dataload.dataset_2d import imagefloder_itn
 from dataload.dual_view_transformer import DualViewTransform
 from models.getnetwork import get_network
+from main import compute_cps_losses
 
 
 def seed_everything(seed: int) -> None:
@@ -49,17 +51,23 @@ def tensor_stats(name: str, tensor: torch.Tensor) -> str:
 
 
 def assert_dual_batch(batch: Dict[str, Any], supervised: bool) -> None:
-    expected = {"image", "image_appearance", "image_structure", "ID"}
+    expected = {
+        "image", "image_appearance", "image_appearance_weak",
+        "image_appearance_strong", "image_structure", "ID",
+    }
     if supervised:
         expected.add("mask")
     assert expected.issubset(batch), (expected, batch.keys())
-    appearance = batch["image_appearance"]
+    appearance = batch["image_appearance_weak"]
+    appearance_strong = batch["image_appearance_strong"]
     structure = batch["image_structure"]
     assert appearance.dtype == torch.float32
     assert structure.dtype == torch.float32
     assert appearance.shape == structure.shape
+    assert appearance_strong.shape == structure.shape
     assert appearance.ndim == 4 and appearance.shape[1] == 3
     assert torch.equal(batch["image"], appearance)
+    assert torch.equal(batch["image_appearance"], appearance)
     assert torch.isfinite(structure).all()
     channel_std = structure.float().std(dim=(0, 2, 3))
     assert torch.all(channel_std > 1e-6), channel_std
@@ -110,6 +118,41 @@ def check_synthetic_alignment(
     sample = transform(image, mask)
     geometric_binary = sample["image_geometric"][0] > 0.5
     assert torch.equal(geometric_binary, sample["mask"].bool())
+
+
+def check_asymmetric_cps_gradients() -> None:
+    """Verify detached teachers route each directional loss to one network."""
+    appearance_net = nn.Conv2d(3, 2, kernel_size=1)
+    structure_net = nn.Conv2d(3, 2, kernel_size=1)
+    rgb_weak = torch.randn(2, 3, 8, 8)
+    rgb_strong = torch.randn(2, 3, 8, 8)
+    structure_view = torch.randn(2, 3, 8, 8)
+    prediction_aw = appearance_net(rgb_weak)
+    prediction_as = appearance_net(rgb_strong)
+    prediction_s = structure_net(structure_view)
+    assert prediction_aw.shape == prediction_as.shape == prediction_s.shape
+
+    losses = compute_cps_losses(
+        "weak_structure_strong",
+        nn.CrossEntropyLoss(),
+        prediction_aw,
+        prediction_as,
+        prediction_s,
+    )
+    losses["aw_to_s"].backward(retain_graph=True)
+    appearance_gradient = appearance_net.weight.grad
+    structure_gradient = structure_net.weight.grad
+    assert appearance_gradient is None or torch.count_nonzero(appearance_gradient) == 0
+    assert structure_gradient is not None and torch.count_nonzero(structure_gradient) > 0
+
+    appearance_net.zero_grad(set_to_none=True)
+    structure_net.zero_grad(set_to_none=True)
+    losses["s_to_as"].backward()
+    appearance_gradient = appearance_net.weight.grad
+    structure_gradient = structure_net.weight.grad
+    assert appearance_gradient is not None and torch.count_nonzero(appearance_gradient) > 0
+    assert structure_gradient is None or torch.count_nonzero(structure_gradient) == 0
+    print("Asymmetric CPS gradient routing: PASS (one shared Appearance network)")
 
 
 def parse_args() -> argparse.Namespace:
@@ -181,10 +224,14 @@ def main() -> None:
                 batch["image_structure"].float().std(dim=(0, 2, 3)).tolist(),
             )
 
-    # Validation must not contain random geometry or photometric changes.
+    # Formal validation views are deterministic; the diagnostic strong view is
+    # intentionally perturbed and is never used for checkpoint selection.
     validation_first = validation[0]
     validation_second = validation[0]
-    for key in ("image", "image_appearance", "image_structure", "mask"):
+    for key in (
+        "image", "image_appearance", "image_appearance_weak",
+        "image_structure", "mask",
+    ):
         assert torch.equal(validation_first[key], validation_second[key]), key
 
     # All training randomness is reproducible after resetting Python/NumPy/Torch seeds.
@@ -192,7 +239,10 @@ def main() -> None:
     training_first = labeled[0]
     seed_everything(args.seed)
     training_second = labeled[0]
-    for key in ("image", "image_appearance", "image_structure", "mask"):
+    for key in (
+        "image", "image_appearance", "image_appearance_weak",
+        "image_appearance_strong", "image_structure", "mask",
+    ):
         assert torch.equal(training_first[key], training_second[key]), key
 
     # Disabled mode keeps the original return schema and transformation behavior.
@@ -217,6 +267,7 @@ def main() -> None:
     assert torch.equal(legacy_sample["mask"], compatible_sample["mask"])
 
     check_synthetic_alignment(dual_config, cfg["MEAN"], cfg["STD"], args.seed)
+    check_asymmetric_cps_gradients()
 
     if args.check_forward:
         model1 = get_network(args.network, cfg["IN_CHANNELS"], cfg["NUM_CLASSES"])
@@ -224,10 +275,14 @@ def main() -> None:
         model1.eval()
         model2.eval()
         with torch.inference_mode():
-            output1 = model1(batches["labeled"]["image_appearance"][:1])
+            # Both Appearance predictions use this one model1 instance.
+            output_aw = model1(batches["labeled"]["image_appearance_weak"][:1])
+            output_as = model1(batches["labeled"]["image_appearance_strong"][:1])
             output2 = model2(batches["labeled"]["image_structure"][:1])
-        logits1 = output1[0] if isinstance(output1, (tuple, list)) else output1
+        logits1 = output_aw[0] if isinstance(output_aw, (tuple, list)) else output_aw
+        logits_as = output_as[0] if isinstance(output_as, (tuple, list)) else output_as
         logits2 = output2[0] if isinstance(output2, (tuple, list)) else output2
+        assert logits1.shape == logits_as.shape
         assert logits1.ndim == 4 and logits1.shape[1] == cfg["NUM_CLASSES"]
         assert logits2.ndim == 4 and logits2.shape[1] == cfg["NUM_CLASSES"]
         print("\nmodel1 appearance logits:", tuple(logits1.shape), logits1.dtype)

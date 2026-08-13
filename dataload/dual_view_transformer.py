@@ -51,21 +51,21 @@ class SharedGeometricTransform:
 
 
 class AppearanceViewTransform:
-    """Photometric-only augmentation followed by the project's RGB normalization."""
+    """Optional photometric-only augmentation followed by RGB normalization."""
 
     def __init__(
         self,
         normalize: ArrayTransform,
-        training: bool,
+        augment: bool,
         color_jitter: Mapping[str, Any],
         stain_augmentation: Mapping[str, Any],
     ) -> None:
         self.normalize = normalize
-        self.training = training
+        self.augment = augment
         self.stain_enabled = bool(stain_augmentation.get("enabled", False))
         self.stain_probability = float(stain_augmentation.get("probability", 0.5))
         self.color_jitter: Optional[A.ColorJitter] = None
-        if training and bool(color_jitter.get("enabled", True)):
+        if augment and bool(color_jitter.get("enabled", True)):
             self.color_jitter = A.ColorJitter(
                 brightness=float(color_jitter.get("brightness", 0.10)),
                 contrast=float(color_jitter.get("contrast", 0.10)),
@@ -79,7 +79,7 @@ class AppearanceViewTransform:
         self, image: np.ndarray, mask: Optional[np.ndarray] = None
     ) -> Dict[str, torch.Tensor]:
         appearance = _as_contiguous_uint8(image).copy()
-        if self.training and self.stain_enabled and random.random() < self.stain_probability:
+        if self.augment and self.stain_enabled and random.random() < self.stain_probability:
             appearance = self._perturb_stain(appearance)
         if self.color_jitter is not None:
             appearance = self.color_jitter(image=appearance)["image"]
@@ -221,9 +221,17 @@ class DualViewTransform:
     ) -> None:
         self.debug_visualization = bool(config.get("debug_visualization", False))
         self.shared_geometry = SharedGeometricTransform(geometric_transform)
-        self.appearance = AppearanceViewTransform(
+        # Weak and strong are two forwards through the same downstream network.
+        # Only the strong view receives the existing appearance perturbation.
+        self.appearance_weak = AppearanceViewTransform(
             normalize=appearance_normalize,
-            training=training,
+            augment=False,
+            color_jitter=config.get("color_jitter", {}),
+            stain_augmentation=config.get("stain_augmentation", {}),
+        )
+        self.appearance_strong = AppearanceViewTransform(
+            normalize=appearance_normalize,
+            augment=(training or bool(config.get("generate_strong_eval", True))),
             color_jitter=config.get("color_jitter", {}),
             stain_augmentation=config.get("stain_augmentation", {}),
         )
@@ -240,15 +248,19 @@ class DualViewTransform:
         geometric = self.shared_geometry(image, mask)
         geometric_image = geometric["image"]
         geometric_mask = geometric.get("mask")
-        appearance = self.appearance(geometric_image, geometric_mask)
+        appearance_weak = self.appearance_weak(geometric_image, geometric_mask)
+        appearance_strong = self.appearance_strong(geometric_image)
 
         sample = {
-            "image": appearance["image"],
-            "image_appearance": appearance["image"],
+            # Legacy/inference aliases deliberately select the clean weak view.
+            "image": appearance_weak["image"],
+            "image_appearance": appearance_weak["image"],
+            "image_appearance_weak": appearance_weak["image"],
+            "image_appearance_strong": appearance_strong["image"],
             "image_structure": self.structure(geometric_image),
         }
         if geometric_mask is not None:
-            sample["mask"] = appearance["mask"]
+            sample["mask"] = appearance_weak["mask"]
         if self.debug_visualization:
             sample["image_geometric"] = torch.from_numpy(
                 np.ascontiguousarray(geometric_image.transpose(2, 0, 1))

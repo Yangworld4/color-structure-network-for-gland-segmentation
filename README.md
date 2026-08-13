@@ -106,6 +106,38 @@ python main.py --branch_input_mode heterogeneous
 python main.py --branch_input_mode homogeneous
 ```
 
+Choose the heterogeneous CPS routing with one shared Appearance network:
+
+```bash
+# Baseline: A_strong <-> Structure
+python main.py \
+  --network unet \
+  --branch_input_mode heterogeneous \
+  --cps-routing symmetric
+
+# Asymmetric: A_weak -> Structure -> A_strong
+python main.py \
+  --network unet \
+  --branch_input_mode heterogeneous \
+  --cps-routing weak_structure_strong
+```
+
+The aligned training views are generated in this order:
+
+```text
+Original RGB + mask
+  -> shared Resize/Flip/Transpose/RandomRotate90
+  -> x_geo + aligned mask
+
+x_geo -> normalize -> RGB weak
+x_geo -> existing ColorJitter/stain perturbation -> normalize -> RGB strong
+x_geo -> Hematoxylin/Gray/Sobel -> Structure
+```
+
+The strong transform is photometric only. Validation checkpoint selection and
+normal test inference use RGB weak plus Structure; RGB strong on validation is
+computed only for view-quality and disagreement diagnostics.
+
 The legacy `--dual_view` / `--no-dual_view` flags remain supported. Homogeneous
 runs receive an `-input=homogeneous` experiment-directory suffix so they do not
 overwrite heterogeneous checkpoints or metrics.

@@ -4,7 +4,7 @@ import logging
 import os
 import random
 import time
-from typing import Mapping, Tuple
+from typing import Dict, Mapping, Tuple
 from warnings import simplefilter
 
 import numpy as np
@@ -15,6 +15,7 @@ from torch.utils.data import DataLoader
 
 from config.augmentation.online_aug import data_normalize_2d, data_transform_2d
 from config.dataset_config.dataset_cfg import dataset_cfg
+from config.eval_config.eval import evaluate
 from config.train_test_config.train_test_config import (
     print_and_save_branch_bests,
     print_train_eval,
@@ -34,12 +35,22 @@ simplefilter(action='ignore', category=FutureWarning)
 
 METRIC_FIELDS = [
     'epoch', 'lr_model1', 'lr_model2', 'unsup_weight',
-    'train_loss_sup1', 'train_loss_sup2', 'train_loss_unsup', 'train_loss_total',
+    'train_loss_sup1', 'train_loss_sup2',
+    'train_loss_aw_to_s', 'train_loss_as_to_s', 'train_loss_s_to_as',
+    'train_loss_unsup', 'train_loss_total',
     'train_threshold1', 'train_jaccard1', 'train_dice1',
     'train_threshold2', 'train_jaccard2', 'train_dice2',
-    'val_loss1', 'val_loss2',
+    'val_loss_aw', 'val_loss_as', 'val_loss_s',
     'val_threshold1', 'val_jaccard1', 'val_dice1',
     'val_threshold2', 'val_jaccard2', 'val_dice2',
+    'val_threshold_aw', 'val_jaccard_aw', 'val_dice_aw',
+    'val_threshold_as', 'val_jaccard_as', 'val_dice_as',
+    'val_threshold_s', 'val_jaccard_s', 'val_dice_s',
+    'pseudo_jc_aw', 'pseudo_dice_aw', 'pseudo_accuracy_aw',
+    'pseudo_jc_as', 'pseudo_dice_as', 'pseudo_accuracy_as',
+    'pseudo_jc_s', 'pseudo_dice_s', 'pseudo_accuracy_s',
+    'aw_as_disagreement', 'aw_correct_as_wrong',
+    'as_correct_aw_wrong', 'aw_as_both_correct', 'aw_as_both_wrong',
     'best_val_jaccard1', 'best_val_jaccard2',
     'best_val_jaccard', 'epoch_seconds',
 ]
@@ -58,10 +69,63 @@ def init_seeds(seed):
 def get_model_inputs(
     batch: Mapping[str, torch.Tensor],
 ) -> Tuple[torch.Tensor, torch.Tensor]:
-    """Route heterogeneous views, or the same augmented RGB image, to branches."""
-    appearance = batch.get('image_appearance', batch['image'])
+    """Select clean Appearance and Structure inputs for validation/inference."""
+    appearance = batch.get(
+        'image_appearance_weak', batch.get('image_appearance', batch['image'])
+    )
     structure = batch.get('image_structure', batch['image'])
     return appearance, structure
+
+
+def get_training_views(
+    batch: Mapping[str, torch.Tensor],
+) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Return aligned Appearance weak/strong and Structure tensors."""
+    weak = batch.get(
+        'image_appearance_weak', batch.get('image_appearance', batch['image'])
+    )
+    strong = batch.get(
+        'image_appearance_strong', batch.get('image_appearance', batch['image'])
+    )
+    structure = batch.get('image_structure', batch['image'])
+    spatial_shapes = {tuple(view.shape[-2:]) for view in (weak, strong, structure)}
+    if len(spatial_shapes) != 1:
+        raise ValueError(
+            'CPS views are not spatially aligned: weak={}, strong={}, structure={}'.format(
+                tuple(weak.shape), tuple(strong.shape), tuple(structure.shape)
+            )
+        )
+    return weak, strong, structure
+
+
+def compute_cps_losses(
+    routing: str,
+    criterion,
+    prediction_aw: torch.Tensor,
+    prediction_as: torch.Tensor,
+    prediction_s: torch.Tensor,
+) -> Dict[str, torch.Tensor]:
+    """Compute hard-pseudo-label CPS while detaching every teacher path."""
+    pseudo_s = prediction_s.detach().argmax(dim=1)
+    zero = prediction_s.new_zeros(())
+    if routing == 'symmetric':
+        pseudo_as = prediction_as.detach().argmax(dim=1)
+        loss_aw_to_s = zero
+        loss_as_to_s = criterion(prediction_s, pseudo_as)
+    elif routing == 'weak_structure_strong':
+        pseudo_aw = prediction_aw.detach().argmax(dim=1)
+        loss_aw_to_s = criterion(prediction_s, pseudo_aw)
+        loss_as_to_s = zero
+    else:
+        raise ValueError('Unsupported CPS routing: {}'.format(routing))
+
+    loss_s_to_as = criterion(prediction_as, pseudo_s)
+    return {
+        'aw_to_s': loss_aw_to_s,
+        'as_to_s': loss_as_to_s,
+        's_to_as': loss_s_to_as,
+        'total': loss_aw_to_s + loss_as_to_s + loss_s_to_as,
+    }
 
 
 def _normalization_keys(input_name):
@@ -82,6 +146,14 @@ def build_datasets(args, cfg):
     args.effective_branch_input_mode = (
         'heterogeneous' if dual_view_cfg['enabled'] else 'homogeneous'
     )
+    if (
+        args.cps_routing == 'weak_structure_strong'
+        and args.effective_branch_input_mode != 'heterogeneous'
+    ):
+        raise ValueError(
+            '--cps-routing weak_structure_strong requires heterogeneous '
+            'weak/strong/structure views'
+        )
 
     manifest_dir = args.manifest_dir or os.path.join(
         args.path_dataset, 'manifests', 'paper_seed_2026'
@@ -193,9 +265,11 @@ def print_data_summary(args, datasets, manifest_dir, use_manifests):
     )
     if 'image_structure' in sup_sample:
         print(
-            'Supervised dual views:',
-            tuple(sup_sample['image_appearance'].shape),
+            'Supervised aligned views (rgb_weak, rgb_strong, structure, mask):',
+            tuple(sup_sample['image_appearance_weak'].shape),
+            tuple(sup_sample['image_appearance_strong'].shape),
             tuple(sup_sample['image_structure'].shape),
+            tuple(sup_sample['mask'].shape),
         )
     print(
         'Supervised mask:',
@@ -210,8 +284,9 @@ def print_data_summary(args, datasets, manifest_dir, use_manifests):
     )
     if 'image_structure' in unsup_sample:
         print(
-            'Unsupervised dual views:',
-            tuple(unsup_sample['image_appearance'].shape),
+            'Unsupervised aligned views (rgb_weak, rgb_strong, structure):',
+            tuple(unsup_sample['image_appearance_weak'].shape),
+            tuple(unsup_sample['image_appearance_strong'].shape),
             tuple(unsup_sample['image_structure'].shape),
         )
     print(
@@ -255,6 +330,7 @@ def _experiment_name(args, split_sup_mark, split_unsup_mark):
     )
     if args.effective_branch_input_mode == 'homogeneous':
         experiment_name += '-input=homogeneous'
+    experiment_name += '-routing={}'.format(args.cps_routing)
     return experiment_name
 
 
@@ -310,6 +386,7 @@ def create_run_outputs(args, trained_models_path):
         args.network,
         args.effective_branch_input_mode,
     )
+    logger.info('CPS routing: %s', args.cps_routing)
     logger.info('Arguments: %s', vars(args))
 
     print('Training log:', log_path)
@@ -371,6 +448,9 @@ def train_one_epoch(
     loss_totals = {
         'sup1': 0.0,
         'sup2': 0.0,
+        'aw_to_s': 0.0,
+        'as_to_s': 0.0,
+        's_to_as': 0.0,
         'unsup': 0.0,
         'total': 0.0,
     }
@@ -385,48 +465,71 @@ def train_one_epoch(
 
     for batch_index in range(num_train_batches):
         unsup_batch = next(unsupervised_batches)
-        unsup_input1, unsup_input2 = get_model_inputs(unsup_batch)
-        unsup_input1 = unsup_input1.cuda(non_blocking=True)
-        unsup_input2 = unsup_input2.cuda(non_blocking=True)
+        unsup_aw, unsup_as, unsup_s = get_training_views(unsup_batch)
+        unsup_aw = unsup_aw.cuda(non_blocking=True)
+        unsup_as = unsup_as.cuda(non_blocking=True)
+        unsup_s = unsup_s.cuda(non_blocking=True)
 
         optimizer1.zero_grad()
         optimizer2.zero_grad()
 
-        unsup_prediction1 = model1(unsup_input1)[0]
-        unsup_prediction2 = model2(unsup_input2)[0]
-        pseudo_label1 = unsup_prediction1.argmax(dim=1)
-        pseudo_label2 = unsup_prediction2.argmax(dim=1)
-
-        unsup_loss = (
-            criterion(unsup_prediction1, pseudo_label2)
-            + criterion(unsup_prediction2, pseudo_label1)
-        ) * unsup_weight
+        # A_weak and A_strong use this single model1. The baseline does not
+        # forward unused unlabeled A_weak, avoiding an unintended BN update.
+        if args.cps_routing == 'weak_structure_strong':
+            unsup_prediction_aw = model1(unsup_aw)[0]
+        else:
+            unsup_prediction_aw = None
+        unsup_prediction_as = model1(unsup_as)[0]
+        unsup_prediction_s = model2(unsup_s)[0]
+        cps_losses = compute_cps_losses(
+            args.cps_routing,
+            criterion,
+            unsup_prediction_aw,
+            unsup_prediction_as,
+            unsup_prediction_s,
+        )
+        unsup_loss = cps_losses['total'] * unsup_weight
         unsup_loss.backward()
 
         sup_batch = next(supervised_batches)
-        sup_input1, sup_input2 = get_model_inputs(sup_batch)
-        sup_input1 = sup_input1.cuda(non_blocking=True)
-        sup_input2 = sup_input2.cuda(non_blocking=True)
+        sup_aw, sup_as, sup_s = get_training_views(sup_batch)
+        sup_aw = sup_aw.cuda(non_blocking=True)
+        sup_as = sup_as.cuda(non_blocking=True)
+        sup_s = sup_s.cuda(non_blocking=True)
         sup_mask = sup_batch['mask'].cuda(non_blocking=True)
 
-        sup_prediction1 = model1(sup_input1)[0]
-        sup_prediction2 = model2(sup_input2)[0]
+        sup_prediction_aw = model1(sup_aw)[0]
+        sup_prediction_as = model1(sup_as)[0]
+        sup_prediction_s = model2(sup_s)[0]
+
+        if epoch == 0 and batch_index == 0:
+            shape_message = (
+                'Aligned input shapes | rgb_weak={} | rgb_strong={} '
+                '| structure_view={} | mask={}'
+            ).format(
+                tuple(sup_aw.shape), tuple(sup_as.shape),
+                tuple(sup_s.shape), tuple(sup_mask.shape),
+            )
+            print(shape_message)
 
         if batch_index == 0:
-            score_list1 = sup_prediction1.detach()
-            score_list2 = sup_prediction2.detach()
+            score_list1 = sup_prediction_aw.detach()
+            score_list2 = sup_prediction_s.detach()
             mask_list = sup_mask.detach()
         elif batch_index <= num_train_batches / 32:
             score_list1 = torch.cat(
-                (score_list1, sup_prediction1.detach()), dim=0
+                (score_list1, sup_prediction_aw.detach()), dim=0
             )
             score_list2 = torch.cat(
-                (score_list2, sup_prediction2.detach()), dim=0
+                (score_list2, sup_prediction_s.detach()), dim=0
             )
             mask_list = torch.cat((mask_list, sup_mask.detach()), dim=0)
 
-        supervised_loss1 = criterion(sup_prediction1, sup_mask)
-        supervised_loss2 = criterion(sup_prediction2, sup_mask)
+        supervised_loss1 = 0.5 * (
+            criterion(sup_prediction_aw, sup_mask)
+            + criterion(sup_prediction_as, sup_mask)
+        )
+        supervised_loss2 = criterion(sup_prediction_s, sup_mask)
         supervised_loss = supervised_loss1 + supervised_loss2
         supervised_loss.backward()
 
@@ -434,6 +537,15 @@ def train_one_epoch(
         optimizer2.step()
 
         total_loss = unsup_loss + supervised_loss
+        loss_totals['aw_to_s'] += (
+            cps_losses['aw_to_s'] * unsup_weight
+        ).item()
+        loss_totals['as_to_s'] += (
+            cps_losses['as_to_s'] * unsup_weight
+        ).item()
+        loss_totals['s_to_as'] += (
+            cps_losses['s_to_as'] * unsup_weight
+        ).item()
         loss_totals['unsup'] += unsup_loss.item()
         loss_totals['sup1'] += supervised_loss1.item()
         loss_totals['sup2'] += supervised_loss2.item()
@@ -447,36 +559,96 @@ def validate(models, criterion, dataloader):
     model1.eval()
     model2.eval()
 
-    loss1 = 0.0
-    loss2 = 0.0
-    scores1 = []
-    scores2 = []
+    loss_aw = 0.0
+    loss_as = 0.0
+    loss_s = 0.0
+    scores_aw = []
+    scores_as = []
+    scores_s = []
     masks = []
     names = []
 
     for batch in dataloader:
-        input1, input2 = get_model_inputs(batch)
-        input1 = input1.cuda(non_blocking=True)
-        input2 = input2.cuda(non_blocking=True)
+        input_aw, input_as, input_s = get_training_views(batch)
+        input_aw = input_aw.cuda(non_blocking=True)
+        input_as = input_as.cuda(non_blocking=True)
+        input_s = input_s.cuda(non_blocking=True)
         mask = batch['mask'].cuda(non_blocking=True)
 
-        output1 = model1(input1)[0]
-        output2 = model2(input2)[0]
-        scores1.append(output1)
-        scores2.append(output2)
+        output_aw = model1(input_aw)[0]
+        output_as = model1(input_as)[0]
+        output_s = model2(input_s)[0]
+        scores_aw.append(output_aw)
+        scores_as.append(output_as)
+        scores_s.append(output_s)
         masks.append(mask)
         names.extend(batch['ID'])
-        loss1 += criterion(output1, mask).item()
-        loss2 += criterion(output2, mask).item()
+        loss_aw += criterion(output_aw, mask).item()
+        loss_as += criterion(output_as, mask).item()
+        loss_s += criterion(output_s, mask).item()
+
+    scores_aw_tensor = torch.cat(scores_aw, dim=0)
+    scores_as_tensor = torch.cat(scores_as, dim=0)
+    scores_s_tensor = torch.cat(scores_s, dim=0)
 
     return {
-        'loss1': loss1,
-        'loss2': loss2,
-        'scores1': torch.cat(scores1, dim=0),
-        'scores2': torch.cat(scores2, dim=0),
+        'loss_aw': loss_aw,
+        'loss_as': loss_as,
+        'loss_s': loss_s,
+        'scores_aw': scores_aw_tensor,
+        'scores_as': scores_as_tensor,
+        'scores_s': scores_s_tensor,
+        # Compatibility aliases: formal validation is clean Appearance + Structure.
+        'loss1': loss_aw,
+        'loss2': loss_s,
+        'scores1': scores_aw_tensor,
+        'scores2': scores_s_tensor,
         'masks': torch.cat(masks, dim=0),
         'names': np.asarray(names),
     }
+
+
+def _hard_overlap(prediction: torch.Tensor, target: torch.Tensor) -> Dict[str, float]:
+    prediction = prediction.bool()
+    target = target.bool()
+    intersection = torch.logical_and(prediction, target).sum().item()
+    union = torch.logical_or(prediction, target).sum().item()
+    prediction_area = prediction.sum().item()
+    target_area = target.sum().item()
+    return {
+        'jc': float(intersection / union) if union else 1.0,
+        'dice': (
+            float(2.0 * intersection / (prediction_area + target_area))
+            if prediction_area + target_area else 1.0
+        ),
+        'accuracy': float(prediction.eq(target).float().mean().item()),
+    }
+
+
+def compute_pseudo_label_diagnostics(validation):
+    """Compare hard validation pseudo labels and weak/strong disagreement."""
+    masks = validation['masks'].long()
+    hard = {
+        'aw': validation['scores_aw'].detach().argmax(dim=1),
+        'as': validation['scores_as'].detach().argmax(dim=1),
+        's': validation['scores_s'].detach().argmax(dim=1),
+    }
+    result = {}
+    for name, prediction in hard.items():
+        overlap = _hard_overlap(prediction, masks)
+        for metric, value in overlap.items():
+            result['pseudo_{}_{}'.format(metric, name)] = value
+
+    correct_aw = hard['aw'].eq(masks)
+    correct_as = hard['as'].eq(masks)
+    result.update({
+        'aw_as_disagreement': float(hard['aw'].ne(hard['as']).float().mean().item()),
+        'aw_correct_as_wrong': float((correct_aw & ~correct_as).float().mean().item()),
+        'as_correct_aw_wrong': float((correct_as & ~correct_aw).float().mean().item()),
+        'aw_as_both_correct': float((correct_aw & correct_as).float().mean().item()),
+        'aw_as_both_wrong': float((~correct_aw & ~correct_as).float().mean().item()),
+    })
+    return result
 
 
 def _collect_epoch_metrics(
@@ -488,6 +660,8 @@ def _collect_epoch_metrics(
     train_evaluations,
     val_losses,
     val_evaluations,
+    val_eval_as,
+    pseudo_diagnostics,
     best_val_eval_lists,
 ):
     train_eval1, train_eval2 = train_evaluations
@@ -500,6 +674,9 @@ def _collect_epoch_metrics(
         'unsup_weight': unsup_weight,
         'train_loss_sup1': train_losses[0],
         'train_loss_sup2': train_losses[1],
+        'train_loss_aw_to_s': train_losses[4],
+        'train_loss_as_to_s': train_losses[5],
+        'train_loss_s_to_as': train_losses[6],
         'train_loss_unsup': train_losses[2],
         'train_loss_total': train_losses[3],
         'train_threshold1': train_eval1[0],
@@ -508,49 +685,72 @@ def _collect_epoch_metrics(
         'train_threshold2': train_eval2[0],
         'train_jaccard2': train_eval2[1],
         'train_dice2': train_eval2[2],
-        'val_loss1': val_losses[0],
-        'val_loss2': val_losses[1],
+        'val_loss_aw': val_losses[0],
+        'val_loss_as': val_losses[2],
+        'val_loss_s': val_losses[1],
         'val_threshold1': val_eval1[0],
         'val_jaccard1': val_eval1[1],
         'val_dice1': val_eval1[2],
         'val_threshold2': val_eval2[0],
         'val_jaccard2': val_eval2[1],
         'val_dice2': val_eval2[2],
+        'val_threshold_aw': val_eval1[0],
+        'val_jaccard_aw': val_eval1[1],
+        'val_dice_aw': val_eval1[2],
+        'val_threshold_as': val_eval_as[0],
+        'val_jaccard_as': val_eval_as[1],
+        'val_dice_as': val_eval_as[2],
+        'val_threshold_s': val_eval2[0],
+        'val_jaccard_s': val_eval2[1],
+        'val_dice_s': val_eval2[2],
         'best_val_jaccard1': best_val_eval_lists[0][1],
         'best_val_jaccard2': best_val_eval_lists[1][1],
         'best_val_jaccard': max(
             best_val_eval_lists[0][1], best_val_eval_lists[1][1]
         ),
         'epoch_seconds': epoch_seconds,
+        **pseudo_diagnostics,
     }
 
 
 def _log_epoch(logger, args, metrics):
     logger.info(
-        'Epoch %d/%d | train_loss=%.6f (sup1=%.6f, sup2=%.6f, unsup=%.6f) '
+        'Epoch %d/%d | routing=%s '
+        '| train_loss=%.6f (sup_a=%.6f, sup_s=%.6f, unsup=%.6f, '
+        'Aw->S=%.6f, As->S=%.6f, S->As=%.6f) '
         '| train_jaccard1=%.6f | train_dice1=%.6f '
         '| train_jaccard2=%.6f | train_dice2=%.6f '
-        '| val_loss1=%.6f | val_loss2=%.6f '
-        '| val_jaccard1=%.6f | val_dice1=%.6f '
-        '| val_jaccard2=%.6f | val_dice2=%.6f '
+        '| val_aw(jc=%.6f,dice=%.6f) '
+        '| val_as(jc=%.6f,dice=%.6f) '
+        '| val_s(jc=%.6f,dice=%.6f) '
+        '| pseudo_jc(aw=%.6f,as=%.6f,s=%.6f) '
+        '| Aw-As_disagreement=%.6f '
         '| best_jaccard1=%.6f | best_jaccard2=%.6f '
         '| best_jaccard=%.6f | lr=%.8g | time=%.2fs',
         metrics['epoch'],
         args.num_epochs,
+        args.cps_routing,
         metrics['train_loss_total'],
         metrics['train_loss_sup1'],
         metrics['train_loss_sup2'],
         metrics['train_loss_unsup'],
+        metrics['train_loss_aw_to_s'],
+        metrics['train_loss_as_to_s'],
+        metrics['train_loss_s_to_as'],
         metrics['train_jaccard1'],
         metrics['train_dice1'],
         metrics['train_jaccard2'],
         metrics['train_dice2'],
-        metrics['val_loss1'],
-        metrics['val_loss2'],
         metrics['val_jaccard1'],
         metrics['val_dice1'],
+        metrics['val_jaccard_as'],
+        metrics['val_dice_as'],
         metrics['val_jaccard2'],
         metrics['val_dice2'],
+        metrics['pseudo_jc_aw'],
+        metrics['pseudo_jc_as'],
+        metrics['pseudo_jc_s'],
+        metrics['aw_as_disagreement'],
         metrics['best_val_jaccard1'],
         metrics['best_val_jaccard2'],
         metrics['best_val_jaccard'],
@@ -657,6 +857,16 @@ def train_model(
                 print_num,
                 print_num_half,
             )
+            train_losses = train_losses + (
+                loss_totals['aw_to_s'] / num_batches['train_sup'],
+                loss_totals['as_to_s'] / num_batches['train_sup'],
+                loss_totals['s_to_as'] / num_batches['train_sup'],
+            )
+            print(
+                '| CPS directions: Aw->S {:.4f} | As->S {:.4f} | S->As {:.4f}'.format(
+                    train_losses[4], train_losses[5], train_losses[6]
+                )
+            )
             train_eval1, train_eval2, _, _ = print_train_eval(
                 cfg['NUM_CLASSES'],
                 *train_predictions,
@@ -671,12 +881,30 @@ def train_model(
                 print_num,
                 print_num_half,
             )
+            val_losses = val_losses + (
+                validation['loss_as'] / num_batches['val'],
+            )
             val_eval1, val_eval2, _, _ = print_val_eval(
                 cfg['NUM_CLASSES'],
                 validation['scores1'],
                 validation['scores2'],
                 validation['masks'],
                 print_num_half,
+            )
+            val_eval_as = evaluate(
+                validation['scores_as'], validation['masks']
+            )
+            pseudo_diagnostics = compute_pseudo_label_diagnostics(validation)
+            print(
+                '| Val As Jc: {:.4f} | Dice: {:.4f} | '
+                'pseudo Jc Aw/As/S: {:.4f}/{:.4f}/{:.4f} | '
+                'Aw-As disagree: {:.4f}'.format(
+                    val_eval_as[1], val_eval_as[2],
+                    pseudo_diagnostics['pseudo_jc_aw'],
+                    pseudo_diagnostics['pseudo_jc_as'],
+                    pseudo_diagnostics['pseudo_jc_s'],
+                    pseudo_diagnostics['aw_as_disagreement'],
+                )
             )
             if diagnostics is not None:
                 diagnostic_summary = diagnostics.update(
@@ -757,6 +985,8 @@ def train_model(
                 (train_eval1, train_eval2),
                 val_losses,
                 (val_eval1, val_eval2),
+                val_eval_as,
+                pseudo_diagnostics,
                 best_val_eval_lists,
             )
             metrics_writer.writerow(metrics)
@@ -848,6 +1078,17 @@ def parse_args():
             'branch inputs: heterogeneous routes RGB to Result1 and '
             'H+Gray+Sobel to Result2; homogeneous routes the same augmented '
             'RGB image to both branches (default: dataset config)'
+        ),
+    )
+    parser.add_argument(
+        '--cps-routing',
+        '--cps_routing',
+        dest='cps_routing',
+        choices=['symmetric', 'weak_structure_strong'],
+        default='symmetric',
+        help=(
+            'symmetric: A_strong <-> Structure baseline; '
+            'weak_structure_strong: A_weak -> Structure -> A_strong'
         ),
     )
     parser.add_argument('--sup_mark', default='9')

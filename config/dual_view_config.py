@@ -20,6 +20,9 @@ _DEFAULT_DUAL_VIEW: Dict[str, Any] = {
         "enabled": False,
         "probability": 0.5,
     },
+    # Produce the strong view on labeled validation data for diagnostics only.
+    # Standard validation/test inference still uses image_appearance_weak.
+    "generate_strong_eval": True,
     "structure_normalization": "minmax",
     "debug_visualization": False,
 }
