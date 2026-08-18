@@ -23,6 +23,7 @@ from config.train_test_config.train_test_config import (
     print_val_eval,
     print_val_loss,
     save_periodic_branch_bests,
+    save_training_milestone,
     save_val_best_2d,
 )
 from config.warmup_config.warmup import GradualWarmupScheduler
@@ -941,6 +942,46 @@ def train_model(
             )
             current_epoch = epoch + 1
             if (
+                args.milestone_interval > 0
+                and current_epoch % args.milestone_interval == 0
+            ):
+                milestone_path = save_training_milestone(
+                    model1,
+                    model2,
+                    trained_models_path,
+                    current_epoch,
+                    metadata={
+                        'global_step': (
+                            current_epoch * num_batches['train_sup']
+                        ),
+                        'dataset_name': args.dataset_name,
+                        'labeled_ratio': args.labeled_ratio,
+                        'seed': args.sd,
+                        'routing': args.cps_routing,
+                        'branch_input_mode': (
+                            args.effective_branch_input_mode
+                        ),
+                        'network': args.network,
+                        'best_val_metrics': [
+                            list(values)
+                            for values in best_val_eval_lists
+                        ],
+                        'best_epochs': list(best_epochs),
+                        'args': vars(args).copy(),
+                    },
+                )
+                logger.info(
+                    'Current-weight milestone saved | epoch=%d | path=%s',
+                    current_epoch,
+                    milestone_path,
+                )
+                print(
+                    '| Current A/S weights saved at epoch {}'.format(
+                        current_epoch
+                    ).ljust(print_num_minus, ' '),
+                    '|',
+                )
+            if (
                 args.best_save_interval > 0
                 and current_epoch % args.best_save_interval == 0
             ):
@@ -1096,6 +1137,17 @@ def parse_args():
     parser.add_argument('-b', '--batch_size', default=2, type=int)
     parser.add_argument('-e', '--num_epochs', default=200, type=int)
     parser.add_argument(
+        '--milestone_interval',
+        '--milestone-interval',
+        dest='milestone_interval',
+        default=10,
+        type=int,
+        help=(
+            '每 N 个 epoch 保存同一时刻的 Appearance/Structure 当前权重；'
+            '设为 0 可关闭（默认：10）'
+        ),
+    )
+    parser.add_argument(
         '--best_save_interval',
         '--best-save-interval',
         dest='best_save_interval',
@@ -1164,6 +1216,8 @@ def parse_args():
             parser.error(
                 '--branch_input_mode conflicts with --dual_view/--no-dual_view'
             )
+    if args.milestone_interval < 0:
+        parser.error('--milestone_interval must be non-negative')
     if args.best_save_interval < 0:
         parser.error('--best_save_interval must be non-negative')
     if args.diagnostics_interval < 1:

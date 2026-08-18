@@ -283,6 +283,42 @@ def save_periodic_branch_bests(
     return saved_paths
 
 
+def save_training_milestone(
+    model1,
+    model2,
+    path_trained_model,
+    current_epoch,
+    metadata=None,
+):
+    """保存同一训练时刻的两个分支当前权重，而非历史最佳权重。"""
+    if current_epoch < 1:
+        raise ValueError('current_epoch must be positive')
+
+    milestone_dir = os.path.join(path_trained_model, 'milestones')
+    os.makedirs(milestone_dir, exist_ok=True)
+    checkpoint_path = os.path.join(
+        milestone_dir,
+        'epoch_{:03d}.pth'.format(current_epoch),
+    )
+    payload = {
+        'epoch': int(current_epoch),
+        'appearance_state_dict': _snapshot_model_state(model1),
+        'structure_state_dict': _snapshot_model_state(model2),
+    }
+    if metadata is not None:
+        protected_keys = set(payload)
+        overlap = protected_keys.intersection(metadata)
+        if overlap:
+            raise ValueError(
+                'milestone metadata cannot overwrite {}'.format(
+                    sorted(overlap)
+                )
+            )
+        payload.update(dict(metadata))
+    torch.save(payload, checkpoint_path)
+    return checkpoint_path
+
+
 def print_and_save_branch_bests(
     num_classes,
     best_lists,
