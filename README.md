@@ -93,119 +93,39 @@ python main.py --check_data
 Train with the 10% labeled split:
 
 ```bash
-python main.py --labeled_ratio 10
+python train.py --labeled_ratio 10 --input_mode rgb_rgb
 ```
 
-Choose how inputs are routed to the two CPS branches:
+Choose how inputs are routed to the two CPS students:
 
 ```bash
-# Heterogeneous: Result1=RGB appearance, Result2=H+Gray+Sobel structure.
-python main.py --branch_input_mode heterogeneous
+# Baseline CPS: both students receive original RGB.
+python train.py --input_mode rgb_rgb
 
-# Homogeneous ablation: both branches receive the same augmented RGB tensor.
-python main.py --branch_input_mode homogeneous
+# RGB-Stain CPS: Student1 receives RGB, Student2 receives stain RGB.
+python train.py --input_mode rgb_stain
 ```
 
-Choose the heterogeneous CPS routing with one shared Appearance network:
+Both modes keep the same segmentation architecture, CPS loss, optimizer,
+validation loop, and checkpoint flow. Only the second student input changes.
 
-```bash
-# Baseline: A_strong <-> Structure
-python main.py \
-  --network unet \
-  --branch_input_mode heterogeneous \
-  --cps-routing symmetric
+Dataset samples expose:
 
-# Asymmetric: A_weak -> Structure -> A_strong
-python main.py \
-  --network unet \
-  --branch_input_mode heterogeneous \
-  --cps-routing weak_structure_strong
-```
+`rgb_rgb`: `image`, `mask`, `ID`
 
-The aligned training views are generated in this order:
-
-```text
-Original RGB + mask
-  -> shared Resize/Flip/Transpose/RandomRotate90
-  -> x_geo + aligned mask
-
-x_geo -> normalize -> RGB weak
-x_geo -> existing ColorJitter/stain perturbation -> normalize -> RGB strong
-x_geo -> Hematoxylin/Gray/Sobel -> Structure
-```
-
-The strong transform is photometric only. Validation checkpoint selection and
-normal test inference use RGB weak plus Structure; RGB strong on validation is
-computed only for view-quality and disagreement diagnostics.
-
-The legacy `--dual_view` / `--no-dual_view` flags remain supported. Homogeneous
-runs receive an `-input=homogeneous` experiment-directory suffix so they do not
-overwrite heterogeneous checkpoints or metrics.
-
-#### Stage-1 complementarity diagnostics
-
-The diagnostic path is disabled by default and does not change the training
-loss, regular metrics CSV, best-model selection, or standard checkpoints. Run
-the isolated seed-4 experiment with:
-
-```bash
-./run_diagnostics.sh
-```
-
-When `--complementarity_diagnostics` is enabled, validation logits that are
-already in memory are additionally used to evaluate mean-probability fusion,
-entropy-weighted fusion, and a ground-truth oracle upper bound. The default
-five-epoch interval limits diagnostic overhead. By default, results are written
-under the experiment's `complementarity_diagnostics/` subdirectory; the
-provided script uses the predictable path
-`outputs/complementarity_stage1/glas_10_seed4/`:
-
-- `diagnostics_metrics.csv`: epoch-level branch, fusion, oracle, and
-  boundary/interior statistics;
-- `best_summary.json`: the best mean-fusion epoch and its key gains;
-- `best_per_image.csv`: per-image overlap and exclusive-correctness ratios;
-- `best_predictions.npz`: paired probabilities, masks, and boundary maps;
-- `best_pair_model1.pth` / `best_pair_model2.pth`: both branches from the same
-  best mean-fusion epoch;
-- `visualizations/`: GT, branch, fusion, and error-region panels. Orange means
-  appearance-only correct, cyan means structure-only correct, and red means
-  both branches are wrong.
-
-The oracle uses ground truth only to quantify the theoretical value of a
-perfect per-pixel branch selector. It is never used by the optimizer or pseudo
-label generation.
-
-Aligned dual views are enabled by the dataset configuration. The existing
-`image` field aliases the normalized RGB `image_appearance`, while
-`image_structure` contains `[hematoxylin, gray, sobel]`. Disable the extension
-to exercise the legacy data path:
-
-During dual-view training, `model1` receives `image_appearance` and `model2`
-receives `image_structure`. With dual views disabled, both models fall back to
-the legacy `image` field.
-
-```bash
-python main.py --check_data --no-dual_view
-```
-
-Run the dual-view checks and save labeled/unlabeled debug panels without
-starting training:
-
-```bash
-python tools/smoke_test_dual_views.py --check_forward
-python tools/visualize_dual_views.py --output_dir outputs/dual_view_debug
-```
+`rgb_stain`: `image`, `image_rgb`, `image_stain`, `mask`, `ID`
 
 Every epoch is validated and written to the experiment checkpoint directory:
 
-- `train_YYYYmmdd-HHMMSS.log`: concise human-readable epoch summaries.
-- `metrics_YYYYmmdd-HHMMSS.csv`: losses, Jaccard, Dice, threshold, learning rate, and epoch time
-  for plotting or further analysis.
+- `train.log`: epoch-level learning rate, average training loss, validation
+  Dice/Jaccard, and validation diversity/error relationship metrics.
+- `metrics.csv`: iteration-level training losses, student diversity,
+  prediction entropy, and pseudo-label overlap metrics.
 
 Use CRAG or the 20% labeled split:
 
 ```bash
-python main.py --dataset_name CRAG --path_dataset datasets/CRAG --labeled_ratio 20
+python train.py --dataset_name CRAG --path_dataset datasets/CRAG --labeled_ratio 20 --input_mode rgb_stain
 ```
 
 The legacy `train_sup_*/train_unsup_*/val` directory format remains supported

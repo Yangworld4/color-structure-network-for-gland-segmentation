@@ -78,12 +78,12 @@ def find_best_checkpoint(checkpoint_root, dataset_name, input_view='auto'):
         path for path in root.rglob('best_Jc_*.pth')
         if dataset_name.lower() in (part.lower() for part in path.parts)
     )
-    if input_view == 'appearance':
+    if input_view == 'student1':
         candidates = [
             path for path in candidates
             if re.match(r'best_result1_Jc_', path.name)
         ]
-    elif input_view == 'structure':
+    elif input_view == 'student2':
         candidates = [
             path for path in candidates
             if re.match(r'best_result2_Jc_', path.name)
@@ -118,9 +118,9 @@ def resolve_input_view(requested_view, checkpoint_path):
 
     checkpoint_name = Path(checkpoint_path).name.lower()
     if re.match(r'best_result1_jc_', checkpoint_name):
-        return 'appearance'
+        return 'student1'
     if re.match(r'best_result2_jc_', checkpoint_name):
-        return 'structure'
+        return 'student2'
 
     score_match = re.match(r'best_jc_([0-9]+(?:\.[0-9]+)?)\.pth$', checkpoint_name)
     if score_match:
@@ -129,30 +129,24 @@ def resolve_input_view(requested_view, checkpoint_path):
             'best_result[12]_Jc_{}.pth'.format(score)
         ))
         inferred_views = {
-            'appearance' if 'result1' in path.name.lower() else 'structure'
+            'student1' if 'result1' in path.name.lower() else 'student2'
             for path in branch_candidates
         }
         if len(inferred_views) == 1:
             return inferred_views.pop()
 
     raise ValueError(
-        'Cannot infer whether checkpoint {} belongs to model1/appearance or '
-        'model2/structure. Pass --input_view appearance or --input_view structure. '
-        'For pre-dual-view FDCL checkpoints, use appearance.'.format(checkpoint_path)
+        'Cannot infer whether checkpoint {} belongs to student1 or student2. '
+        'Pass --input_view student1 or --input_view student2.'.format(checkpoint_path)
     )
 
 
 def select_model_input(batch, input_view):
     """Select the same branch input for threshold search and final inference."""
-    if input_view == 'appearance':
-        return batch.get('image_appearance', batch['image'])
-    if input_view == 'structure':
-        if 'image_structure' not in batch:
-            raise KeyError(
-                'Structure input requested, but image_structure is unavailable. '
-                'Enable dual views.'
-            )
-        return batch['image_structure']
+    if input_view == 'student1':
+        return batch.get('image_rgb', batch['image'])
+    if input_view == 'student2':
+        return batch.get('image_stain', batch['image'])
     raise ValueError('Unsupported input view: {}'.format(input_view))
 
 
@@ -261,11 +255,16 @@ def parse_args():
     parser.add_argument(
         '--input_view',
         default='auto',
-        choices=['auto', 'appearance', 'structure'],
+        choices=['auto', 'student1', 'student2'],
         help=(
-            "model input: auto maps new best_result1 to appearance and best_result2 "
-            "to structure; explicitly use appearance for legacy FDCL checkpoints"
+            'model input: auto maps best_result1 to student1 and best_result2 to student2'
         ),
+    )
+    parser.add_argument(
+        '--input_mode',
+        default='rgb_rgb',
+        choices=['rgb_rgb', 'rgb_stain'],
+        help='rgb_rgb evaluates RGB input; rgb_stain provides stain RGB for student2',
     )
     parser.add_argument('--output_dir', default=None)
     parser.add_argument('--network', default='xnet_sb')
@@ -275,12 +274,6 @@ def parse_args():
                         help="foreground probability threshold in [0,1] (default: 0.5); "
                              "'auto' selects the Jaccard-optimal threshold on the validation manifest")
     parser.add_argument('--device', default='auto', choices=['auto', 'cuda', 'cpu'])
-    parser.add_argument(
-        '--dual_view',
-        action=argparse.BooleanOptionalAction,
-        default=None,
-        help='enable aligned appearance/structure dataset views (default: dataset config)',
-    )
     return parser.parse_args()
 
 
@@ -300,9 +293,6 @@ def main():
         args.dataset_name, args.checkpoint, args.checkpoint_root
     )
     cfg = dataset_cfg(dataset_name)
-    dual_view_cfg = cfg['dual_view']
-    if args.dual_view is not None:
-        dual_view_cfg['enabled'] = args.dual_view
     checkpoint_path = (
         Path(args.checkpoint) if args.checkpoint
         else find_best_checkpoint(
@@ -319,10 +309,8 @@ def main():
             )
         )
     input_view = resolve_input_view(args.input_view, checkpoint_path)
-    if input_view == 'structure' and not dual_view_cfg['enabled']:
-        raise ValueError(
-            '--input_view structure requires dual views; remove --no-dual_view'
-        )
+    if input_view == 'student2' and args.input_mode != 'rgb_stain':
+        raise ValueError('--input_view student2 requires --input_mode rgb_stain')
 
     dataset_root = Path(args.path_dataset or cfg['PATH_DATASET'])
     dataset_path_name = infer_dataset_from_path(dataset_root)
@@ -385,7 +373,7 @@ def main():
         data_transform_1=evaluation_transform,
         data_normalize_1=normalize,
         sup=True,
-        dual_view_config=dual_view_cfg,
+        input_mode=args.input_mode,
         training=False,
     )
     evaluation_loader = DataLoader(
@@ -411,7 +399,7 @@ def main():
                 data_transform_1=transforms['val'],
                 data_normalize_1=normalize,
                 sup=True,
-                dual_view_config=dual_view_cfg,
+                input_mode=args.input_mode,
                 training=False,
             )
             validation_loader = DataLoader(
