@@ -6,6 +6,7 @@ from PIL import Image
 import numpy as np
 
 from dataload.stain_transform import StainRGBTransform
+from utils.hed_transform import RGBToHEDTransform
 
 
 def _read_manifest(manifest_path, sup):
@@ -98,6 +99,7 @@ class dataset_itn(Dataset):
         self.sup = sup
         self.input_mode = input_mode
         self.stain_transform = StainRGBTransform(training=training)
+        self.hed_transform = RGBToHEDTransform()
         self.kwargs = kwargs
 
     def __getitem__(self, index):
@@ -118,6 +120,7 @@ class dataset_itn(Dataset):
             img_1 = augment_1['image']
             mask_1 = augment_1['mask']
             stain_1 = self.stain_transform(img_1) if self.input_mode == 'rgb_stain' else None
+            hed_1 = self.hed_transform(img_1) if self.input_mode == 'rgb_hed' else None
             normalize_1 = self.normalize_1(image=img_1, mask=mask_1)
             img_1 = normalize_1['image']
             mask_1 = normalize_1['mask']
@@ -127,11 +130,15 @@ class dataset_itn(Dataset):
             if self.input_mode == 'rgb_stain':
                 sampel['image_rgb'] = img_1
                 sampel['image_stain'] = self.normalize_1(image=stain_1)['image']
+            if self.input_mode == 'rgb_hed':
+                sampel['image_rgb'] = img_1
+                sampel['image_stain'] = hed_1
 
         else:
             augment_1 = self.augmentation_1(image=img_1)
             img_1 = augment_1['image']
             stain_1 = self.stain_transform(img_1) if self.input_mode == 'rgb_stain' else None
+            hed_1 = self.hed_transform(img_1) if self.input_mode == 'rgb_hed' else None
             normalize_1 = self.normalize_1(image=img_1)
             img_1 = normalize_1['image']
 
@@ -139,6 +146,9 @@ class dataset_itn(Dataset):
             if self.input_mode == 'rgb_stain':
                 sampel['image_rgb'] = img_1
                 sampel['image_stain'] = self.normalize_1(image=stain_1)['image']
+            if self.input_mode == 'rgb_hed':
+                sampel['image_rgb'] = img_1
+                sampel['image_stain'] = hed_1
 
         return sampel
 

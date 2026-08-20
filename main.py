@@ -933,9 +933,11 @@ def parse_args():
     parser.add_argument('--input1', default='image')
     parser.add_argument(
         '--input_mode',
+        '--input-mode',
+        dest='input_mode',
         default='rgb_rgb',
-        choices=['rgb_rgb', 'rgb_stain'],
-        help='rgb_rgb uses original RGB for both students; rgb_stain uses stain RGB for student2',
+        choices=['rgb_rgb', 'rgb_stain', 'rgb_hed'],
+        help='rgb_rgb uses original RGB for both students; rgb_stain uses stain RGB for student2; rgb_hed uses HED for student2',
     )
     parser.add_argument(
         '--manifest_dir',

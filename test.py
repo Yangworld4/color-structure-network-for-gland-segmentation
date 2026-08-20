@@ -262,9 +262,11 @@ def parse_args():
     )
     parser.add_argument(
         '--input_mode',
+        '--input-mode',
+        dest='input_mode',
         default='rgb_rgb',
-        choices=['rgb_rgb', 'rgb_stain'],
-        help='rgb_rgb evaluates RGB input; rgb_stain provides stain RGB for student2',
+        choices=['rgb_rgb', 'rgb_stain', 'rgb_hed'],
+        help='rgb_rgb evaluates RGB input; rgb_stain provides stain RGB for student2; rgb_hed provides HED for student2',
     )
     parser.add_argument('--output_dir', default=None)
     parser.add_argument('--network', default='xnet_sb')
@@ -309,8 +311,8 @@ def main():
             )
         )
     input_view = resolve_input_view(args.input_view, checkpoint_path)
-    if input_view == 'student2' and args.input_mode != 'rgb_stain':
-        raise ValueError('--input_view student2 requires --input_mode rgb_stain')
+    if input_view == 'student2' and args.input_mode not in ('rgb_stain', 'rgb_hed'):
+        raise ValueError('--input_view student2 requires --input_mode rgb_stain or rgb_hed')
 
     dataset_root = Path(args.path_dataset or cfg['PATH_DATASET'])
     dataset_path_name = infer_dataset_from_path(dataset_root)
