@@ -57,8 +57,15 @@ def get_training_views(
     batch: Mapping[str, torch.Tensor],
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     """Return Student1 and Student2 inputs."""
-    student1 = batch.get('image_rgb', batch['image'])
-    student2 = batch.get('image_stain', batch['image'])
+    if 'image_aug1' in batch and 'image_aug2' in batch and 'mask' not in batch:
+        student1 = batch['image_aug1']
+        student2 = batch['image_aug2']
+    elif 'image_aug1' in batch and 'image_aug2' in batch:
+        student1 = batch['image']
+        student2 = batch['image']
+    else:
+        student1 = batch.get('image_rgb', batch['image'])
+        student2 = batch.get('image_stain', batch['image'])
     spatial_shapes = {tuple(view.shape[-2:]) for view in (student1, student2)}
     if len(spatial_shapes) != 1:
         raise ValueError(
@@ -82,7 +89,7 @@ def compute_cps_losses(
     return {
         '1_to_2': loss_1_to_2,
         '2_to_1': loss_2_to_1,
-        'total': 0.5 * (loss_1_to_2 + loss_2_to_1),}
+        'total': loss_1_to_2 + loss_2_to_1,}
 
 
 def _hard_predictions(scores: torch.Tensor) -> torch.Tensor:
@@ -153,6 +160,9 @@ def build_datasets(args, cfg):
     mean_key, std_key = _normalization_keys(args.input1)
     transforms = data_transform_2d()
     normalize = data_normalize_2d(cfg[mean_key], cfg[std_key])
+    train_transform = (
+        transforms['val'] if args.input_mode == 'ucmt_views' else transforms['train']
+    )
 
     common = {
         'data_normalize_1': normalize,
@@ -193,21 +203,21 @@ def build_datasets(args, cfg):
     train_unsup = imagefloder_itn(
         **unlabeled_source,
         **common,
-        data_transform_1=transforms['train'],
+        data_transform_1=train_transform,
         sup=False,
         training=True,
     )
     train_sup_unique = imagefloder_itn(
         **labeled_source,
         **common,
-        data_transform_1=transforms['train'],
+        data_transform_1=train_transform,
         sup=True,
         training=True,
     )
     train_sup = imagefloder_itn(
         **labeled_source,
         **common,
-        data_transform_1=transforms['train'],
+        data_transform_1=train_transform,
         sup=True,
         num_images=len(train_unsup),
         training=True,
@@ -248,6 +258,40 @@ def print_data_summary(args, datasets, manifest_dir, use_manifests):
             len(datasets['train_sup'])
         )
     )
+    if args.input_mode == 'ucmt_views':
+        print('Teacher view: clean RGB')
+        print('Student1 view: appearance aug x1')
+        print('Student2 view: sequential appearance aug x2')
+        for name, tensor in (
+            ('Teacher clean RGB', unsup_sample['image']),
+            ('Student1 aug x1', unsup_sample['image_aug1']),
+            ('Student2 aug x2', unsup_sample['image_aug2']),
+        ):
+            stats_tensor = tensor.float()
+            print(
+                '{}: shape={} dtype={} min={:.6f} max={:.6f} mean={:.6f} std={:.6f}'.format(
+                    name,
+                    tuple(tensor.shape),
+                    tensor.dtype,
+                    stats_tensor.min().item(),
+                    stats_tensor.max().item(),
+                    stats_tensor.mean().item(),
+                    stats_tensor.std().item(),
+                )
+            )
+        print(
+            'UCMT view spatial shapes: teacher={} student1={} student2={}'.format(
+                tuple(unsup_sample['image'].shape[-2:]),
+                tuple(unsup_sample['image_aug1'].shape[-2:]),
+                tuple(unsup_sample['image_aug2'].shape[-2:]),
+            )
+        )
+        print(
+            'UCMT appearance mean abs diff: teacher-student1={:.6f} student1-student2={:.6f}'.format(
+                (unsup_sample['image'] - unsup_sample['image_aug1']).abs().mean().item(),
+                (unsup_sample['image_aug1'] - unsup_sample['image_aug2']).abs().mean().item(),
+            )
+        )
     print(
         'Supervised image:',
         tuple(sup_sample['image'].shape),
@@ -943,11 +987,10 @@ def parse_args():
     parser.add_argument('--input1', default='image')
     parser.add_argument(
         '--input_mode',
-        '--input-mode',
         dest='input_mode',
         default='rgb_rgb',
-        choices=['rgb_rgb', 'rgb_stain', 'rgb_hed'],
-        help='rgb_rgb uses original RGB for both students; rgb_stain uses stain RGB for student2; rgb_hed uses HED for student2',
+        choices=['rgb_rgb', 'rgb_stain', 'rgb_hed', 'ucmt_views'],
+        help='rgb_rgb uses original RGB for both students; rgb_stain uses stain RGB for student2; rgb_hed uses HED for student2; ucmt_views uses clean/Aug1/sequential Aug2 RGB',
     )
     parser.add_argument(
         '--manifest_dir',
@@ -995,7 +1038,7 @@ def parse_args():
     parser.add_argument('-s', '--step_size', default=50, type=int)
     parser.add_argument('-l', '--lr', default=0.5, type=float)
     parser.add_argument('-g', '--gamma', default=0.5, type=float)
-    parser.add_argument('-u', '--unsup_weight', default=5, type=float)
+    parser.add_argument('-u', '--unsup_weight', default=1, type=float)
     parser.add_argument('--loss', default='dice')
     parser.add_argument('-w', '--warm_up_duration', default=20, type=int)
     parser.add_argument('--momentum', default=0.9, type=float)
@@ -1028,6 +1071,7 @@ def main():
     if args.check_data:
         print_data_summary(args, datasets, manifest_dir, use_manifests)
         return
+    print_data_summary(args, datasets, manifest_dir, use_manifests)
     if not torch.cuda.is_available():
         raise RuntimeError(
             'FDCL training requires a CUDA GPU; '

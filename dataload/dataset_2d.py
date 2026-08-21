@@ -1,9 +1,12 @@
 import os
 import csv
+import random
+from copy import deepcopy
 import torch
 from torch.utils.data import Dataset
 from PIL import Image
 import numpy as np
+from torchvision import transforms
 
 from dataload.stain_transform import StainRGBTransform
 from utils.hed_transform import RGBToHEDTransform
@@ -100,7 +103,88 @@ class dataset_itn(Dataset):
         self.input_mode = input_mode
         self.stain_transform = StainRGBTransform(training=training)
         self.hed_transform = RGBToHEDTransform()
+        self.training = training
+        self.ucmt_appearance = transforms.Compose([
+            transforms.ColorJitter(
+                brightness=0.5,
+                contrast=0.5,
+                saturation=0.5,
+                hue=0.25,
+            ),
+            transforms.RandomPosterize(bits=5, p=0.2),
+            transforms.RandomAutocontrast(p=0.2),
+            transforms.RandomEqualize(p=0.2),
+            transforms.GaussianBlur(kernel_size=3, sigma=(0.1, 2.0)),
+        ])
         self.kwargs = kwargs
+
+    def _shared_geometric_transform(self, image, mask=None):
+        image = Image.fromarray(image)
+        mask = Image.fromarray(mask) if mask is not None else None
+
+        if self.training:
+            if random.random() < 0.5:
+                image = transforms.functional.hflip(image)
+                if mask is not None:
+                    mask = transforms.functional.hflip(mask)
+            if random.random() < 0.5:
+                image = transforms.functional.vflip(image)
+                if mask is not None:
+                    mask = transforms.functional.vflip(mask)
+            angle = random.uniform(-180.0, 180.0)
+            image = transforms.functional.rotate(
+                image,
+                angle,
+                interpolation=transforms.InterpolationMode.BILINEAR,
+                fill=0,
+            )
+            if mask is not None:
+                mask = transforms.functional.rotate(
+                    mask,
+                    angle,
+                    interpolation=transforms.InterpolationMode.NEAREST,
+                    fill=0,
+                )
+
+        if mask is None:
+            return np.array(image), None
+        return np.array(image), np.array(mask)
+
+    def _normalize_ucmt_views(self, image_clean, mask=None):
+        if self.training:
+            image_student1 = np.array(
+                self.ucmt_appearance(deepcopy(Image.fromarray(image_clean)))
+            )
+            image_student2 = np.array(
+                self.ucmt_appearance(deepcopy(Image.fromarray(image_student1)))
+            )
+        else:
+            image_student1 = image_clean
+            image_student2 = image_clean
+
+        if mask is None:
+            clean = self.augmentation_1(image=image_clean)['image']
+            student1 = self.augmentation_1(image=image_student1)['image']
+            student2 = self.augmentation_1(image=image_student2)['image']
+            return {
+                'image': self.normalize_1(image=clean)['image'],
+                'image_aug1': self.normalize_1(image=student1)['image'],
+                'image_aug2': self.normalize_1(image=student2)['image'],
+            }
+
+        clean = self.augmentation_1(image=image_clean, mask=mask)
+        student1 = self.augmentation_1(image=image_student1)['image']
+        student2 = self.augmentation_1(image=image_student2)['image']
+        clean_normalized = self.normalize_1(
+            image=clean['image'],
+            mask=clean['mask'],
+        )
+        return {
+            'image': clean_normalized['image'],
+            'image_aug1': self.normalize_1(image=student1)['image'],
+            'image_aug2': self.normalize_1(image=student2)['image'],
+            'mask': clean_normalized['mask'].long(),
+        }
 
     def __getitem__(self, index):
 
@@ -115,6 +199,17 @@ class dataset_itn(Dataset):
             # FDCL is configured for two classes. Prepared masks use 0/255,
             # while segmentation losses require class indices 0/1.
             mask = (mask > 0).astype(np.uint8)
+
+            if self.input_mode == 'ucmt_views':
+                img_1, mask = self._shared_geometric_transform(img_1, mask)
+                views = self._normalize_ucmt_views(img_1, mask)
+                return {
+                    'image': views['image'],
+                    'image_aug1': views['image_aug1'],
+                    'image_aug2': views['image_aug2'],
+                    'mask': views['mask'],
+                    'ID': os.path.split(mask_path)[1],
+                }
 
             augment_1 = self.augmentation_1(image=img_1, mask=mask)
             img_1 = augment_1['image']
@@ -135,6 +230,16 @@ class dataset_itn(Dataset):
                 sampel['image_stain'] = hed_1
 
         else:
+            if self.input_mode == 'ucmt_views':
+                img_1, _ = self._shared_geometric_transform(img_1)
+                views = self._normalize_ucmt_views(img_1)
+                return {
+                    'image': views['image'],
+                    'image_aug1': views['image_aug1'],
+                    'image_aug2': views['image_aug2'],
+                    'ID': os.path.split(img_path_1)[1],
+                }
+
             augment_1 = self.augmentation_1(image=img_1)
             img_1 = augment_1['image']
             stain_1 = self.stain_transform(img_1) if self.input_mode == 'rgb_stain' else None
