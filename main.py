@@ -445,24 +445,10 @@ def train_one_epoch(
     mask_list = None
 
     for batch_index in range(num_train_batches):
-        unsup_batch = next(unsupervised_batches)
-        unsup_input1, unsup_input2 = get_training_views(unsup_batch)
-        unsup_input1 = unsup_input1.cuda(non_blocking=True)
-        unsup_input2 = unsup_input2.cuda(non_blocking=True)
 
-        optimizer1.zero_grad()
-        optimizer2.zero_grad()
-
-        unsup_prediction1 = model1(unsup_input1)[0]
-        unsup_prediction2 = model2(unsup_input2)[0]
-        cps_losses = compute_cps_losses(
-            criterion,
-            unsup_prediction1,
-            unsup_prediction2,
-        )
-        unsup_loss = cps_losses['total'] * unsup_weight
-        unsup_loss.backward()
-
+        ###########################
+            # supervised path #
+        ###########################
         sup_batch = next(supervised_batches)
         sup_input1, sup_input2 = get_training_views(sup_batch)
         sup_input1 = sup_input1.cuda(non_blocking=True)
@@ -497,7 +483,32 @@ def train_one_epoch(
         supervised_loss1 = criterion(sup_prediction1, sup_mask)
         supervised_loss2 = criterion(sup_prediction2, sup_mask)
         supervised_loss = supervised_loss1 + supervised_loss2
-        supervised_loss.backward()
+
+        ###########################
+            # unsupervised path #
+        ###########################
+        unsup_batch = next(unsupervised_batches)
+        unsup_input1, unsup_input2 = get_training_views(unsup_batch)
+        unsup_input1 = unsup_input1.cuda(non_blocking=True)
+        unsup_input2 = unsup_input2.cuda(non_blocking=True)
+
+        optimizer1.zero_grad()
+        optimizer2.zero_grad()
+
+        unsup_prediction1 = model1(unsup_input1)[0]
+        unsup_prediction2 = model2(unsup_input2)[0]
+        
+        #CPS loss
+        cps_losses = compute_cps_losses(
+            criterion,
+            unsup_prediction1,
+            unsup_prediction2,
+        )
+        unsup_loss = cps_losses['total']
+
+        #total_loss backward
+        total_loss = supervised_loss + unsup_weight * unsup_loss
+        total_loss.backward()
 
         optimizer1.step()
         optimizer2.step()
