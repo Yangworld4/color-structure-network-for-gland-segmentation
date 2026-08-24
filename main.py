@@ -7,6 +7,7 @@ import time
 from typing import Dict, Mapping, Tuple
 from warnings import simplefilter
 
+from DUAL.config.ramps.ramps import sigmoid_rampup
 import numpy as np
 import torch
 import torch.optim as optim
@@ -89,7 +90,7 @@ def compute_cps_losses(
     return {
         '1_to_2': loss_1_to_2,
         '2_to_1': loss_2_to_1,
-        'total': loss_1_to_2 + loss_2_to_1,}
+        'total': 0.5 * (loss_1_to_2 + loss_2_to_1),}
 
 
 def _hard_predictions(scores: torch.Tensor) -> torch.Tensor:
@@ -482,7 +483,7 @@ def train_one_epoch(
     supervised_batches = iter(dataloaders['train_sup'])
     unsupervised_batches = iter(dataloaders['train_unsup'])
     num_train_batches = len(dataloaders['train_sup'])
-
+    pbar = range(num_train_batches)
     score_list1 = None
     score_list2 = None
     mask_list = None
@@ -550,7 +551,8 @@ def train_one_epoch(
         unsup_loss = cps_losses['total']
 
         #total_loss backward
-        total_loss = supervised_loss + unsup_weight * unsup_loss
+        lambda_ = sigmoid_rampup(current=batch_index + len(pbar) * (epoch-1), rampup_length=len(pbar) * 5)
+        total_loss = supervised_loss + lambda_ * unsup_loss
         total_loss.backward()
 
         optimizer1.step()
