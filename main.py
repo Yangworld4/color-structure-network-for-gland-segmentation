@@ -7,7 +7,7 @@ import time
 from typing import Dict, Mapping, Tuple
 from warnings import simplefilter
 
-from DUAL.config.ramps.ramps import sigmoid_rampup
+from utils.ramps import sigmoid_rampup
 import numpy as np
 import torch
 import torch.optim as optim
@@ -90,7 +90,7 @@ def compute_cps_losses(
     return {
         '1_to_2': loss_1_to_2,
         '2_to_1': loss_2_to_1,
-        'total': 0.5 * (loss_1_to_2 + loss_2_to_1),}
+        'total': 0.5 * (loss_1_to_2 + loss_2_to_1)}
 
 
 def _hard_predictions(scores: torch.Tensor) -> torch.Tensor:
