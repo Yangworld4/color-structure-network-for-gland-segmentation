@@ -551,7 +551,7 @@ def train_one_epoch(
         unsup_loss = cps_losses['total']
 
         #total_loss backward
-        lambda_ = sigmoid_rampup(current=batch_index + len(pbar) * (epoch-1), rampup_length=len(pbar) * 5)
+        lambda_ = sigmoid_rampup(current=batch_index + len(pbar) * epoch, rampup_length=len(pbar) * 5)
         total_loss = supervised_loss + lambda_ * unsup_loss
         total_loss.backward()
 
