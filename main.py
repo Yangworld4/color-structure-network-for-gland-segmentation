@@ -395,6 +395,10 @@ def build_output_paths(args, datasets, use_manifests):
 def create_run_outputs(args, trained_models_path):
     log_path = os.path.join(trained_models_path, 'train.log')
     metrics_path = os.path.join(trained_models_path, 'metrics.csv')
+    diagnostic_log_path = os.path.join(
+        trained_models_path,
+        'diagnostics_{}.log'.format(time.strftime('%Y%m%d-%H%M%S')),
+    )
 
     logger = logging.getLogger('fdcl.train')
     logger.setLevel(logging.INFO)
@@ -416,7 +420,19 @@ def create_run_outputs(args, trained_models_path):
 
     print('Training log:', log_path)
     print('Metrics CSV:', metrics_path)
-    return logger, metrics_path
+
+    # CPS Diagnostic Analysis
+    diagnostic_logger = logging.getLogger('fdcl.diagnostics')
+    diagnostic_logger.setLevel(logging.INFO)
+    diagnostic_logger.handlers.clear()
+    diagnostic_logger.propagate = False
+    diagnostic_handler = logging.FileHandler(
+        diagnostic_log_path, mode='w', encoding='utf-8'
+    )
+    diagnostic_handler.setFormatter(logging.Formatter('%(message)s'))
+    diagnostic_logger.addHandler(diagnostic_handler)
+    print('Diagnostic log:', diagnostic_log_path)
+    return logger, metrics_path, diagnostic_logger
 
 
 def _build_optimizer_and_scheduler(model, args):
@@ -584,6 +600,204 @@ def train_one_epoch(
     return loss_totals, (score_list1, score_list2, mask_list), global_step
 
 
+# CPS Diagnostic Analysis
+def _foreground_probability(logits: torch.Tensor) -> torch.Tensor:
+    if logits.shape[1] == 1:
+        return torch.sigmoid(logits)
+    return torch.softmax(logits, dim=1)[:, 1:2, ...]
+
+
+# CPS Diagnostic Analysis
+def _select_feature_module(model):
+    candidate_names = (
+        'Conv5',
+        'conv4_0',
+        'aspp_bridge',
+        'bridge',
+        'b1_5_4',
+        'layers.3',
+        'encoder.layers.3',
+    )
+    modules = dict(model.named_modules())
+    for name in candidate_names:
+        if name in modules:
+            return modules[name]
+    leaf_module = None
+    for _name, module in model.named_modules():
+        if (
+            len(list(module.children())) == 0
+            and hasattr(module, 'register_forward_hook')
+        ):
+            leaf_module = module
+    return leaf_module
+
+
+# CPS Diagnostic Analysis
+def _linear_cka(feature_a: torch.Tensor, feature_b: torch.Tensor) -> float:
+    if feature_a.dim() == 4:
+        pooled_hw = (
+            min(16, feature_a.shape[-2], feature_b.shape[-2]),
+            min(16, feature_a.shape[-1], feature_b.shape[-1]),
+        )
+        feature_a = torch.nn.functional.adaptive_avg_pool2d(
+            feature_a.float(), pooled_hw
+        )
+        feature_b = torch.nn.functional.adaptive_avg_pool2d(
+            feature_b.float(), pooled_hw
+        )
+        feature_a = feature_a.permute(0, 2, 3, 1).reshape(-1, feature_a.shape[1])
+        feature_b = feature_b.permute(0, 2, 3, 1).reshape(-1, feature_b.shape[1])
+    else:
+        feature_a = feature_a.float().reshape(feature_a.shape[0], -1)
+        feature_b = feature_b.float().reshape(feature_b.shape[0], -1)
+
+    sample_count = min(feature_a.shape[0], feature_b.shape[0])
+    feature_dim = min(feature_a.shape[1], feature_b.shape[1])
+    if sample_count < 2 or feature_dim < 1:
+        return float('nan')
+    feature_a = feature_a[:sample_count, :feature_dim]
+    feature_b = feature_b[:sample_count, :feature_dim]
+    feature_a = feature_a - feature_a.mean(dim=0, keepdim=True)
+    feature_b = feature_b - feature_b.mean(dim=0, keepdim=True)
+    cross = torch.norm(feature_a.T @ feature_b, p='fro').pow(2)
+    self_a = torch.norm(feature_a.T @ feature_a, p='fro')
+    self_b = torch.norm(feature_b.T @ feature_b, p='fro')
+    denom = self_a * self_b
+    if denom.item() <= 0:
+        return float('nan')
+    return float((cross / denom).clamp(0.0, 1.0).item())
+
+
+# CPS Diagnostic Analysis
+def _init_diagnostic_totals():
+    return {
+        'valid_pixels': 0.0,
+        'pixel_disagreement': 0.0,
+        'prob_disagreement': 0.0,
+        'both_correct': 0.0,
+        'a_only_correct': 0.0,
+        'b_only_correct': 0.0,
+        'both_wrong': 0.0,
+        'wrong_agreement': 0.0,
+        'disagree_pixels': 0.0,
+        'a_correct_disagree': 0.0,
+        'b_correct_disagree': 0.0,
+        'feature_cka_sum': 0.0,
+        'feature_cka_count': 0.0,
+    }
+
+
+# CPS Diagnostic Analysis
+def _update_diagnostic_totals(
+    totals,
+    logits_a: torch.Tensor,
+    logits_b: torch.Tensor,
+    mask: torch.Tensor,
+    feature_a=None,
+    feature_b=None,
+    ignore_index=-1,
+):
+    prob_a = _foreground_probability(logits_a).detach()
+    prob_b = _foreground_probability(logits_b).detach()
+    pred_a = prob_a[:, 0, ...] > 0.5
+    pred_b = prob_b[:, 0, ...] > 0.5
+    valid = mask.ne(ignore_index)
+    gt = mask.float().gt(0.5)
+    valid_pixels = float(valid.sum().item())
+    if valid_pixels <= 0:
+        return
+
+    correct_a = pred_a.eq(gt) & valid
+    correct_b = pred_b.eq(gt) & valid
+    disagree = pred_a.ne(pred_b) & valid
+    both_correct = correct_a & correct_b
+    a_only_correct = correct_a & (~correct_b) & valid
+    b_only_correct = (~correct_a) & correct_b & valid
+    both_wrong = (~correct_a) & (~correct_b) & valid
+    wrong_agreement = pred_a.eq(pred_b) & pred_a.ne(gt) & valid
+
+    totals['valid_pixels'] += valid_pixels
+    totals['pixel_disagreement'] += float(disagree.sum().item())
+    totals['prob_disagreement'] += float(
+        torch.abs(prob_a[:, 0, ...] - prob_b[:, 0, ...])[valid].sum().item()
+    )
+    totals['both_correct'] += float(both_correct.sum().item())
+    totals['a_only_correct'] += float(a_only_correct.sum().item())
+    totals['b_only_correct'] += float(b_only_correct.sum().item())
+    totals['both_wrong'] += float(both_wrong.sum().item())
+    totals['wrong_agreement'] += float(wrong_agreement.sum().item())
+    totals['disagree_pixels'] += float(disagree.sum().item())
+    totals['a_correct_disagree'] += float((correct_a & disagree).sum().item())
+    totals['b_correct_disagree'] += float((correct_b & disagree).sum().item())
+
+    if feature_a is not None and feature_b is not None:
+        cka = _linear_cka(feature_a.detach(), feature_b.detach())
+        if not np.isnan(cka):
+            totals['feature_cka_sum'] += cka
+            totals['feature_cka_count'] += 1.0
+
+
+# CPS Diagnostic Analysis
+def _finalize_diagnostics(totals, dice_a, dice_b):
+    valid_pixels = totals['valid_pixels']
+    disagree_pixels = totals['disagree_pixels']
+    cka_count = totals['feature_cka_count']
+    return {
+        'dice_a': dice_a,
+        'dice_b': dice_b,
+        'pixel_disagreement': totals['pixel_disagreement'] / valid_pixels,
+        'prob_disagreement': totals['prob_disagreement'] / valid_pixels,
+        'feature_cka': (
+            totals['feature_cka_sum'] / cka_count
+            if cka_count > 0 else float('nan')
+        ),
+        'both_correct_ratio': totals['both_correct'] / valid_pixels,
+        'a_only_correct_ratio': totals['a_only_correct'] / valid_pixels,
+        'b_only_correct_ratio': totals['b_only_correct'] / valid_pixels,
+        'both_wrong_ratio': totals['both_wrong'] / valid_pixels,
+        'wrong_agreement_ratio': totals['wrong_agreement'] / valid_pixels,
+        'a_correct_given_disagreement': (
+            totals['a_correct_disagree'] / disagree_pixels
+            if disagree_pixels > 0 else float('nan')
+        ),
+        'b_correct_given_disagreement': (
+            totals['b_correct_disagree'] / disagree_pixels
+            if disagree_pixels > 0 else float('nan')
+        ),
+    }
+
+
+# CPS Diagnostic Analysis
+def log_diagnostics(diagnostic_logger, epoch, global_step, diagnostics):
+    diagnostic_logger.info(
+        '[Diagnostic] epoch=%d global_step=%d '
+        'dice_a=%.4f dice_b=%.4f '
+        'pixel_disagreement=%.4f prob_disagreement=%.4f '
+        'feature_cka=%.4f '
+        'both_correct_ratio=%.4f '
+        'a_only_correct_ratio=%.4f '
+        'b_only_correct_ratio=%.4f '
+        'both_wrong_ratio=%.4f '
+        'wrong_agreement_ratio=%.4f '
+        'a_correct_given_disagreement=%.4f '
+        'b_correct_given_disagreement=%.4f',
+        epoch,
+        global_step,
+        diagnostics['dice_a'],
+        diagnostics['dice_b'],
+        diagnostics['pixel_disagreement'],
+        diagnostics['prob_disagreement'],
+        diagnostics['feature_cka'],
+        diagnostics['both_correct_ratio'],
+        diagnostics['a_only_correct_ratio'],
+        diagnostics['b_only_correct_ratio'],
+        diagnostics['both_wrong_ratio'],
+        diagnostics['wrong_agreement_ratio'],
+        diagnostics['a_correct_given_disagreement'],
+        diagnostics['b_correct_given_disagreement'],
+    )
+
+
 @torch.no_grad()
 def validate(models, criterion, dataloader):
     model1, model2 = models
@@ -596,21 +810,53 @@ def validate(models, criterion, dataloader):
     scores2 = []
     masks = []
     names = []
+    # CPS Diagnostic Analysis
+    diagnostic_totals = _init_diagnostic_totals()
+    diagnostic_features = {'a': None, 'b': None}
+    feature_module1 = _select_feature_module(model1)
+    feature_module2 = _select_feature_module(model2)
+    hook_handles = []
+    if feature_module1 is not None and feature_module2 is not None:
+        def _capture_feature(name):
+            def _hook(_module, _inputs, output):
+                if isinstance(output, (tuple, list)):
+                    output = output[0]
+                diagnostic_features[name] = output.detach()
+            return _hook
 
-    for batch in dataloader:
-        input1, input2 = get_training_views(batch)
-        input1 = input1.cuda(non_blocking=True)
-        input2 = input2.cuda(non_blocking=True)
-        mask = batch['mask'].cuda(non_blocking=True)
+        hook_handles = [
+            feature_module1.register_forward_hook(_capture_feature('a')),
+            feature_module2.register_forward_hook(_capture_feature('b')),
+        ]
 
-        output1 = model1(input1)[0]
-        output2 = model2(input2)[0]
-        scores1.append(output1)
-        scores2.append(output2)
-        masks.append(mask)
-        names.extend(batch['ID'])
-        loss1 += criterion(output1, mask).item()
-        loss2 += criterion(output2, mask).item()
+    try:
+        for batch in dataloader:
+            input1, input2 = get_training_views(batch)
+            input1 = input1.cuda(non_blocking=True)
+            input2 = input2.cuda(non_blocking=True)
+            mask = batch['mask'].cuda(non_blocking=True)
+
+            diagnostic_features['a'] = None
+            diagnostic_features['b'] = None
+            output1 = model1(input1)[0]
+            output2 = model2(input2)[0]
+            scores1.append(output1)
+            scores2.append(output2)
+            masks.append(mask)
+            names.extend(batch['ID'])
+            loss1 += criterion(output1, mask).item()
+            loss2 += criterion(output2, mask).item()
+            _update_diagnostic_totals(
+                diagnostic_totals,
+                output1,
+                output2,
+                mask,
+                diagnostic_features['a'],
+                diagnostic_features['b'],
+            )
+    finally:
+        for handle in hook_handles:
+            handle.remove()
 
     scores1_tensor = torch.cat(scores1, dim=0)
     scores2_tensor = torch.cat(scores2, dim=0)
@@ -622,6 +868,7 @@ def validate(models, criterion, dataloader):
         'scores2': scores2_tensor,
         'masks': torch.cat(masks, dim=0),
         'names': np.asarray(names),
+        'diagnostic_totals': diagnostic_totals,
     }
 
 
@@ -747,7 +994,9 @@ def train_model(
     trained_models_path, _ = build_output_paths(
         args, datasets, use_manifests
     )
-    logger, metrics_path = create_run_outputs(args, trained_models_path)
+    logger, metrics_path, diagnostic_logger = create_run_outputs(
+        args, trained_models_path
+    )
     (
         models,
         optimizers,
@@ -826,6 +1075,17 @@ def train_model(
                 validation['scores2'],
                 validation['masks'],
                 print_num_half,
+            )
+            diagnostics = _finalize_diagnostics(
+                validation['diagnostic_totals'],
+                val_eval1[2],
+                val_eval2[2],
+            )
+            log_diagnostics(
+                diagnostic_logger,
+                epoch + 1,
+                global_step,
+                diagnostics,
             )
             validation_diversity = compute_validation_diversity(validation)
             print(
