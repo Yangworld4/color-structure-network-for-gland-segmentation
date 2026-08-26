@@ -11,6 +11,7 @@ from utils.ramps import sigmoid_rampup
 import numpy as np
 import torch
 import torch.optim as optim
+from torch.nn.modules.loss import CrossEntropyLoss
 from torch.optim import lr_scheduler
 from torch.utils.data import DataLoader
 
@@ -28,7 +29,7 @@ from config.train_test_config.train_test_config import (
 )
 from config.warmup_config.warmup import GradualWarmupScheduler
 from dataload.dataset_2d import imagefloder_itn
-from loss.loss_function import segmentation_loss
+from loss.loss_function import DiceLoss
 from models.getnetwork import get_network
 
 
@@ -77,20 +78,32 @@ def get_training_views(
     return student1, student2
 
 
+def compute_supervised_loss(
+    ce_loss,
+    dice_loss,
+    prediction: torch.Tensor,
+    target: torch.Tensor,
+) -> torch.Tensor:
+    return 0.5 * (
+        ce_loss(prediction, target.long())
+        + dice_loss(prediction, target)
+    )
+
+
 def compute_cps_losses(
-    criterion,
+    ce_loss,
     prediction1: torch.Tensor,
     prediction2: torch.Tensor,
 ) -> Dict[str, torch.Tensor]:
     """Compute hard-pseudo-label CPS while detaching every teacher path."""
     pseudo1 = prediction1.detach().argmax(dim=1)
     pseudo2 = prediction2.detach().argmax(dim=1)
-    loss_1_to_2 = criterion(prediction2, pseudo1)
-    loss_2_to_1 = criterion(prediction1, pseudo2)
+    loss_1_to_2 = 0.5 * ce_loss(prediction2, pseudo1)
+    loss_2_to_1 = 0.5 * ce_loss(prediction1, pseudo2)
     return {
         '1_to_2': loss_1_to_2,
         '2_to_1': loss_2_to_1,
-        'total': 0.5 * (loss_1_to_2 + loss_2_to_1)}
+        'total': loss_1_to_2 + loss_2_to_1}
 
 
 def _hard_predictions(scores: torch.Tensor) -> torch.Tensor:
@@ -462,7 +475,10 @@ def build_training_components(args, cfg):
     model2 = get_network(
         args.network, cfg['IN_CHANNELS'], cfg['NUM_CLASSES']
     ).cuda()
-    criterion = segmentation_loss(args.loss, False).cuda()
+    losses = {
+        'ce': CrossEntropyLoss().cuda(),
+        'dice': DiceLoss().cuda(),
+    }
 
     optimizer1, scheduler1 = _build_optimizer_and_scheduler(model1, args)
     optimizer2, scheduler2 = _build_optimizer_and_scheduler(model2, args)
@@ -470,7 +486,7 @@ def build_training_components(args, cfg):
         (model1, model2),
         (optimizer1, optimizer2),
         (scheduler1, scheduler2),
-        criterion,
+        losses,
     )
 
 
@@ -480,7 +496,7 @@ def train_one_epoch(
     global_step,
     models,
     optimizers,
-    criterion,
+    losses,
     dataloaders,
     metrics_writer,
     metrics_file,
@@ -495,7 +511,6 @@ def train_one_epoch(
         'unsup': 0.0,
         'total': 0.0,
     }
-    unsup_weight = args.unsup_weight * (epoch + 1) / args.num_epochs
     supervised_batches = iter(dataloaders['train_sup'])
     unsupervised_batches = iter(dataloaders['train_unsup'])
     num_train_batches = len(dataloaders['train_sup'])
@@ -503,6 +518,8 @@ def train_one_epoch(
     score_list1 = None
     score_list2 = None
     mask_list = None
+
+    unsup_weight = args.unsup_weight * (epoch+1) / args.num_epochs
 
     for batch_index in range(num_train_batches):
 
@@ -540,9 +557,18 @@ def train_one_epoch(
             )
             mask_list = torch.cat((mask_list, sup_mask.detach()), dim=0)
 
-        supervised_loss1 = criterion(sup_prediction1, sup_mask)
-        supervised_loss2 = criterion(sup_prediction2, sup_mask)
-        supervised_loss = supervised_loss1 + supervised_loss2
+        supervised_loss1 = compute_supervised_loss(
+            losses['ce'],
+            losses['dice'],
+            sup_prediction1,
+            sup_mask,
+        )
+        supervised_loss2 = compute_supervised_loss(
+            losses['ce'],
+            losses['dice'],
+            sup_prediction2,
+            sup_mask,
+        )
 
         ###########################
             # unsupervised path #
@@ -560,29 +586,35 @@ def train_one_epoch(
         
         #CPS loss
         cps_losses = compute_cps_losses(
-            criterion,
+            losses['ce'],
             unsup_prediction1,
             unsup_prediction2,
         )
         unsup_loss = cps_losses['total']
 
-        #total_loss backward
-        lambda_ = sigmoid_rampup(current=batch_index + len(pbar) * epoch, rampup_length=len(pbar) * 5)
-        total_loss = supervised_loss + lambda_ * unsup_loss
+        model1_loss = (
+            supervised_loss1
+            + unsup_weight * cps_losses['2_to_1']
+        )
+        model2_loss = (
+            supervised_loss2
+            + unsup_weight * cps_losses['1_to_2']
+        )
+        weighted_unsup_loss = unsup_weight * unsup_loss
+        total_loss = model1_loss + model2_loss
         total_loss.backward()
 
         optimizer1.step()
         optimizer2.step()
         global_step += 1
 
-        total_loss = unsup_loss + supervised_loss
         metrics_writer.writerow(
             build_iteration_metrics(
                 global_step,
                 epoch + 1,
                 supervised_loss1,
                 supervised_loss2,
-                unsup_loss,
+                weighted_unsup_loss,
                 total_loss,
                 unsup_prediction1,
                 unsup_prediction2,
@@ -593,7 +625,7 @@ def train_one_epoch(
         )
         metrics_file.flush()
 
-        loss_totals['unsup'] += unsup_loss.item()
+        loss_totals['unsup'] += weighted_unsup_loss.item()
         loss_totals['sup1'] += supervised_loss1.item()
         loss_totals['sup2'] += supervised_loss2.item()
         loss_totals['total'] += total_loss.item()
@@ -799,7 +831,7 @@ def log_diagnostics(diagnostic_logger, epoch, global_step, diagnostics):
 
 
 @torch.no_grad()
-def validate(models, criterion, dataloader):
+def validate(models, losses, dataloader):
     model1, model2 = models
     model1.eval()
     model2.eval()
@@ -844,8 +876,18 @@ def validate(models, criterion, dataloader):
             scores2.append(output2)
             masks.append(mask)
             names.extend(batch['ID'])
-            loss1 += criterion(output1, mask).item()
-            loss2 += criterion(output2, mask).item()
+            loss1 += compute_supervised_loss(
+                losses['ce'],
+                losses['dice'],
+                output1,
+                mask,
+            ).item()
+            loss2 += compute_supervised_loss(
+                losses['ce'],
+                losses['dice'],
+                output2,
+                mask,
+            ).item()
             _update_diagnostic_totals(
                 diagnostic_totals,
                 output1,
@@ -1001,7 +1043,7 @@ def train_model(
         models,
         optimizers,
         schedulers,
-        criterion,
+        losses,
     ) = build_training_components(args, cfg)
 
     model1, model2 = models
@@ -1031,7 +1073,7 @@ def train_model(
                 global_step,
                 models,
                 optimizers,
-                criterion,
+                losses,
                 dataloaders,
                 metrics_writer,
                 metrics_file,
@@ -1061,7 +1103,7 @@ def train_model(
                 print_num_half,
             )
 
-            validation = validate(models, criterion, dataloaders['val'])
+            validation = validate(models, losses, dataloaders['val'])
             print_val_loss(
                 validation['loss1'],
                 validation['loss2'],
@@ -1252,7 +1294,10 @@ def parse_args():
         dest='input_mode',
         default='rgb_rgb',
         choices=['rgb_rgb', 'rgb_stain', 'rgb_hed', 'ucmt_views'],
-        help='rgb_rgb uses original RGB for both students; rgb_stain uses stain RGB for student2; rgb_hed uses HED for student2; ucmt_views uses clean/Aug1/sequential Aug2 RGB',
+        help='rgb_rgb uses original RGB for both students; ' \
+        'rgb_stain uses stain RGB for student2; ' \
+        'rgb_hed uses HED for student2;' \
+        'ucmt_views uses clean/Aug1/sequential Aug2 RGB',
     )
     parser.add_argument(
         '--manifest_dir',
@@ -1277,7 +1322,6 @@ def parse_args():
     parser.add_argument('-e', '--num_epochs', default=200, type=int)
     parser.add_argument(
         '--milestone_interval',
-        '--milestone-interval',
         dest='milestone_interval',
         default=10,
         type=int,
@@ -1288,7 +1332,6 @@ def parse_args():
     )
     parser.add_argument(
         '--best_save_interval',
-        '--best-save-interval',
         dest='best_save_interval',
         default=10,
         type=int,
@@ -1300,8 +1343,20 @@ def parse_args():
     parser.add_argument('-s', '--step_size', default=50, type=int)
     parser.add_argument('-l', '--lr', default=0.5, type=float)
     parser.add_argument('-g', '--gamma', default=0.5, type=float)
-    parser.add_argument('-u', '--unsup_weight', default=3, type=float)
+    parser.add_argument('-u', '--unsup_weight', default=5, type=float)
     parser.add_argument('--loss', default='dice')
+    parser.add_argument(
+        '--consistency',
+        default=0.1,
+        type=float,
+        help='CPS consistency weight, following SSL4MIS CPS.',
+    )
+    parser.add_argument(
+        '--consistency_rampup',
+        default=200.0,
+        type=float,
+        help='CPS consistency ramp-up length, following SSL4MIS CPS.',
+    )
     parser.add_argument('-w', '--warm_up_duration', default=20, type=int)
     parser.add_argument('--momentum', default=0.9, type=float)
     parser.add_argument('--wd', default=-5, type=float, help='weight decay exponent')
