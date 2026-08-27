@@ -143,3 +143,831 @@ webencodings==0.5.1
 websocket-client==1.9.0
 wrapt==2.2.2
 yarg==0.1.9
+
+
+
+当前项目是 **两个 UNet 的半监督 CPS，GLaS/CRAG 2D segmentation**。在现有代码上移植论文：
+
+**Conflict-aware Semi-supervised Mutual Learning for Medical Image Segmentation (CSSML, ESWA 2026)**
+
+的两个模块：
+
+1. **CDFL — Conflict-aware Distinct Feature Learning**
+2. **GMPS — Geometry-aware Mutual Pseudo Supervision**
+
+目标不是重写训练框架，而是最小改动适配当前两个 UNet CPS。
+
+目标源码在：/data/mission/models/Exp/RefSSL/CSSML
+不要 smoke test，不要运行完整训练。
+
+---
+
+# 0. 总体原则
+
+保留当前：
+
+* 两个 UNet
+* RGB/Stain 或当前 heterogeneous input
+* labeled/unlabeled dataloader
+* supervised Dice loss
+* optimizer
+* scheduler
+* validation
+* checkpoint
+* dataset split
+* 当前 diagnostics
+
+不要改成论文的 DeepLabV3+ + UNet。
+
+当前两个 UNet 就是：
+
+```text
+Student A = UNet_A
+Student B = UNet_B
+```
+
+新增 CSSML 模式：
+
+```bash
+--cps-mode cssml
+```
+
+并支持独立 ablation：
+
+```bash
+--use-cdfl
+--use-gmps
+```
+
+使下面实验都可运行：
+
+```text
+Vanilla CPS
+CDFL only
+GMPS only
+CDFL + GMPS
+```
+
+---
+
+# 1. UNet 返回 decoder feature
+
+CDFL 和 GMPS 都需要 feature。
+
+修改 UNet，使其支持：
+
+```python
+logits, feature = model(x, return_features=True)
+```
+
+feature 使用：
+
+**最后一个 decoder block 输出、segmentation classifier 前的 feature map。**
+
+例如：
+
+```text
+decoder_last
+    ↓
+feature [B,Cf,H,W]
+    ↓
+1x1 conv
+    ↓
+logits [B,C,H,W]
+```
+
+默认：
+
+```python
+model(x)
+```
+
+行为不能改变。
+
+只有需要 CDFL/GMPS 时：
+
+```python
+logits, feature = model(x, return_features=True)
+```
+
+禁止 duplicated forward。
+
+如果两个 UNet feature channel 数量不同，CDFL 前使用轻量的 1×1 projection 对齐 channel；如果当前两个 UNet完全相同，则不要增加 projection。
+
+---
+
+# 2. CDFL — 严格按照 CSSML 官方实现
+
+CDFL 同时作用在：
+
+```text
+labeled features
+unlabeled features
+```
+
+设：
+
+```python
+feat_a_l
+feat_b_l
+
+feat_a_u
+feat_b_u
+```
+
+官方实现使用：
+
+```python
+cos = nn.CosineSimilarity(dim=1, eps=1e-6)
+```
+
+## labeled CDFL
+
+```python
+loss_cdfl_l_a2b = 1.0 + cos(
+    feat_a_l.detach(),
+    feat_b_l
+).mean()
+
+loss_cdfl_l_b2a = 1.0 + cos(
+    feat_b_l.detach(),
+    feat_a_l
+).mean()
+
+loss_cdfl_l = 0.5 * (
+    loss_cdfl_l_a2b +
+    loss_cdfl_l_b2a
+)
+```
+
+## unlabeled CDFL
+
+```python
+loss_cdfl_u_a2b = 1.0 + cos(
+    feat_a_u.detach(),
+    feat_b_u
+).mean()
+
+loss_cdfl_u_b2a = 1.0 + cos(
+    feat_b_u.detach(),
+    feat_a_u
+).mean()
+
+loss_cdfl_u = 0.5 * (
+    loss_cdfl_u_a2b +
+    loss_cdfl_u_b2a
+)
+```
+
+最终：
+
+```python
+loss_cdfl = loss_cdfl_l + loss_cdfl_u
+```
+
+这里 **1 + cosine** 是故意的，不要改成 `1 - cosine`。
+
+最小化：
+
+$$
+1+\cos(F_A,F_B)
+$$
+
+就是降低 feature coupling、保持两个 branch distinct。
+
+不要去掉 `.detach()`。
+
+---
+
+# 3. CDFL 权重
+
+增加：
+
+```bash
+--lambda-cdfl
+```
+
+默认不要拍脑袋设置特别大的值。
+
+如果项目已有 config，集中定义：
+
+```python
+lambda_cdfl = args.lambda_cdfl
+```
+
+总 loss：
+
+```python
+loss_total = (
+    loss_sup
+    + lambda_gmps * loss_gmps
+    + lambda_cdfl * loss_cdfl
+)
+```
+
+不要让 CDFL 覆盖 supervised loss。
+
+---
+
+# 4. GMPS：先严格定位论文/官方实现
+
+**禁止使用 entropy routing、prototype reliability、confidence threshold 来冒充 GMPS。**
+
+在实现前首先在当前工程、参考代码目录和可访问的 CSSML 官方源码中搜索：
+
+```text
+compute_gmps_consistency
+GMPS
+geometry-aware mutual pseudo supervision
+```
+
+CSSML 官方训练脚本的调用接口是：
+
+```python
+loss_con, same_pred1, same_pred2, similar_pred1, similar_pred2 = \
+    compute_gmps_consistency(
+        unlabeled_pred_a,
+        unlabeled_pred_b,
+        unlabeled_feat_a,
+        unlabeled_feat_b,
+        num_classes,
+        epoch,
+        epochs
+    )
+```
+
+所以优先逐行移植官方：
+
+```python
+compute_gmps_consistency(...)
+```
+
+到当前项目，例如：
+
+```text
+losses/cssml.py
+```
+
+适配当前两个 UNet tensor shape，但不要改变算法。
+
+---
+
+# 5. GMPS 必须保持的论文逻辑
+
+不论接口如何重构，必须明确划分：
+
+```python
+prob_a = torch.softmax(logits_a, dim=1)
+prob_b = torch.softmax(logits_b, dim=1)
+
+conf_a, pseudo_a = prob_a.max(dim=1)
+conf_b, pseudo_b = prob_b.max(dim=1)
+
+same_mask = pseudo_a == pseudo_b
+conflict_mask = pseudo_a != pseudo_b
+```
+
+即：
+
+$$
+M_{same}=[\hat Y_A=\hat Y_B]
+$$
+
+$$
+M_{conflict}=[\hat Y_A\neq\hat Y_B]
+$$
+
+---
+
+# 6. Same pseudo-label region
+
+论文明确：
+
+如果：
+
+$$
+\hat Y_A(i)=\hat Y_B(i)
+$$
+
+则这个位置属于 identical pseudo-label。
+
+比较两个 subnet 对共同预测类别的概率：
+
+```python
+class_id = pseudo_a  # same as pseudo_b
+
+p_same_a = prob_a.gather(1, class_id.unsqueeze(1)).squeeze(1)
+p_same_b = prob_b.gather(1, class_id.unsqueeze(1)).squeeze(1)
+```
+
+如果：
+
+```python
+p_same_a > p_same_b
+```
+
+则：
+
+```text
+A → B
+```
+
+否则：
+
+```text
+B → A
+```
+
+只让 probability 更高的一方作为该 pixel teacher。
+
+pseudo-label 和 selection mask 全部 detach。
+
+不要对 same pixel 做双向 CPS。
+
+---
+
+# 7. Conflict pseudo-label region
+
+如果：
+
+```python
+pseudo_a != pseudo_b
+```
+
+即：
+
+$$
+M_{conflict}=1
+$$
+
+不要直接用：
+
+```text
+lower entropy
+higher max probability
+prototype reliability
+```
+
+选 teacher。
+
+必须使用论文 GMPS 的 **geometry-aware reliability**。
+
+### 严格要求
+
+如果已经找到官方 `compute_gmps_consistency`：
+
+**逐行移植该 geometry reliability 逻辑。**
+
+只允许做以下工程适配：
+
+* tensor shape
+* binary/multiclass
+* device
+* feature channel
+* interpolation
+* function naming
+
+不得改变：
+
+* geometry score 定义
+* conflict selection rule
+* epoch-dependent schedule
+* loss formulation
+
+---
+
+# 8. 如果官方 GMPS helper 在可访问源码中确实缺失
+
+不要自行发明“近似 GMPS”。
+
+不要用：
+
+```text
+entropy
+prototype
+local majority vote
+distance transform
+connected component
+```
+
+替换它。
+
+这种情况下：
+
+1. 完成 CDFL；
+2. 完成 GMPS 的 same/conflict routing 框架；
+3. 将 conflict geometry 部分封装成：
+
+```python
+compute_geometry_reliability(...)
+```
+
+4. 明确留下：
+
+```python
+raise NotImplementedError(
+    "Exact CSSML GMPS geometry formula is unavailable in the supplied/reference source."
+)
+```
+
+5. 最终报告中明确指出缺失的是哪一段官方算法。
+
+**绝对不要为了让代码“能跑”而猜一个 geometry score。**
+
+---
+
+# 9. 找到官方 GMPS 后的目标接口
+
+最终整理成：
+
+```python
+def gmps_loss(
+    logits_a,
+    logits_b,
+    feat_a,
+    feat_b,
+    num_classes,
+    epoch,
+    num_epochs,
+):
+    ...
+    return {
+        "loss": loss_gmps,
+        "same_mask": same_mask,
+        "conflict_mask": conflict_mask,
+        "route_a2b": route_a2b,
+        "route_b2a": route_b2a,
+        "geometry_score_a": geometry_score_a,
+        "geometry_score_b": geometry_score_b,
+    }
+```
+
+所有 pseudo-label/routing target 必须 detach。
+
+---
+
+# 10. 当前 Vanilla/Relative Reliable 代码不要删除
+
+保留现有：
+
+```python
+if args.cps_mode == "vanilla":
+    ...
+
+elif args.cps_mode == "relative_reliable":
+    ...
+
+elif args.cps_mode == "cssml":
+    ...
+```
+
+`cssml` 下：
+
+```python
+loss_unsup = loss_gmps
+```
+
+即 GMPS 替代原 CPS mutual pseudo supervision。
+
+不要再叠加：
+
+```text
+relative entropy CPS + GMPS
+```
+
+否则无法判断 GMPS 本身效果。
+
+---
+
+# 11. CDFL + GMPS 总损失
+
+当前两个 UNet：
+
+$$
+L_{sup}
+=
+L_{sup}^A+L_{sup}^B
+$$
+
+CSSML：
+
+$$
+L=
+L_{sup}
++
+\lambda_{gmps}L_{GMPS}
++
+\lambda_{cdfl}L_{CDFL}
+$$
+
+实现：
+
+```python
+loss_total = (
+    loss_sup
+    + lambda_gmps * loss_gmps
+    + lambda_cdfl * loss_cdfl
+)
+```
+
+如果当前项目已有 unsupervised ramp-up：
+
+```python
+current_unsup_weight
+```
+
+则 GMPS 沿用当前 CPS 的 unsupervised weighting/ramp-up，不额外创造第二套 ramp。
+
+不要修改当前 supervised loss。
+
+---
+
+# 12. 必须做三个独立实验开关
+
+支持：
+
+### C0
+
+```bash
+--cps-mode vanilla
+```
+
+### C1：CDFL only
+
+```bash
+--cps-mode vanilla \
+--use-cdfl
+```
+
+### C2：GMPS only
+
+```bash
+--cps-mode cssml \
+--use-gmps
+```
+
+### C3：完整 CSSML migration
+
+```bash
+--cps-mode cssml \
+--use-gmps \
+--use-cdfl
+```
+
+CDFL 与 GMPS 必须解耦，方便 ablation。
+
+---
+
+# 13. 独立 diagnostics CSV
+
+新建：
+
+```text
+cssml_diagnostics.csv
+```
+
+不要混入现有 metrics.csv。
+
+每 epoch 一行，并按整个 epoch 累积 pixel/count 后计算。
+
+记录：
+
+```text
+epoch
+
+# CDFL
+cdfl_loss_labeled
+cdfl_loss_unlabeled
+cdfl_loss_total
+
+feature_cosine_labeled
+feature_cosine_unlabeled
+
+feature_cka
+
+# prediction diversity
+agreement_ratio
+conflict_ratio
+prediction_similarity
+
+# GMPS routing
+same_pixels
+conflict_pixels
+same_ratio
+conflict_ratio
+
+same_a2b_pixels
+same_b2a_pixels
+
+conflict_a2b_pixels
+conflict_b2a_pixels
+
+a2b_total_ratio
+b2a_total_ratio
+
+loss_gmps_same
+loss_gmps_conflict
+loss_gmps_total
+
+loss_sup
+loss_total
+```
+
+---
+
+# 14. GT routing diagnostic
+
+只在 labeled/validation data 上使用 GT 做诊断。
+
+**GT 绝不能参与 unlabeled GMPS routing。**
+
+重点统计 conflict region。
+
+因为 GLaS 是 binary segmentation：
+
+$$
+A\neq B
+$$
+
+时一定一个正确、一个错误。
+
+因此记录：
+
+```text
+conflict_pixels_gt
+
+gmps_conflict_teacher_correct_pixels
+gmps_conflict_teacher_wrong_pixels
+
+gmps_conflict_selector_accuracy
+gmps_conflict_harmful_ratio
+```
+
+定义：
+
+```python
+gmps_conflict_selector_accuracy =
+    correct_teacher_conflict_pixels /
+    all_conflict_pixels
+```
+
+这是最重要指标。
+
+后续直接与之前 Relative Entropy 的约 61% selector accuracy 比较。
+
+---
+
+# 15. 分开统计 same region 的 GT correctness
+
+记录：
+
+```text
+same_pixels_gt
+
+same_both_correct_ratio
+same_both_wrong_ratio
+```
+
+用来判断论文假设：
+
+$$
+A=B
+\Rightarrow
+\text{more likely correct}
+$$
+
+在 GLaS 上到底成立多少。
+
+尤其关注：
+
+```text
+same_both_wrong_ratio
+```
+
+因为这正是 CPS shared-error reinforcement。
+
+---
+
+# 16. CDFL 成功标准
+
+必须能观察：
+
+```text
+feature_cosine
+feature_cka
+prediction_similarity
+conflict_ratio
+```
+
+如果加入 CDFL 后：
+
+$$
+feature\ similarity\downarrow
+$$
+
+但：
+
+$$
+Dice/Jaccard\downarrow
+$$
+
+说明 difference 过强，不等于 useful diversity。
+
+因此不要只根据 similarity 判断成功。
+
+---
+
+# 17. GMPS 成功标准
+
+与当前 Relative Reliable CPS 对比：
+
+核心不是只看 Dice，而是：
+
+$$
+GMPS\ SelectorAccuracy
+$$
+
+是否明显超过：
+
+$$
+RelativeEntropy\ SelectorAccuracy
+$$
+
+并同步观察：
+
+```text
+harmful routing ratio
+both-wrong ratio
+best Jaccard
+```
+
+---
+
+# 18. 不要加入
+
+禁止同时加入：
+
+* prototype reliability
+* EMA teacher
+* CDR/SDR
+* PH
+* temporal memory
+* confidence threshold
+* entropy threshold
+* extra augmentation
+* new architecture
+* DeepLab
+* Transformer
+
+当前实验只回答：
+
+$$
+\boxed{
+CDFL\ 是否能保持有效差异？
+}
+$$
+
+以及：
+
+$$
+\boxed{
+GMPS\ 是否能更正确地处理这些差异？
+}
+$$
+
+---
+
+# 19. 不做 smoke test
+
+不要：
+
+* smoke test
+* full training
+* 下载数据
+* 改数据划分
+
+可以做：
+
+* Python syntax check
+* import check
+* static tensor-shape inspection
+
+如果 GMPS 官方 helper 缺失，不得为了通过测试伪造实现。
+
+---
+
+# 20. 完成后只汇报
+
+给出：
+
+1. Modified files
+2. CDFL 实现位置
+3. GMPS 实现来源及对应代码位置
+4. 是否找到了官方 `compute_gmps_consistency`
+5. 如果找到，说明完整移植了哪些逻辑
+6. 如果没找到，明确哪部分保持 NotImplemented，禁止声称已复现 GMPS
+7. 新增 CLI
+8. `cssml_diagnostics.csv` 路径
+9. 四组 ablation 训练命令
+
+不要运行训练。

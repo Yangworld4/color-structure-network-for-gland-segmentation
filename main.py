@@ -10,6 +10,7 @@ from warnings import simplefilter
 from utils.ramps import sigmoid_rampup
 import numpy as np
 import torch
+import torch.nn.functional as F
 import torch.optim as optim
 from torch.nn.modules.loss import CrossEntropyLoss
 from torch.optim import lr_scheduler
@@ -29,6 +30,7 @@ from config.train_test_config.train_test_config import (
 )
 from config.warmup_config.warmup import GradualWarmupScheduler
 from dataload.dataset_2d import imagefloder_itn
+from loss.cssml import cdfl_loss, gmps_loss, masked_ce
 from loss.loss_function import DiceLoss
 from models.getnetwork import get_network
 
@@ -42,6 +44,41 @@ METRIC_FIELDS = [
     'student12_dice_similarity', 'student1_entropy', 'student2_entropy',
     'pseudo_dice_student1', 'pseudo_dice_student2',
     'pseudo_jaccard_student1', 'pseudo_jaccard_student2',
+]
+
+CSSML_DIAGNOSTIC_FIELDS = [
+    'epoch',
+    'cdfl_loss_labeled',
+    'cdfl_loss_unlabeled',
+    'cdfl_loss_total',
+    'feature_cosine_labeled',
+    'feature_cosine_unlabeled',
+    'feature_cka',
+    'agreement_ratio',
+    'conflict_ratio',
+    'prediction_similarity',
+    'same_pixels',
+    'conflict_pixels',
+    'same_ratio',
+    'same_a2b_pixels',
+    'same_b2a_pixels',
+    'conflict_a2b_pixels',
+    'conflict_b2a_pixels',
+    'a2b_total_ratio',
+    'b2a_total_ratio',
+    'loss_gmps_same',
+    'loss_gmps_conflict',
+    'loss_gmps_total',
+    'loss_sup',
+    'loss_total',
+    'conflict_pixels_gt',
+    'gmps_conflict_teacher_correct_pixels',
+    'gmps_conflict_teacher_wrong_pixels',
+    'gmps_conflict_selector_accuracy',
+    'gmps_conflict_harmful_ratio',
+    'same_pixels_gt',
+    'same_both_correct_ratio',
+    'same_both_wrong_ratio',
 ]
 
 def init_seeds(seed):
@@ -106,6 +143,45 @@ def compute_cps_losses(
         'total': loss_1_to_2 + loss_2_to_1}
 
 
+def _pseudo_entropy_from_logits(logits: torch.Tensor):
+    logits = logits.detach()
+    if logits.shape[1] == 1:
+        foreground = torch.sigmoid(logits[:, 0, ...])
+        background = 1.0 - foreground
+        pseudo = (foreground >= 0.5).long()
+        entropy = -(
+            foreground * torch.log(foreground + 1e-6)
+            + background * torch.log(background + 1e-6)
+        )
+    else:
+        probabilities = torch.softmax(logits, dim=1)
+        pseudo = probabilities.argmax(dim=1)
+        entropy = -(
+            probabilities * torch.log(probabilities + 1e-6)
+        ).sum(dim=1)
+    return pseudo, entropy
+
+
+def compute_relative_reliable_cps(prediction1, prediction2):
+    pseudo1, entropy1 = _pseudo_entropy_from_logits(prediction1)
+    pseudo2, entropy2 = _pseudo_entropy_from_logits(prediction2)
+    route_1_to_2 = (entropy1 < entropy2).detach()
+    route_2_to_1 = (entropy2 < entropy1).detach()
+    loss_1_to_2 = 0.5 * masked_ce(prediction2, pseudo1, route_1_to_2)
+    loss_2_to_1 = 0.5 * masked_ce(prediction1, pseudo2, route_2_to_1)
+    return {
+        '1_to_2': loss_1_to_2,
+        '2_to_1': loss_2_to_1,
+        'total': loss_1_to_2 + loss_2_to_1,
+    }
+
+
+def compute_cps_losses_by_mode(args, ce_loss, prediction1, prediction2):
+    if args.cps_mode == 'relative_reliable':
+        return compute_relative_reliable_cps(prediction1, prediction2)
+    return compute_cps_losses(ce_loss, prediction1, prediction2)
+
+
 def _hard_predictions(scores: torch.Tensor) -> torch.Tensor:
     return scores.detach().argmax(dim=1)
 
@@ -155,6 +231,208 @@ def build_iteration_metrics(
         'pseudo_dice_student2': pseudo2['dice'],
         'pseudo_jaccard_student1': pseudo1['jaccard'],
         'pseudo_jaccard_student2': pseudo2['jaccard'],
+    }
+
+
+def _needs_cssml_features(args):
+    return args.use_cdfl or (args.cps_mode == 'cssml' and args.use_gmps)
+
+
+def _forward_student(model, inputs, return_features):
+    if return_features:
+        logits, feature = model(inputs, return_features=True)
+        return logits, feature
+    output = model(inputs)
+    return output[0], None
+
+
+def _init_cssml_diagnostic_totals():
+    return {
+        key: 0.0
+        for key in [
+            'batches',
+            'pixels',
+            'cdfl_labeled_sum',
+            'cdfl_unlabeled_sum',
+            'cdfl_total_sum',
+            'cos_labeled_sum',
+            'cos_unlabeled_sum',
+            'cka_sum',
+            'cka_count',
+            'same_pixels',
+            'conflict_pixels',
+            'same_a2b_pixels',
+            'same_b2a_pixels',
+            'conflict_a2b_pixels',
+            'conflict_b2a_pixels',
+            'loss_gmps_same_sum',
+            'loss_gmps_same_pixels',
+            'loss_gmps_conflict_sum',
+            'loss_gmps_conflict_pixels',
+            'loss_sup_sum',
+            'loss_total_sum',
+            'conflict_pixels_gt',
+            'gmps_conflict_teacher_correct_pixels',
+            'gmps_conflict_teacher_wrong_pixels',
+            'same_pixels_gt',
+            'same_both_correct_pixels',
+            'same_both_wrong_pixels',
+        ]
+    }
+
+
+@torch.no_grad()
+def _pseudo_from_logits(logits):
+    if logits.shape[1] == 1:
+        return (torch.sigmoid(logits[:, 0, ...]) >= 0.5).long()
+    return torch.softmax(logits, dim=1).argmax(dim=1)
+
+
+@torch.no_grad()
+def _update_cssml_prediction_diagnostics(totals, logits_a, logits_b):
+    pseudo_a = _pseudo_from_logits(logits_a)
+    pseudo_b = _pseudo_from_logits(logits_b)
+    same = pseudo_a.eq(pseudo_b)
+    conflict = ~same
+    totals['pixels'] += float(same.numel())
+    totals['same_pixels'] += float(same.sum().item())
+    totals['conflict_pixels'] += float(conflict.sum().item())
+
+
+def _update_cssml_cdfl_diagnostics(totals, cdfl_result, feat_a, feat_b, pixels):
+    totals['batches'] += 1.0
+    totals['cdfl_labeled_sum'] += cdfl_result['labeled'].item() * pixels
+    totals['cdfl_unlabeled_sum'] += cdfl_result['unlabeled'].item() * pixels
+    totals['cdfl_total_sum'] += cdfl_result['total'].item() * pixels
+    totals['cos_labeled_sum'] += cdfl_result['cos_labeled'].item() * pixels
+    totals['cos_unlabeled_sum'] += cdfl_result['cos_unlabeled'].item() * pixels
+    cka = _linear_cka(feat_a.detach(), feat_b.detach())
+    if not np.isnan(cka):
+        totals['cka_sum'] += cka
+        totals['cka_count'] += 1.0
+
+
+@torch.no_grad()
+def _update_cssml_gmps_diagnostics(totals, gmps_result, logits_a, logits_b):
+    del logits_a, logits_b
+    for key, mask_key in (
+        ('same_a2b_pixels', 'same_a2b'),
+        ('same_b2a_pixels', 'same_b2a'),
+        ('conflict_a2b_pixels', 'conflict_a2b'),
+        ('conflict_b2a_pixels', 'conflict_b2a'),
+    ):
+        totals[key] += float(gmps_result[mask_key].sum().item())
+    same_pixels = float(
+        (
+            gmps_result['same_a2b'] | gmps_result['same_b2a']
+        ).sum().item()
+    )
+    conflict_pixels = float(
+        (
+            gmps_result['conflict_a2b'] | gmps_result['conflict_b2a']
+        ).sum().item()
+    )
+    totals['loss_gmps_same_sum'] += gmps_result['loss_same'].item() * same_pixels
+    totals['loss_gmps_same_pixels'] += same_pixels
+    totals['loss_gmps_conflict_sum'] += (
+        gmps_result['loss_conflict'].item() * conflict_pixels
+    )
+    totals['loss_gmps_conflict_pixels'] += conflict_pixels
+
+
+@torch.no_grad()
+def _update_cssml_gt_diagnostics(totals, gmps_result, logits_a, logits_b, mask):
+    pseudo_a = _pseudo_from_logits(logits_a)
+    pseudo_b = _pseudo_from_logits(logits_b)
+    target = mask.long()
+    same = pseudo_a.eq(pseudo_b)
+    conflict = pseudo_a.ne(pseudo_b)
+    correct_a = pseudo_a.eq(target)
+    correct_b = pseudo_b.eq(target)
+
+    same_both_correct = same & correct_a & correct_b
+    same_both_wrong = same & (~correct_a) & (~correct_b)
+    totals['same_pixels_gt'] += float(same.sum().item())
+    totals['same_both_correct_pixels'] += float(same_both_correct.sum().item())
+    totals['same_both_wrong_pixels'] += float(same_both_wrong.sum().item())
+
+    if gmps_result is None:
+        return
+    conflict_a2b = gmps_result['conflict_a2b'] & conflict
+    conflict_b2a = gmps_result['conflict_b2a'] & conflict
+    teacher_correct = (conflict_a2b & correct_a) | (conflict_b2a & correct_b)
+    teacher_wrong = (conflict_a2b & (~correct_a)) | (conflict_b2a & (~correct_b))
+    totals['conflict_pixels_gt'] += float((conflict_a2b | conflict_b2a).sum().item())
+    totals['gmps_conflict_teacher_correct_pixels'] += float(
+        teacher_correct.sum().item()
+    )
+    totals['gmps_conflict_teacher_wrong_pixels'] += float(teacher_wrong.sum().item())
+
+
+def _ratio(numerator, denominator):
+    return float(numerator / denominator) if denominator > 0 else 0.0
+
+
+def _finalize_cssml_diagnostics(epoch, totals):
+    pixels = totals['pixels']
+    same = totals['same_pixels']
+    conflict = totals['conflict_pixels']
+    routed_a2b = totals['same_a2b_pixels'] + totals['conflict_a2b_pixels']
+    routed_b2a = totals['same_b2a_pixels'] + totals['conflict_b2a_pixels']
+    routed = routed_a2b + routed_b2a
+    gmps_same = _ratio(
+        totals['loss_gmps_same_sum'], totals['loss_gmps_same_pixels']
+    )
+    gmps_conflict = _ratio(
+        totals['loss_gmps_conflict_sum'], totals['loss_gmps_conflict_pixels']
+    )
+    return {
+        'epoch': epoch,
+        'cdfl_loss_labeled': _ratio(totals['cdfl_labeled_sum'], pixels),
+        'cdfl_loss_unlabeled': _ratio(totals['cdfl_unlabeled_sum'], pixels),
+        'cdfl_loss_total': _ratio(totals['cdfl_total_sum'], pixels),
+        'feature_cosine_labeled': _ratio(totals['cos_labeled_sum'], pixels),
+        'feature_cosine_unlabeled': _ratio(totals['cos_unlabeled_sum'], pixels),
+        'feature_cka': _ratio(totals['cka_sum'], totals['cka_count']),
+        'agreement_ratio': _ratio(same, pixels),
+        'conflict_ratio': _ratio(conflict, pixels),
+        'prediction_similarity': _ratio(same, pixels),
+        'same_pixels': int(same),
+        'conflict_pixels': int(conflict),
+        'same_ratio': _ratio(same, pixels),
+        'same_a2b_pixels': int(totals['same_a2b_pixels']),
+        'same_b2a_pixels': int(totals['same_b2a_pixels']),
+        'conflict_a2b_pixels': int(totals['conflict_a2b_pixels']),
+        'conflict_b2a_pixels': int(totals['conflict_b2a_pixels']),
+        'a2b_total_ratio': _ratio(routed_a2b, routed),
+        'b2a_total_ratio': _ratio(routed_b2a, routed),
+        'loss_gmps_same': gmps_same,
+        'loss_gmps_conflict': gmps_conflict,
+        'loss_gmps_total': gmps_same + gmps_conflict,
+        'loss_sup': _ratio(totals['loss_sup_sum'], totals['batches']),
+        'loss_total': _ratio(totals['loss_total_sum'], totals['batches']),
+        'conflict_pixels_gt': int(totals['conflict_pixels_gt']),
+        'gmps_conflict_teacher_correct_pixels': int(
+            totals['gmps_conflict_teacher_correct_pixels']
+        ),
+        'gmps_conflict_teacher_wrong_pixels': int(
+            totals['gmps_conflict_teacher_wrong_pixels']
+        ),
+        'gmps_conflict_selector_accuracy': _ratio(
+            totals['gmps_conflict_teacher_correct_pixels'],
+            totals['conflict_pixels_gt'],
+        ),
+        'gmps_conflict_harmful_ratio': _ratio(
+            totals['gmps_conflict_teacher_wrong_pixels'],
+            totals['conflict_pixels_gt'],
+        ),
+        'same_pixels_gt': int(totals['same_pixels_gt']),
+        'same_both_correct_ratio': _ratio(
+            totals['same_both_correct_pixels'], totals['same_pixels_gt']
+        ),
+        'same_both_wrong_ratio': _ratio(
+            totals['same_both_wrong_pixels'], totals['same_pixels_gt']
+        ),
     }
 
 
@@ -408,6 +686,9 @@ def build_output_paths(args, datasets, use_manifests):
 def create_run_outputs(args, trained_models_path):
     log_path = os.path.join(trained_models_path, 'train.log')
     metrics_path = os.path.join(trained_models_path, 'metrics.csv')
+    cssml_diagnostics_path = os.path.join(
+        trained_models_path, 'cssml_diagnostics.csv'
+    )
     diagnostic_log_path = os.path.join(
         trained_models_path,
         'diagnostics_{}.log'.format(time.strftime('%Y%m%d-%H%M%S')),
@@ -433,6 +714,8 @@ def create_run_outputs(args, trained_models_path):
 
     print('Training log:', log_path)
     print('Metrics CSV:', metrics_path)
+    if args.use_cdfl or args.use_gmps or args.cps_mode == 'cssml':
+        print('CSSML diagnostics CSV:', cssml_diagnostics_path)
 
     # CPS Diagnostic Analysis
     diagnostic_logger = logging.getLogger('fdcl.diagnostics')
@@ -445,7 +728,7 @@ def create_run_outputs(args, trained_models_path):
     diagnostic_handler.setFormatter(logging.Formatter('%(message)s'))
     diagnostic_logger.addHandler(diagnostic_handler)
     print('Diagnostic log:', diagnostic_log_path)
-    return logger, metrics_path, diagnostic_logger
+    return logger, metrics_path, diagnostic_logger, cssml_diagnostics_path
 
 
 def _build_optimizer_and_scheduler(model, args):
@@ -518,6 +801,12 @@ def train_one_epoch(
     score_list1 = None
     score_list2 = None
     mask_list = None
+    return_features = _needs_cssml_features(args)
+    cssml_totals = (
+        _init_cssml_diagnostic_totals()
+        if args.use_cdfl or args.use_gmps or args.cps_mode == 'cssml'
+        else None
+    )
 
     unsup_weight = args.unsup_weight * (epoch+1) / args.num_epochs
 
@@ -532,8 +821,12 @@ def train_one_epoch(
         sup_input2 = sup_input2.cuda(non_blocking=True)
         sup_mask = sup_batch['mask'].cuda(non_blocking=True)
 
-        sup_prediction1 = model1(sup_input1)[0]
-        sup_prediction2 = model2(sup_input2)[0]
+        sup_prediction1, sup_feature1 = _forward_student(
+            model1, sup_input1, return_features
+        )
+        sup_prediction2, sup_feature2 = _forward_student(
+            model2, sup_input2, return_features
+        )
 
         if epoch == 0 and batch_index == 0:
             shape_message = (
@@ -581,16 +874,80 @@ def train_one_epoch(
         optimizer1.zero_grad()
         optimizer2.zero_grad()
 
-        unsup_prediction1 = model1(unsup_input1)[0]
-        unsup_prediction2 = model2(unsup_input2)[0]
-        
-        #CPS loss
-        cps_losses = compute_cps_losses(
-            losses['ce'],
-            unsup_prediction1,
-            unsup_prediction2,
+        unsup_prediction1, unsup_feature1 = _forward_student(
+            model1, unsup_input1, return_features
         )
+        unsup_prediction2, unsup_feature2 = _forward_student(
+            model2, unsup_input2, return_features
+        )
+
+        if cssml_totals is not None:
+            _update_cssml_prediction_diagnostics(
+                cssml_totals, unsup_prediction1, unsup_prediction2
+            )
+
+        loss_cdfl = unsup_prediction1.sum() * 0.0
+        cdfl_result = None
+        if args.use_cdfl:
+            cdfl_result = cdfl_loss(
+                sup_feature1,
+                sup_feature2,
+                unsup_feature1,
+                unsup_feature2,
+            )
+            loss_cdfl = cdfl_result['total']
+
+        gmps_result = None
+        if args.cps_mode == 'cssml':
+            gmps_result = gmps_loss(
+                unsup_prediction1,
+                unsup_prediction2,
+                unsup_feature1,
+                unsup_feature2,
+                args.num_classes,
+                epoch,
+                args.num_epochs,
+            )
+            cps_losses = {
+                '1_to_2': gmps_result['loss'] * 0.5,
+                '2_to_1': gmps_result['loss'] * 0.5,
+                'total': gmps_result['loss'],
+            }
+        else:
+            cps_losses = compute_cps_losses_by_mode(
+                args,
+                losses['ce'],
+                unsup_prediction1,
+                unsup_prediction2,
+            )
         unsup_loss = cps_losses['total']
+
+        if cssml_totals is not None:
+            pixels = float(unsup_prediction1.shape[0] * unsup_prediction1.shape[2] * unsup_prediction1.shape[3])
+            if cdfl_result is not None:
+                _update_cssml_cdfl_diagnostics(
+                    cssml_totals,
+                    cdfl_result,
+                    unsup_feature1,
+                    unsup_feature2,
+                    pixels,
+                )
+            else:
+                cssml_totals['batches'] += 1.0
+            if gmps_result is not None:
+                _update_cssml_gmps_diagnostics(
+                    cssml_totals,
+                    gmps_result,
+                    unsup_prediction1,
+                    unsup_prediction2,
+                )
+            _update_cssml_gt_diagnostics(
+                cssml_totals,
+                gmps_result,
+                sup_prediction1,
+                sup_prediction2,
+                sup_mask,
+            )
 
         model1_loss = (
             supervised_loss1
@@ -601,7 +958,14 @@ def train_one_epoch(
             + unsup_weight * cps_losses['1_to_2']
         )
         weighted_unsup_loss = unsup_weight * unsup_loss
-        total_loss = model1_loss + model2_loss
+        weighted_cdfl_loss = args.lambda_cdfl * loss_cdfl
+        total_loss = model1_loss + model2_loss + weighted_cdfl_loss
+
+        if cssml_totals is not None:
+            cssml_totals['loss_sup_sum'] += (
+                supervised_loss1.item() + supervised_loss2.item()
+            )
+            cssml_totals['loss_total_sum'] += total_loss.item()
         total_loss.backward()
 
         optimizer1.step()
@@ -629,7 +993,7 @@ def train_one_epoch(
         loss_totals['sup1'] += supervised_loss1.item()
         loss_totals['sup2'] += supervised_loss2.item()
         loss_totals['total'] += total_loss.item()
-    return loss_totals, (score_list1, score_list2, mask_list), global_step
+    return loss_totals, (score_list1, score_list2, mask_list), global_step, cssml_totals
 
 
 # CPS Diagnostic Analysis
@@ -1036,7 +1400,7 @@ def train_model(
     trained_models_path, _ = build_output_paths(
         args, datasets, use_manifests
     )
-    logger, metrics_path, diagnostic_logger = create_run_outputs(
+    logger, metrics_path, diagnostic_logger, cssml_diagnostics_path = create_run_outputs(
         args, trained_models_path
     )
     (
@@ -1059,183 +1423,203 @@ def train_model(
     training_start = time.time()
     global_step = 0
 
-    with open(metrics_path, 'w', newline='', encoding='utf-8') as metrics_file:
-        metrics_writer = csv.DictWriter(
-            metrics_file, fieldnames=METRIC_FIELDS
+    cssml_file = None
+    cssml_writer = None
+    if args.use_cdfl or args.use_gmps or args.cps_mode == 'cssml':
+        cssml_file = open(
+            cssml_diagnostics_path, 'w', newline='', encoding='utf-8'
         )
-        metrics_writer.writeheader()
+        cssml_writer = csv.DictWriter(
+            cssml_file, fieldnames=CSSML_DIAGNOSTIC_FIELDS
+        )
+        cssml_writer.writeheader()
 
-        for epoch in range(args.num_epochs):
-            epoch_start = time.time()
-            loss_totals, train_predictions, global_step = train_one_epoch(
-                args,
-                epoch,
-                global_step,
-                models,
-                optimizers,
-                losses,
-                dataloaders,
-                metrics_writer,
-                metrics_file,
+    try:
+        with open(metrics_path, 'w', newline='', encoding='utf-8') as metrics_file:
+            metrics_writer = csv.DictWriter(
+                metrics_file, fieldnames=METRIC_FIELDS
             )
-            schedulers[0].step()
-            schedulers[1].step()
+            metrics_writer.writeheader()
 
-            print('=' * print_num)
-            print(
-                '| Epoch {}/{}'.format(epoch + 1, args.num_epochs).ljust(
-                    print_num_minus, ' '
-                ),
-                '|',
-            )
-            train_losses = print_train_loss(
-                loss_totals['sup1'],
-                loss_totals['sup2'],
-                loss_totals['unsup'],
-                loss_totals['total'],
-                num_batches,
-                print_num,
-                print_num_half,
-            )
-            print_train_eval(
-                cfg['NUM_CLASSES'],
-                *train_predictions,
-                print_num_half,
-            )
+            for epoch in range(args.num_epochs):
+                epoch_start = time.time()
+                loss_totals, train_predictions, global_step, cssml_totals = train_one_epoch(
+                    args,
+                    epoch,
+                    global_step,
+                    models,
+                    optimizers,
+                    losses,
+                    dataloaders,
+                    metrics_writer,
+                    metrics_file,
+                )
+                if cssml_writer is not None:
+                    cssml_writer.writerow(
+                        _finalize_cssml_diagnostics(epoch + 1, cssml_totals)
+                    )
+                    cssml_file.flush()
+                schedulers[0].step()
+                schedulers[1].step()
 
-            validation = validate(models, losses, dataloaders['val'])
-            print_val_loss(
-                validation['loss1'],
-                validation['loss2'],
-                num_batches,
-                print_num,
-                print_num_half,
-            )
-            val_eval1, val_eval2, _, _ = print_val_eval(
-                cfg['NUM_CLASSES'],
-                validation['scores1'],
-                validation['scores2'],
-                validation['masks'],
-                print_num_half,
-            )
-            diagnostics = _finalize_diagnostics(
-                validation['diagnostic_totals'],
-                val_eval1[2],
-                val_eval2[2],
-            )
-            log_diagnostics(
-                diagnostic_logger,
-                epoch + 1,
-                global_step,
-                diagnostics,
-            )
-            validation_diversity = compute_validation_diversity(validation)
-            print(
-                '| Val diversity: disagreement={:.4f} | dice_similarity={:.4f} | '
-                'complementary_error={:.4f}'.format(
-                    validation_diversity['student12_disagreement'],
-                    validation_diversity['student12_dice_similarity'],
-                    validation_diversity['complementary_error'],
-                )
-            )
-            (
-                best_val_eval_lists,
-                best_model_states,
-                best_epochs,
-            ) = save_val_best_2d(
-                best_val_eval_lists,
-                best_model_states,
-                best_epochs,
-                model1,
-                model2,
-                val_eval1,
-                val_eval2,
-                epoch,
-            )
-            current_epoch = epoch + 1
-            if (
-                args.milestone_interval > 0
-                and current_epoch % args.milestone_interval == 0
-            ):
-                milestone_path = save_training_milestone(
-                    model1,
-                    model2,
-                    trained_models_path,
-                    current_epoch,
-                    metadata={
-                        'global_step': (
-                            global_step
-                        ),
-                        'dataset_name': args.dataset_name,
-                        'labeled_ratio': args.labeled_ratio,
-                        'seed': args.sd,
-                        'input_mode': args.input_mode,
-                        'network': args.network,
-                        'best_val_metrics': [
-                            list(values)
-                            for values in best_val_eval_lists
-                        ],
-                        'best_epochs': list(best_epochs),
-                        'args': vars(args).copy(),
-                    },
-                )
-                logger.info(
-                    'Current-weight milestone saved | epoch=%d | path=%s',
-                    current_epoch,
-                    milestone_path,
-                )
+                print('=' * print_num)
                 print(
-                    '| Current student weights saved at epoch {}'.format(
-                        current_epoch
-                    ).ljust(print_num_minus, ' '),
+                    '| Epoch {}/{}'.format(epoch + 1, args.num_epochs).ljust(
+                        print_num_minus, ' '
+                    ),
                     '|',
                 )
-            if (
-                args.best_save_interval > 0
-                and current_epoch % args.best_save_interval == 0
-            ):
-                periodic_checkpoints = save_periodic_branch_bests(
+                train_losses = print_train_loss(
+                    loss_totals['sup1'],
+                    loss_totals['sup2'],
+                    loss_totals['unsup'],
+                    loss_totals['total'],
+                    num_batches,
+                    print_num,
+                    print_num_half,
+                )
+                print_train_eval(
+                    cfg['NUM_CLASSES'],
+                    *train_predictions,
+                    print_num_half,
+                )
+
+                validation = validate(models, losses, dataloaders['val'])
+                print_val_loss(
+                    validation['loss1'],
+                    validation['loss2'],
+                    num_batches,
+                    print_num,
+                    print_num_half,
+                )
+                val_eval1, val_eval2, _, _ = print_val_eval(
+                    cfg['NUM_CLASSES'],
+                    validation['scores1'],
+                    validation['scores2'],
+                    validation['masks'],
+                    print_num_half,
+                )
+                diagnostics = _finalize_diagnostics(
+                    validation['diagnostic_totals'],
+                    val_eval1[2],
+                    val_eval2[2],
+                )
+                log_diagnostics(
+                    diagnostic_logger,
+                    epoch + 1,
+                    global_step,
+                    diagnostics,
+                )
+                validation_diversity = compute_validation_diversity(validation)
+                print(
+                    '| Val diversity: disagreement={:.4f} | dice_similarity={:.4f} | '
+                    'complementary_error={:.4f}'.format(
+                        validation_diversity['student12_disagreement'],
+                        validation_diversity['student12_dice_similarity'],
+                        validation_diversity['complementary_error'],
+                    )
+                )
+                (
                     best_val_eval_lists,
                     best_model_states,
                     best_epochs,
-                    trained_models_path,
-                    current_epoch,
+                ) = save_val_best_2d(
+                    best_val_eval_lists,
+                    best_model_states,
+                    best_epochs,
+                    model1,
+                    model2,
+                    val_eval1,
+                    val_eval2,
+                    epoch,
                 )
-                for checkpoint in periodic_checkpoints:
-                    logger.info(
-                        'Periodic best saved | current_epoch=%d | branch=%s '
-                        '| best_epoch=%d | best_val_jaccard=%.6f | path=%s',
+                current_epoch = epoch + 1
+                if (
+                    args.milestone_interval > 0
+                    and current_epoch % args.milestone_interval == 0
+                ):
+                    milestone_path = save_training_milestone(
+                        model1,
+                        model2,
+                        trained_models_path,
                         current_epoch,
-                        checkpoint['branch'],
-                        checkpoint['best_epoch'],
-                        checkpoint['best_jaccard'],
-                        checkpoint['path'],
+                        metadata={
+                            'global_step': (
+                                global_step
+                            ),
+                            'dataset_name': args.dataset_name,
+                            'labeled_ratio': args.labeled_ratio,
+                            'seed': args.sd,
+                            'input_mode': args.input_mode,
+                            'network': args.network,
+                            'best_val_metrics': [
+                                list(values)
+                                for values in best_val_eval_lists
+                            ],
+                            'best_epochs': list(best_epochs),
+                            'args': vars(args).copy(),
+                        },
                     )
+                    logger.info(
+                        'Current-weight milestone saved | epoch=%d | path=%s',
+                        current_epoch,
+                        milestone_path,
+                    )
+                    print(
+                        '| Current student weights saved at epoch {}'.format(
+                            current_epoch
+                        ).ljust(print_num_minus, ' '),
+                        '|',
+                    )
+                if (
+                    args.best_save_interval > 0
+                    and current_epoch % args.best_save_interval == 0
+                ):
+                    periodic_checkpoints = save_periodic_branch_bests(
+                        best_val_eval_lists,
+                        best_model_states,
+                        best_epochs,
+                        trained_models_path,
+                        current_epoch,
+                    )
+                    for checkpoint in periodic_checkpoints:
+                        logger.info(
+                            'Periodic best saved | current_epoch=%d | branch=%s '
+                            '| best_epoch=%d | best_val_jaccard=%.6f | path=%s',
+                            current_epoch,
+                            checkpoint['branch'],
+                            checkpoint['best_epoch'],
+                            checkpoint['best_jaccard'],
+                            checkpoint['path'],
+                        )
+                    print(
+                        '| Periodic best student weights saved at epoch {}'.format(
+                            current_epoch
+                        ).ljust(print_num_minus, ' '),
+                        '|',
+                    )
+
+                epoch_seconds = time.time() - epoch_start
+                print('-' * print_num)
                 print(
-                    '| Periodic best student weights saved at epoch {}'.format(
-                        current_epoch
-                    ).ljust(print_num_minus, ' '),
+                    '| Epoch Time: {:.4f}s'.format(epoch_seconds).ljust(
+                        print_num_minus, ' '
+                    ),
                     '|',
                 )
-
-            epoch_seconds = time.time() - epoch_start
-            print('-' * print_num)
-            print(
-                '| Epoch Time: {:.4f}s'.format(epoch_seconds).ljust(
-                    print_num_minus, ' '
-                ),
-                '|',
-            )
-            metrics = _collect_epoch_metrics(
-                epoch,
-                epoch_seconds,
-                optimizers,
-                train_losses,
-                (val_eval1, val_eval2),
-                validation_diversity,
-                best_val_eval_lists,
-            )
-            _log_epoch(logger, args, metrics)
+                metrics = _collect_epoch_metrics(
+                    epoch,
+                    epoch_seconds,
+                    optimizers,
+                    train_losses,
+                    (val_eval1, val_eval2),
+                    validation_diversity,
+                    best_val_eval_lists,
+                )
+                _log_epoch(logger, args, metrics)
+    finally:
+        if cssml_file is not None:
+            cssml_file.close()
 
     elapsed = time.time() - training_start
     minutes, seconds = divmod(elapsed, 60)
@@ -1344,6 +1728,32 @@ def parse_args():
     parser.add_argument('-l', '--lr', default=0.5, type=float)
     parser.add_argument('-g', '--gamma', default=0.5, type=float)
     parser.add_argument('-u', '--unsup_weight', default=5, type=float)
+    parser.add_argument(
+        '--cps-mode',
+        dest='cps_mode',
+        default='vanilla',
+        choices=['vanilla', 'relative_reliable', 'cssml'],
+        help='Mutual pseudo-supervision mode.',
+    )
+    parser.add_argument(
+        '--use-cdfl',
+        dest='use_cdfl',
+        action='store_true',
+        help='Enable CSSML Conflict-aware Distinct Feature Learning.',
+    )
+    parser.add_argument(
+        '--use-gmps',
+        dest='use_gmps',
+        action='store_true',
+        help='Enable CSSML Geometry-aware Mutual Pseudo Supervision.',
+    )
+    parser.add_argument(
+        '--lambda-cdfl',
+        dest='lambda_cdfl',
+        default=0.1,
+        type=float,
+        help='Weight for CSSML CDFL loss.',
+    )
     parser.add_argument('--loss', default='dice')
     parser.add_argument(
         '--consistency',
@@ -1368,6 +1778,12 @@ def parse_args():
         parser.error('--milestone_interval must be non-negative')
     if args.best_save_interval < 0:
         parser.error('--best_save_interval must be non-negative')
+    if args.lambda_cdfl < 0:
+        parser.error('--lambda-cdfl must be non-negative')
+    if args.cps_mode == 'cssml' and not args.use_gmps:
+        parser.error('--cps-mode cssml requires --use-gmps')
+    if args.use_gmps and args.cps_mode != 'cssml':
+        parser.error('--use-gmps requires --cps-mode cssml')
     if args.path_trained_models is None:
         args.path_trained_models = 'checkpoints/semi_fdcl_paper_{}'.format(
             args.labeled_ratio
@@ -1383,6 +1799,7 @@ def main():
     args = parse_args()
     init_seeds(args.sd)
     cfg = dataset_cfg(args.dataset_name)
+    args.num_classes = cfg['NUM_CLASSES']
     datasets, manifest_dir, use_manifests = build_datasets(args, cfg)
 
     if args.check_data:

@@ -166,7 +166,15 @@ class U_Net(nn.Module):
 
         self.Conv_1x1 = nn.Conv2d(64, num_classes, kernel_size=1, stride=1, padding=0)
 
-    def forward(self, x):
+        # self.feature = nn.Conv2d(64, 304, kernel_size=1, stride=1, padding=0)
+
+        self.feature = nn.Sequential(
+            nn.Conv2d(64, 304, kernel_size=1, stride=1, padding=0),
+            nn.ReLU(inplace=True),
+        )
+
+
+    def forward(self, x, return_features=False):
         # encoding path
         x1 = self.Conv1(x)
 
@@ -200,12 +208,18 @@ class U_Net(nn.Module):
         d2 = torch.cat((x1, d2), dim=1)
         d2 = self.Up_conv2(d2)
 
-        d1 = self.Conv_1x1(d2)
+        pred = self.Conv_1x1(d2)
 
+        d2 = self.Maxpool(d2)
+        d2 = self.Maxpool(d2)
+
+        feature = self.feature(d2)
         # outputs = []
-        # outputs.append(d1)
+        # outputs.append(pred )
         # return outputs
-        return d1, d2
+        if return_features:
+            return pred, feature
+        return pred, feature
 
 class R2U_Net(nn.Module):
     def __init__(self, in_channels=3, num_classes=1, t=2):

@@ -191,3 +191,20 @@ If you use this work in your research or project, please cite the following pape
 
 ```bash
 ```
+
+
+python main.py --dataset_name GlaS --path_dataset datasets/GLaS
+     --path_trained_models checkpoints/semi__10_seed --labeled_ratio 10 --sd
+     1337 --cps-mode vanilla
+
+     python main.py --dataset_name GLaS --path_dataset datasets/GLaS
+     --path_trained_models checkpoints/semi__10_seed --labeled_ratio 10 --sd
+     1337 --cps-mode vanilla --use-cdfl --lambda-cdfl 0.1
+
+     python main.py --dataset_name GLaS --path_dataset datasets/GLaS
+     --path_trained_models checkpoints/semi__10_seed --labeled_ratio 10 --sd
+     1337 --cps-mode cssml --use-gmps
+
+     python main.py --dataset_name GLaS --path_dataset datasets/GLaS
+     --path_trained_models checkpoints/semi__10_seed --labeled_ratio 10 --sd
+     1337 --cps-mode cssml --use-gmps --use-cdfl --lambda-cdfl 0.1
