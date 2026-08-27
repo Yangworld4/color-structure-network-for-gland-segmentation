@@ -1345,18 +1345,6 @@ def parse_args():
     parser.add_argument('-g', '--gamma', default=0.5, type=float)
     parser.add_argument('-u', '--unsup_weight', default=5, type=float)
     parser.add_argument('--loss', default='dice')
-    parser.add_argument(
-        '--consistency',
-        default=0.1,
-        type=float,
-        help='CPS consistency weight, following SSL4MIS CPS.',
-    )
-    parser.add_argument(
-        '--consistency_rampup',
-        default=200.0,
-        type=float,
-        help='CPS consistency ramp-up length, following SSL4MIS CPS.',
-    )
     parser.add_argument('-w', '--warm_up_duration', default=20, type=int)
     parser.add_argument('--momentum', default=0.9, type=float)
     parser.add_argument('--wd', default=-5, type=float, help='weight decay exponent')
@@ -1391,7 +1379,6 @@ def main():
     print_data_summary(args, datasets, manifest_dir, use_manifests)
     if not torch.cuda.is_available():
         raise RuntimeError(
-            'FDCL training requires a CUDA GPU; '
             'use --check_data to validate input only.'
         )
 
