@@ -3,6 +3,7 @@ import csv
 import logging
 import os
 import random
+import re
 import time
 from typing import Dict, Mapping, Tuple
 from warnings import simplefilter
@@ -11,6 +12,7 @@ from utils.ramps import sigmoid_rampup
 import numpy as np
 import torch
 import torch.optim as optim
+import torch.nn.functional as F
 from torch.nn.modules.loss import CrossEntropyLoss
 from torch.optim import lr_scheduler
 from torch.utils.data import DataLoader
@@ -31,6 +33,28 @@ from config.warmup_config.warmup import GradualWarmupScheduler
 from dataload.dataset_2d import imagefloder_itn
 from loss.loss_function import DiceLoss
 from models.getnetwork import get_network
+from utils.ph_mask_only import (
+    accumulate_ph_mask_state,
+    build_ph_conflict_mask,
+    finalize_ph_mask_epoch_state,
+    new_ph_mask_epoch_state,
+    update_ph_mask_loss_state,
+)
+from utils.ph_directional_cps import (
+    PH_CORRESPONDENCE_FIELDS,
+    PH_DIRECTIONAL_FIELDS,
+    PERSISTENT_RELATION_EVENT_FIELDS,
+    correspondence_diagnostics_row,
+    compute_ph_directional_cps_losses,
+    finalize_ph_directional_epoch_state,
+    new_ph_directional_epoch_state,
+    save_ph_match_examples,
+    write_persistent_relation_event_rows,
+    update_ph_directional_loss_state,
+    update_ph_directional_oracle_state,
+    update_ph_directional_vanilla_state,
+)
+from utils.structural_diagnostics import StructuralDiagnostics
 
 
 simplefilter(action='ignore', category=FutureWarning)
@@ -42,6 +66,43 @@ METRIC_FIELDS = [
     'student12_dice_similarity', 'student1_entropy', 'student2_entropy',
     'pseudo_dice_student1', 'pseudo_dice_student2',
     'pseudo_jaccard_student1', 'pseudo_jaccard_student2',
+]
+
+PH_MASK_ONLY_FIELDS = [
+    'epoch',
+    'ph_enabled',
+    'ph_conflict_events',
+    'merge_conflict_events',
+    'split_conflict_events',
+    'ph_conflict_pixels',
+    'total_unlabeled_pixels',
+    'ph_conflict_pixel_ratio',
+    'ph_mask_efficiency',
+    'safe_cps_pixels',
+    'safe_cps_pixel_ratio',
+    'batches_with_ph_conflict',
+    'batches_without_ph_conflict',
+    'mean_conflict_roi_size',
+    'max_conflict_roi_size',
+    'loss_cps_original_estimate',
+    'loss_cps_safe',
+    'masked_cps_loss_fraction',
+    'val_dice_a',
+    'val_dice_b',
+    'val_jaccard_a',
+    'val_jaccard_b',
+    'pixel_disagreement',
+    'both_struct_correct_ratio',
+    'a_only_struct_correct_ratio',
+    'b_only_struct_correct_ratio',
+    'both_struct_wrong_ratio',
+    'structural_complementary_ratio',
+    'merge_error_a',
+    'merge_error_b',
+    'merge_error_total',
+    'split_error_a',
+    'split_error_b',
+    'split_error_total',
 ]
 
 def init_seeds(seed):
@@ -104,6 +165,34 @@ def compute_cps_losses(
         '1_to_2': loss_1_to_2,
         '2_to_1': loss_2_to_1,
         'total': loss_1_to_2 + loss_2_to_1}
+
+
+def compute_masked_cps_losses(
+    prediction1: torch.Tensor,
+    prediction2: torch.Tensor,
+    safe_mask: torch.Tensor,
+) -> Dict[str, torch.Tensor]:
+    pseudo1 = prediction1.detach().argmax(dim=1)
+    pseudo2 = prediction2.detach().argmax(dim=1)
+    safe = safe_mask.detach().float()
+    denom = safe.sum().clamp_min(1.0)
+    loss_2_to_1_map = F.cross_entropy(
+        prediction1, pseudo2, reduction='none'
+    )
+    loss_1_to_2_map = F.cross_entropy(
+        prediction2, pseudo1, reduction='none'
+    )
+    loss_2_to_1 = 0.5 * (loss_2_to_1_map * safe).sum() / denom
+    loss_1_to_2 = 0.5 * (loss_1_to_2_map * safe).sum() / denom
+    original_estimate = 0.5 * (
+        loss_2_to_1_map.mean() + loss_1_to_2_map.mean()
+    )
+    return {
+        '1_to_2': loss_1_to_2,
+        '2_to_1': loss_2_to_1,
+        'total': loss_1_to_2 + loss_2_to_1,
+        'original_estimate': original_estimate,
+    }
 
 
 def _hard_predictions(scores: torch.Tensor) -> torch.Tensor:
@@ -375,6 +464,19 @@ def _experiment_name(args, split_sup_mark, split_unsup_mark):
         )
     )
     experiment_name += '-input_mode={}'.format(args.input_mode)
+    if getattr(args, 'ph_mask_only', False):
+        experiment_name += '-ph_mask_only-start={}-d={}'.format(
+            args.ph_start_epoch,
+            args.ph_mask_dilation,
+        )
+    if getattr(args, 'ph_directional_cps', False):
+        experiment_name += '-ph_directional_cps-start={}-d={}-mr={}-um={}-det={}'.format(
+            args.ph_start_epoch,
+            args.ph_mask_dilation,
+            args.ph_match_radius,
+            args.ph_unmatched_mode,
+            args.ph_conflict_detector,
+        )
     return experiment_name
 
 
@@ -500,6 +602,7 @@ def train_one_epoch(
     dataloaders,
     metrics_writer,
     metrics_file,
+    ph_mask_state=None,
 ):
     model1, model2 = models
     optimizer1, optimizer2 = optimizers
@@ -584,12 +687,84 @@ def train_one_epoch(
         unsup_prediction1 = model1(unsup_input1)[0]
         unsup_prediction2 = model2(unsup_input2)[0]
         
-        #CPS loss
-        cps_losses = compute_cps_losses(
-            losses['ce'],
-            unsup_prediction1,
-            unsup_prediction2,
+        ph_mask_active = (
+            args.ph_mask_only
+            and ph_mask_state is not None
+            and (epoch + 1) >= args.ph_start_epoch
         )
+        ph_directional_active = (
+            args.ph_directional_cps
+            and ph_mask_state is not None
+            and (epoch + 1) >= args.ph_start_epoch
+        )
+        if ph_directional_active:
+            cps_losses = compute_ph_directional_cps_losses(
+                unsup_prediction1,
+                unsup_prediction2,
+                dilation=args.ph_mask_dilation,
+                match_radius=args.ph_match_radius,
+                unmatched_mode=args.ph_unmatched_mode,
+                detector_mode=args.ph_conflict_detector,
+                debug_timing=args.ph_debug_timing,
+                batch_index=batch_index,
+                correspondence_mode=args.ph_correspondence_mode,
+            )
+            update_ph_directional_loss_state(ph_mask_state, cps_losses)
+        elif ph_mask_active:
+            with torch.no_grad():
+                prob_a = torch.softmax(unsup_prediction1.detach(), dim=1)[:, 1]
+                prob_b = torch.softmax(unsup_prediction2.detach(), dim=1)[:, 1]
+                ph_mask_np, ph_stats = build_ph_conflict_mask(
+                    prob_a.cpu().numpy(),
+                    prob_b.cpu().numpy(),
+                    dilation=args.ph_mask_dilation,
+                )
+                accumulate_ph_mask_state(ph_mask_state, ph_mask_np, ph_stats)
+                safe_mask = torch.from_numpy(~ph_mask_np).to(
+                    unsup_prediction1.device,
+                    non_blocking=True,
+                )
+            cps_losses = compute_masked_cps_losses(
+                unsup_prediction1,
+                unsup_prediction2,
+                safe_mask,
+            )
+            update_ph_mask_loss_state(
+                ph_mask_state,
+                cps_losses['original_estimate'].detach().item(),
+                cps_losses['total'].detach().item(),
+            )
+        else:
+            cps_losses = compute_cps_losses(
+                losses['ce'],
+                unsup_prediction1,
+                unsup_prediction2,
+            )
+            if ph_mask_state is not None and args.ph_mask_only:
+                empty_mask = np.zeros(
+                    (
+                        unsup_prediction1.shape[0],
+                        unsup_prediction1.shape[2],
+                        unsup_prediction1.shape[3],
+                    ),
+                    dtype=bool,
+                )
+                accumulate_ph_mask_state(
+                    ph_mask_state,
+                    empty_mask,
+                    {'events': 0, 'merge_events': 0, 'split_events': 0, 'roi_sizes': []},
+                )
+                update_ph_mask_loss_state(
+                    ph_mask_state,
+                    cps_losses['total'].detach().item(),
+                    cps_losses['total'].detach().item(),
+                )
+            elif ph_mask_state is not None and args.ph_directional_cps:
+                update_ph_directional_vanilla_state(
+                    ph_mask_state,
+                    cps_losses,
+                    unsup_prediction1,
+                )
         unsup_loss = cps_losses['total']
 
         model1_loss = (
@@ -831,7 +1006,14 @@ def log_diagnostics(diagnostic_logger, epoch, global_step, diagnostics):
 
 
 @torch.no_grad()
-def validate(models, losses, dataloader):
+def validate(
+    models,
+    losses,
+    dataloader,
+    structural_diagnostics=None,
+    epoch_state=None,
+    collect_inputs=False,
+):
     model1, model2 = models
     model1.eval()
     model2.eval()
@@ -841,6 +1023,8 @@ def validate(models, losses, dataloader):
     scores1 = []
     scores2 = []
     masks = []
+    inputs1 = []
+    inputs2 = []
     names = []
     # CPS Diagnostic Analysis
     diagnostic_totals = _init_diagnostic_totals()
@@ -872,9 +1056,22 @@ def validate(models, losses, dataloader):
             diagnostic_features['b'] = None
             output1 = model1(input1)[0]
             output2 = model2(input2)[0]
+            if structural_diagnostics is not None and epoch_state is not None:
+                structural_diagnostics.update_batch(
+                    epoch_state,
+                    output1,
+                    output2,
+                    mask,
+                    batch['ID'],
+                    input1,
+                    input2,
+                )
             scores1.append(output1)
             scores2.append(output2)
             masks.append(mask)
+            if collect_inputs:
+                inputs1.append(input1.detach().cpu())
+                inputs2.append(input2.detach().cpu())
             names.extend(batch['ID'])
             loss1 += compute_supervised_loss(
                 losses['ce'],
@@ -903,7 +1100,7 @@ def validate(models, losses, dataloader):
     scores1_tensor = torch.cat(scores1, dim=0)
     scores2_tensor = torch.cat(scores2, dim=0)
 
-    return {
+    result = {
         'loss1': loss1,
         'loss2': loss2,
         'scores1': scores1_tensor,
@@ -912,6 +1109,10 @@ def validate(models, losses, dataloader):
         'names': np.asarray(names),
         'diagnostic_totals': diagnostic_totals,
     }
+    if collect_inputs:
+        result['inputs1'] = torch.cat(inputs1, dim=0)
+        result['inputs2'] = torch.cat(inputs2, dim=0)
+    return result
 
 
 def _hard_overlap(prediction: torch.Tensor, target: torch.Tensor) -> Dict[str, float]:
@@ -1022,6 +1223,85 @@ def _log_epoch(logger, args, metrics):
     )
 
 
+def _write_ph_mask_only_diagnostics(writer, ph_state, val_eval1, val_eval2, diagnostics, structural_summary):
+    row = finalize_ph_mask_epoch_state(ph_state)
+    row.update({
+        'val_dice_a': val_eval1[2],
+        'val_dice_b': val_eval2[2],
+        'val_jaccard_a': val_eval1[1],
+        'val_jaccard_b': val_eval2[1],
+        'pixel_disagreement': diagnostics['pixel_disagreement'],
+    })
+    if structural_summary is None:
+        row.update({
+            'both_struct_correct_ratio': 0.0,
+            'a_only_struct_correct_ratio': 0.0,
+            'b_only_struct_correct_ratio': 0.0,
+            'both_struct_wrong_ratio': 0.0,
+            'structural_complementary_ratio': 0.0,
+            'merge_error_a': 0,
+            'merge_error_b': 0,
+            'merge_error_total': 0,
+            'split_error_a': 0,
+            'split_error_b': 0,
+            'split_error_total': 0,
+        })
+    else:
+        merge_a = int(structural_summary['merge_error_a'])
+        merge_b = int(structural_summary['merge_error_b'])
+        split_a = int(structural_summary['split_error_a'])
+        split_b = int(structural_summary['split_error_b'])
+        row.update({
+            'both_struct_correct_ratio': structural_summary['both_struct_correct_ratio'],
+            'a_only_struct_correct_ratio': structural_summary['a_only_struct_correct_ratio'],
+            'b_only_struct_correct_ratio': structural_summary['b_only_struct_correct_ratio'],
+            'both_struct_wrong_ratio': structural_summary['both_struct_wrong_ratio'],
+            'structural_complementary_ratio': structural_summary['structural_complementary_ratio'],
+            'merge_error_a': merge_a,
+            'merge_error_b': merge_b,
+            'merge_error_total': merge_a + merge_b,
+            'split_error_a': split_a,
+            'split_error_b': split_b,
+            'split_error_total': split_a + split_b,
+        })
+    writer.writerow(row)
+
+
+def _write_ph_directional_diagnostics(writer, ph_state, val_eval1, val_eval2, structural_summary):
+    row = finalize_ph_directional_epoch_state(ph_state)
+    row.update({
+        'val_dice_a': val_eval1[2],
+        'val_dice_b': val_eval2[2],
+        'val_jaccard_a': val_eval1[1],
+        'val_jaccard_b': val_eval2[1],
+    })
+    if structural_summary is None:
+        row.update({
+            'both_struct_correct_ratio': 0.0,
+            'a_only_struct_correct_ratio': 0.0,
+            'b_only_struct_correct_ratio': 0.0,
+            'both_struct_wrong_ratio': 0.0,
+            'structural_complementary_ratio': 0.0,
+            'merge_error_a': 0,
+            'merge_error_b': 0,
+            'split_error_a': 0,
+            'split_error_b': 0,
+        })
+    else:
+        row.update({
+            'both_struct_correct_ratio': structural_summary['both_struct_correct_ratio'],
+            'a_only_struct_correct_ratio': structural_summary['a_only_struct_correct_ratio'],
+            'b_only_struct_correct_ratio': structural_summary['b_only_struct_correct_ratio'],
+            'both_struct_wrong_ratio': structural_summary['both_struct_wrong_ratio'],
+            'structural_complementary_ratio': structural_summary['structural_complementary_ratio'],
+            'merge_error_a': int(structural_summary['merge_error_a']),
+            'merge_error_b': int(structural_summary['merge_error_b']),
+            'split_error_a': int(structural_summary['split_error_a']),
+            'split_error_b': int(structural_summary['split_error_b']),
+        })
+    writer.writerow(row)
+
+
 def train_model(
     args,
     cfg,
@@ -1045,6 +1325,35 @@ def train_model(
         schedulers,
         losses,
     ) = build_training_components(args, cfg)
+    structural_diagnostics = None
+    if args.enable_struct_diagnostics or args.ph_mask_only or args.ph_directional_cps:
+        structural_diagnostics = StructuralDiagnostics(
+            trained_models_path,
+            min_area=args.struct_min_area,
+            match_iou=args.struct_match_iou,
+            boundary_width=args.struct_boundary_width,
+            save_examples=args.save_struct_examples,
+        )
+        print(
+            'Structural diagnostics CSV:',
+            os.path.join(trained_models_path, 'structural_diagnostics.csv'),
+        )
+    ph_mask_path = os.path.join(trained_models_path, 'ph_mask_only_diagnostics.csv')
+    if args.ph_mask_only:
+        print('PH Mask Only diagnostics CSV:', ph_mask_path)
+    ph_directional_path = os.path.join(
+        trained_models_path, 'ph_directional_diagnostics.csv'
+    )
+    if args.ph_directional_cps:
+        print('PH Directional diagnostics CSV:', ph_directional_path)
+    ph_correspondence_path = os.path.join(
+        trained_models_path, 'ph_correspondence_diagnostics.csv'
+    )
+    if args.ph_directional_cps and args.ph_conflict_detector == 'persistent_relation':
+        print('PH Correspondence diagnostics CSV:', ph_correspondence_path)
+    persistent_event_path = os.path.join(
+        trained_models_path, 'persistent_relation_events.csv'
+    )
 
     model1, model2 = models
     best_val_eval_lists = (
@@ -1064,9 +1373,60 @@ def train_model(
             metrics_file, fieldnames=METRIC_FIELDS
         )
         metrics_writer.writeheader()
+        ph_mask_file = None
+        ph_mask_writer = None
+        ph_directional_file = None
+        ph_directional_writer = None
+        ph_correspondence_file = None
+        ph_correspondence_writer = None
+        persistent_event_file = None
+        persistent_event_writer = None
+        if args.ph_mask_only:
+            ph_mask_file = open(ph_mask_path, 'w', newline='', encoding='utf-8')
+            ph_mask_writer = csv.DictWriter(
+                ph_mask_file, fieldnames=PH_MASK_ONLY_FIELDS
+            )
+            ph_mask_writer.writeheader()
+        if args.ph_directional_cps:
+            ph_directional_file = open(
+                ph_directional_path, 'w', newline='', encoding='utf-8'
+            )
+            ph_directional_writer = csv.DictWriter(
+                ph_directional_file, fieldnames=PH_DIRECTIONAL_FIELDS
+            )
+            ph_directional_writer.writeheader()
+            if args.ph_conflict_detector == 'persistent_relation':
+                ph_correspondence_file = open(
+                    ph_correspondence_path, 'w', newline='', encoding='utf-8'
+                )
+                ph_correspondence_writer = csv.DictWriter(
+                    ph_correspondence_file,
+                    fieldnames=PH_CORRESPONDENCE_FIELDS,
+                )
+                ph_correspondence_writer.writeheader()
+                persistent_event_file = open(
+                    persistent_event_path, 'w', newline='', encoding='utf-8'
+                )
+                persistent_event_writer = csv.DictWriter(
+                    persistent_event_file,
+                    fieldnames=PERSISTENT_RELATION_EVENT_FIELDS,
+                )
+                persistent_event_writer.writeheader()
 
         for epoch in range(args.num_epochs):
             epoch_start = time.time()
+            if args.ph_mask_only:
+                ph_mask_state = new_ph_mask_epoch_state(
+                    epoch + 1,
+                    (epoch + 1) >= args.ph_start_epoch,
+                )
+            elif args.ph_directional_cps:
+                ph_mask_state = new_ph_directional_epoch_state(
+                    epoch + 1,
+                    (epoch + 1) >= args.ph_start_epoch,
+                )
+            else:
+                ph_mask_state = None
             loss_totals, train_predictions, global_step = train_one_epoch(
                 args,
                 epoch,
@@ -1077,6 +1437,7 @@ def train_model(
                 dataloaders,
                 metrics_writer,
                 metrics_file,
+                ph_mask_state,
             )
             schedulers[0].step()
             schedulers[1].step()
@@ -1103,7 +1464,28 @@ def train_model(
                 print_num_half,
             )
 
-            validation = validate(models, losses, dataloaders['val'])
+            struct_epoch_state = (
+                structural_diagnostics.new_epoch(epoch + 1)
+                if structural_diagnostics is not None else None
+            )
+            ph_validation_interval = args.ph_validation_diagnostics_interval
+            if ph_validation_interval is None:
+                ph_validation_interval = args.best_save_interval
+            run_ph_validation_diagnostics = (
+                ph_validation_interval > 0
+                and (epoch + 1) % ph_validation_interval == 0
+            )
+            validation = validate(
+                models,
+                losses,
+                dataloaders['val'],
+                structural_diagnostics,
+                struct_epoch_state,
+                collect_inputs=(
+                    args.ph_directional_cps and args.save_ph_match_examples
+                    and run_ph_validation_diagnostics
+                ),
+            )
             print_val_loss(
                 validation['loss1'],
                 validation['loss2'],
@@ -1123,6 +1505,103 @@ def train_model(
                 val_eval1[2],
                 val_eval2[2],
             )
+            structural_summary = None
+            if structural_diagnostics is not None:
+                struct_epoch_state['pixel_complementary_ratio'] = (
+                    diagnostics['a_only_correct_ratio']
+                    + diagnostics['b_only_correct_ratio']
+                )
+                structural_summary = structural_diagnostics.finalize_epoch(
+                    struct_epoch_state
+                )
+            if (
+                ph_directional_writer is not None
+                and ph_mask_state is not None
+                and ph_mask_state['ph_enabled']
+                and run_ph_validation_diagnostics
+            ):
+                update_ph_directional_oracle_state(
+                    ph_mask_state,
+                    validation['scores1'],
+                    validation['scores2'],
+                    validation['masks'],
+                    min_area=args.struct_min_area,
+                    match_iou=args.struct_match_iou,
+                    dilation=args.ph_mask_dilation,
+                    match_radius=args.ph_match_radius,
+                    unmatched_mode=args.ph_unmatched_mode,
+                    detector_mode=args.ph_conflict_detector,
+                    correspondence_mode=args.ph_correspondence_mode,
+                )
+                if (
+                    args.ph_conflict_detector == 'persistent_relation'
+                    and persistent_event_writer is not None
+                ):
+                    write_persistent_relation_event_rows(
+                        persistent_event_writer,
+                        epoch + 1,
+                        validation['names'],
+                        validation['scores1'],
+                        validation['scores2'],
+                        validation['masks'],
+                        dilation=args.ph_mask_dilation,
+                        unmatched_mode=args.ph_unmatched_mode,
+                        correspondence_mode=args.ph_correspondence_mode,
+                    )
+                    persistent_event_file.flush()
+                if args.save_ph_match_examples:
+                    save_ph_match_examples(
+                        trained_models_path,
+                        epoch + 1,
+                        validation['scores1'],
+                        validation['scores2'],
+                        validation['masks'],
+                        validation.get('inputs1'),
+                        validation.get('inputs2'),
+                        dilation=args.ph_mask_dilation,
+                        match_radius=args.ph_match_radius,
+                        unmatched_mode=args.ph_unmatched_mode,
+                        min_area=args.struct_min_area,
+                        match_iou=args.struct_match_iou,
+                        detector_mode=args.ph_conflict_detector,
+                        correspondence_mode=args.ph_correspondence_mode,
+                    )
+            if ph_mask_writer is not None:
+                _write_ph_mask_only_diagnostics(
+                    ph_mask_writer,
+                    ph_mask_state,
+                    val_eval1,
+                    val_eval2,
+                    diagnostics,
+                    structural_summary,
+                )
+                ph_mask_file.flush()
+            if ph_directional_writer is not None:
+                _write_ph_directional_diagnostics(
+                    ph_directional_writer,
+                    ph_mask_state,
+                    val_eval1,
+                    val_eval2,
+                    structural_summary,
+                )
+                ph_directional_file.flush()
+                ph_timing = finalize_ph_directional_epoch_state(ph_mask_state)
+                if ph_correspondence_writer is not None:
+                    ph_correspondence_writer.writerow(
+                        correspondence_diagnostics_row(ph_mask_state)
+                    )
+                    ph_correspondence_file.flush()
+                logger.info(
+                    'PH timing | epoch=%d | ph_extract=%.4fs | support=%.4fs | support_overlap=%.4fs | entity_match=%.4fs | relation=%.4fs | roi=%.4fs | total=%.4fs',
+                    epoch + 1,
+                    ph_timing['ph_extract_time'],
+                    ph_timing['support_build_time'],
+                    ph_timing['support_overlap_time'],
+                    ph_timing['entity_match_time'],
+                    ph_timing['relation_time'],
+                    ph_timing['roi_time'],
+                    ph_timing['total_ph_time'],
+                )
             log_diagnostics(
                 diagnostic_logger,
                 epoch + 1,
@@ -1236,6 +1715,14 @@ def train_model(
                 best_val_eval_lists,
             )
             _log_epoch(logger, args, metrics)
+        if ph_mask_file is not None:
+            ph_mask_file.close()
+        if ph_directional_file is not None:
+            ph_directional_file.close()
+        if ph_correspondence_file is not None:
+            ph_correspondence_file.close()
+        if persistent_event_file is not None:
+            persistent_event_file.close()
 
     elapsed = time.time() - training_start
     minutes, seconds = divmod(elapsed, 60)
@@ -1266,6 +1753,228 @@ def train_model(
         best_epochs[1],
         best_val_eval_lists[1][1],
     )
+
+
+def _unwrap_state_dict(checkpoint, checkpoint_path):
+    if isinstance(checkpoint, dict):
+        for key in ('state_dict', 'model_state_dict', 'model'):
+            if key in checkpoint and isinstance(checkpoint[key], dict):
+                return checkpoint[key]
+    if not isinstance(checkpoint, dict):
+        raise TypeError('Unsupported checkpoint content in {}'.format(checkpoint_path))
+    return checkpoint
+
+
+def _load_state_dict(model, state_dict, checkpoint_path):
+    state_dict = _unwrap_state_dict(state_dict, checkpoint_path)
+    state_dict = {
+        key[7:] if key.startswith('module.') else key: value
+        for key, value in state_dict.items()
+    }
+    model.load_state_dict(state_dict, strict=True)
+
+
+def _resolve_struct_checkpoint_pair(checkpoint_arg, checkpoint_a, checkpoint_b, epoch):
+    if checkpoint_a and checkpoint_b:
+        return checkpoint_a, checkpoint_b, None
+    checkpoint_path = os.path.abspath(checkpoint_arg)
+    if os.path.isdir(checkpoint_path):
+        base_dir = checkpoint_path
+        if os.path.basename(base_dir) in ('milestones', 'periodic_best'):
+            base_dir = os.path.dirname(base_dir)
+        if epoch > 0:
+            milestone = os.path.join(base_dir, 'milestones', 'epoch_{:03d}.pth'.format(epoch))
+            if os.path.isfile(milestone):
+                return milestone, None, epoch
+            periodic_dir = os.path.join(base_dir, 'periodic_best')
+            paths_a = sorted(
+                [
+                    os.path.join(periodic_dir, name)
+                    for name in os.listdir(periodic_dir)
+                    if re.match(r'epoch_{:04d}_best_A_Jc_.*\.pth$'.format(epoch), name)
+                ]
+            ) if os.path.isdir(periodic_dir) else []
+            paths_b = sorted(
+                [
+                    os.path.join(periodic_dir, name)
+                    for name in os.listdir(periodic_dir)
+                    if re.match(r'epoch_{:04d}_best_S_Jc_.*\.pth$'.format(epoch), name)
+                ]
+            ) if os.path.isdir(periodic_dir) else []
+            if paths_a and paths_b:
+                return paths_a[-1], paths_b[-1], epoch
+            recursive_milestones = []
+            recursive_pairs = []
+            for root, _dirs, files in os.walk(base_dir):
+                milestone_name = 'epoch_{:03d}.pth'.format(epoch)
+                if os.path.basename(root) == 'milestones' and milestone_name in files:
+                    recursive_milestones.append(os.path.join(root, milestone_name))
+                if os.path.basename(root) == 'periodic_best':
+                    root_a = sorted(
+                        [
+                            os.path.join(root, name)
+                            for name in files
+                            if re.match(r'epoch_{:04d}_best_A_Jc_.*\.pth$'.format(epoch), name)
+                        ]
+                    )
+                    root_b = sorted(
+                        [
+                            os.path.join(root, name)
+                            for name in files
+                            if re.match(r'epoch_{:04d}_best_S_Jc_.*\.pth$'.format(epoch), name)
+                        ]
+                    )
+                    if root_a and root_b:
+                        recursive_pairs.append((root_a[-1], root_b[-1]))
+            if len(recursive_milestones) == 1:
+                return recursive_milestones[0], None, epoch
+            if len(recursive_pairs) == 1:
+                return recursive_pairs[0][0], recursive_pairs[0][1], epoch
+            raise FileNotFoundError(
+                'No milestone or periodic A/S checkpoint found for epoch {}'.format(epoch)
+            )
+        best_a = sorted(
+            [
+                os.path.join(base_dir, name)
+                for name in os.listdir(base_dir)
+                if re.match(r'best_result1_Jc_.*\.pth$', name)
+            ]
+        )
+        best_b = sorted(
+            [
+                os.path.join(base_dir, name)
+                for name in os.listdir(base_dir)
+                if re.match(r'best_result2_Jc_.*\.pth$', name)
+            ]
+        )
+        if best_a and best_b:
+            return best_a[-1], best_b[-1], 0
+        recursive_best_pairs = []
+        for root, _dirs, files in os.walk(base_dir):
+            root_best_a = sorted(
+                [
+                    os.path.join(root, name)
+                    for name in files
+                    if re.match(r'best_result1_Jc_.*\.pth$', name)
+                ]
+            )
+            root_best_b = sorted(
+                [
+                    os.path.join(root, name)
+                    for name in files
+                    if re.match(r'best_result2_Jc_.*\.pth$', name)
+                ]
+            )
+            if root_best_a and root_best_b:
+                recursive_best_pairs.append((root_best_a[-1], root_best_b[-1]))
+        if len(recursive_best_pairs) == 1:
+            return recursive_best_pairs[0][0], recursive_best_pairs[0][1], 0
+        raise FileNotFoundError(
+            'Directory must contain best_result1/best_result2 checkpoints, '
+            'or pass --struct-analysis-epoch for milestones/periodic_best: {}'.format(
+                base_dir
+            )
+        )
+    return checkpoint_path, None, epoch
+
+
+def _load_struct_models(args, cfg):
+    model1 = get_network(args.network, cfg['IN_CHANNELS'], cfg['NUM_CLASSES']).cuda()
+    model2 = get_network(args.network, cfg['IN_CHANNELS'], cfg['NUM_CLASSES']).cuda()
+    path_a, path_b, resolved_epoch = _resolve_struct_checkpoint_pair(
+        args.struct_analysis_checkpoint,
+        args.struct_analysis_checkpoint_a,
+        args.struct_analysis_checkpoint_b,
+        args.struct_analysis_epoch,
+    )
+    checkpoint = torch.load(path_a, map_location='cpu', weights_only=False)
+    if path_b is None:
+        if (
+            isinstance(checkpoint, dict)
+            and 'appearance_state_dict' in checkpoint
+            and 'structure_state_dict' in checkpoint
+        ):
+            _load_state_dict(model1, checkpoint['appearance_state_dict'], path_a)
+            _load_state_dict(model2, checkpoint['structure_state_dict'], path_a)
+        else:
+            raise ValueError(
+                'Single-checkpoint structural analysis expects a milestone '
+                'with appearance_state_dict and structure_state_dict: {}'.format(path_a)
+            )
+    else:
+        checkpoint_b = torch.load(path_b, map_location='cpu', weights_only=False)
+        _load_state_dict(model1, checkpoint, path_a)
+        _load_state_dict(model2, checkpoint_b, path_b)
+    return (model1, model2), (path_a, path_b), (resolved_epoch or 0)
+
+
+def run_structural_analysis(args, cfg, datasets):
+    if not args.enable_struct_diagnostics:
+        raise ValueError(
+            '--struct-analysis-checkpoint requires --enable-struct-diagnostics'
+        )
+    if not torch.cuda.is_available():
+        raise RuntimeError('CUDA is required for structural checkpoint analysis.')
+    models, checkpoint_paths, resolved_epoch = _load_struct_models(args, cfg)
+    dataloader = DataLoader(
+        datasets['val'],
+        batch_size=args.batch_size,
+        shuffle=False,
+        pin_memory=True,
+        num_workers=8,
+    )
+    losses = {
+        'ce': CrossEntropyLoss().cuda(),
+        'dice': DiceLoss().cuda(),
+    }
+    if args.struct_output_dir is not None:
+        output_dir = args.struct_output_dir
+    elif os.path.isdir(args.struct_analysis_checkpoint):
+        output_dir = os.path.abspath(args.struct_analysis_checkpoint)
+        if os.path.basename(output_dir) in ('milestones', 'periodic_best'):
+            output_dir = os.path.dirname(output_dir)
+    else:
+        output_dir = os.path.dirname(checkpoint_paths[0])
+    diagnostics = StructuralDiagnostics(
+        output_dir,
+        min_area=args.struct_min_area,
+        match_iou=args.struct_match_iou,
+        boundary_width=args.struct_boundary_width,
+        save_examples=args.save_struct_examples,
+    )
+    epoch_for_log = resolved_epoch if resolved_epoch > 0 else 0
+    epoch_state = diagnostics.new_epoch(epoch_for_log)
+    validation = validate(models, losses, dataloader, diagnostics, epoch_state)
+    val_eval1, val_eval2, _, _ = print_val_eval(
+        cfg['NUM_CLASSES'],
+        validation['scores1'],
+        validation['scores2'],
+        validation['masks'],
+        38,
+    )
+    pixel_diagnostics = _finalize_diagnostics(
+        validation['diagnostic_totals'],
+        val_eval1[2],
+        val_eval2[2],
+    )
+    epoch_state['pixel_complementary_ratio'] = (
+        pixel_diagnostics['a_only_correct_ratio']
+        + pixel_diagnostics['b_only_correct_ratio']
+    )
+    summary = diagnostics.finalize_epoch(epoch_state)
+    print('Structural diagnostics saved to: {}'.format(output_dir))
+    print(
+        'Structural complementary ratio: {:.6f}'.format(
+            summary['structural_complementary_ratio']
+        )
+    )
+
+
+def _infer_input_mode_from_path(path):
+    match = re.search(r'input_mode=([A-Za-z0-9_]+)', str(path))
+    if match:
+        return match.group(1)
+    return None
 
 
 def parse_args():
@@ -1350,12 +2059,163 @@ def parse_args():
     parser.add_argument('--wd', default=-5, type=float, help='weight decay exponent')
     parser.add_argument('--sd', default=4, type=int, help='random seed')
     parser.add_argument('-n', '--network', default='unet')
+    parser.add_argument(
+        '--enable-struct-diagnostics',
+        action='store_true',
+        help='enable CC-based validation structural diagnostics',
+    )
+    parser.add_argument(
+        '--struct-min-area',
+        default=20,
+        type=int,
+        help='minimum CC area in pixels for structural diagnostics only',
+    )
+    parser.add_argument(
+        '--struct-match-iou',
+        default=0.1,
+        type=float,
+        help='minimum component IoU for structural matching/overlap diagnostics',
+    )
+    parser.add_argument(
+        '--struct-boundary-width',
+        default=3,
+        type=int,
+        help='morphological GT boundary width for structural diagnostics',
+    )
+    parser.add_argument(
+        '--save-struct-examples',
+        action='store_true',
+        help='save up to five structural example mosaics per category',
+    )
+    parser.add_argument(
+        '--ph-mask-only',
+        action='store_true',
+        help='E1 ablation: abstain vanilla bidirectional CPS inside PH-H0 topology conflict masks',
+    )
+    parser.add_argument(
+        '--ph-directional-cps',
+        action='store_true',
+        help='E2 ablation: PH-guided directional CPS inside topology conflict ROIs',
+    )
+    parser.add_argument(
+        '--ph-start-epoch',
+        default=20,
+        type=int,
+        help='first epoch that enables PH-guided CPS; earlier epochs use vanilla CPS',
+    )
+    parser.add_argument(
+        '--ph-mask-dilation',
+        default=1,
+        type=int,
+        help='dilation radius for PH topology conflict mask in unlabeled CPS only',
+    )
+    parser.add_argument(
+        '--ph-match-radius',
+        default=16.0,
+        type=float,
+        help='maximum birth/death critical point distance in pixels for cross-branch PH matching',
+    )
+    parser.add_argument(
+        '--ph-unmatched-mode',
+        choices=('vanilla', 'abstain'),
+        default='vanilla',
+        help='handling for unmatched PH structure conflict candidates in directional CPS',
+    )
+    parser.add_argument(
+        '--ph-conflict-detector',
+        choices=('legacy', 'persistent_relation'),
+        default='persistent_relation',
+        help='PH conflict detector used by --ph-directional-cps',
+    )
+    parser.add_argument(
+        '--save-ph-match-examples',
+        action='store_true',
+        help='save PH matching example visualizations when supported',
+    )
+    parser.add_argument(
+        '--ph-validation-diagnostics-interval',
+        default=None,
+        type=int,
+        help=(
+            'run expensive PH validation oracle/event/example diagnostics every N epochs; '
+            'default follows --best_save_interval, 0 disables them'
+        ),
+    )
+    parser.add_argument(
+        '--ph-debug-timing',
+        action='store_true',
+        help='print per-batch persistent-relation PH timing and slow-stage warnings',
+    )
+    parser.add_argument(
+        '--ph-correspondence-mode',
+        choices=('birth_nearest', 'support_identity'),
+        default='birth_nearest',
+        help='persistent_relation correspondence backend for E2 ablations',
+    )
+    parser.add_argument(
+        '--struct-analysis-checkpoint',
+        default=None,
+        help=(
+            'run validation structural diagnostics from an existing checkpoint '
+            'or checkpoint directory and exit'
+        ),
+    )
+    parser.add_argument(
+        '--struct-analysis-checkpoint-a',
+        default=None,
+        help='student A checkpoint for standalone structural analysis',
+    )
+    parser.add_argument(
+        '--struct-analysis-checkpoint-b',
+        default=None,
+        help='student B checkpoint for standalone structural analysis',
+    )
+    parser.add_argument(
+        '--struct-analysis-epoch',
+        default=0,
+        type=int,
+        help='epoch to resolve inside a checkpoint directory; 0 uses final best_result files',
+    )
+    parser.add_argument(
+        '--struct-output-dir',
+        default=None,
+        help='output directory for standalone structural diagnostics',
+    )
 
     args = parser.parse_args()
     if args.milestone_interval < 0:
         parser.error('--milestone_interval must be non-negative')
     if args.best_save_interval < 0:
         parser.error('--best_save_interval must be non-negative')
+    if args.struct_min_area < 0:
+        parser.error('--struct-min-area must be non-negative')
+    if args.struct_match_iou < 0.0 or args.struct_match_iou > 1.0:
+        parser.error('--struct-match-iou must be in [0, 1]')
+    if args.struct_boundary_width < 0:
+        parser.error('--struct-boundary-width must be non-negative')
+    if args.ph_start_epoch < 1:
+        parser.error('--ph-start-epoch must be >= 1')
+    if args.ph_mask_dilation < 0:
+        parser.error('--ph-mask-dilation must be non-negative')
+    if args.ph_match_radius < 0:
+        parser.error('--ph-match-radius must be non-negative')
+    if (
+        args.ph_validation_diagnostics_interval is not None
+        and args.ph_validation_diagnostics_interval < 0
+    ):
+        parser.error('--ph-validation-diagnostics-interval must be non-negative')
+    if args.ph_mask_only and args.ph_directional_cps:
+        parser.error('--ph-mask-only and --ph-directional-cps are mutually exclusive')
+    if (
+        args.struct_analysis_checkpoint is None
+        and bool(args.struct_analysis_checkpoint_a) != bool(args.struct_analysis_checkpoint_b)
+    ):
+        parser.error(
+            '--struct-analysis-checkpoint-a and --struct-analysis-checkpoint-b '
+            'must be provided together'
+        )
+    if args.struct_analysis_checkpoint is None and args.struct_analysis_checkpoint_a:
+        args.struct_analysis_checkpoint = args.struct_analysis_checkpoint_a
     if args.path_trained_models is None:
         args.path_trained_models = 'checkpoints/semi_fdcl_paper_{}'.format(
             args.labeled_ratio
@@ -1371,6 +2231,12 @@ def main():
     args = parse_args()
     init_seeds(args.sd)
     cfg = dataset_cfg(args.dataset_name)
+    if args.struct_analysis_checkpoint is not None:
+        inferred_input_mode = _infer_input_mode_from_path(
+            args.struct_analysis_checkpoint
+        )
+        if inferred_input_mode is not None and args.input_mode == 'rgb_rgb':
+            args.input_mode = inferred_input_mode
     datasets, manifest_dir, use_manifests = build_datasets(args, cfg)
 
     if args.check_data:
@@ -1381,6 +2247,9 @@ def main():
         raise RuntimeError(
             'use --check_data to validate input only.'
         )
+    if args.struct_analysis_checkpoint is not None:
+        run_structural_analysis(args, cfg, datasets)
+        return
 
     train_model(args, cfg, datasets, use_manifests)
 
