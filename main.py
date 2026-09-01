@@ -40,18 +40,16 @@ from utils.ph_mask_only import (
     new_ph_mask_epoch_state,
     update_ph_mask_loss_state,
 )
+from utils.ph_diagnostics import (
+    PH_DIAGNOSTIC_FIELDS,
+    build_ph_diagnostics_row,
+)
 from utils.ph_directional_cps import (
-    PH_CORRESPONDENCE_FIELDS,
-    PH_DIRECTIONAL_FIELDS,
-    PERSISTENT_RELATION_EVENT_FIELDS,
-    correspondence_diagnostics_row,
     compute_ph_directional_cps_losses,
     finalize_ph_directional_epoch_state,
     new_ph_directional_epoch_state,
     save_ph_match_examples,
-    write_persistent_relation_event_rows,
     update_ph_directional_loss_state,
-    update_ph_directional_oracle_state,
     update_ph_directional_vanilla_state,
 )
 from utils.structural_diagnostics import StructuralDiagnostics
@@ -477,6 +475,10 @@ def _experiment_name(args, split_sup_mark, split_unsup_mark):
             args.ph_unmatched_mode,
             args.ph_conflict_detector,
         )
+        if getattr(args, 'ph_relation_backend', 'cc') != 'cc':
+            experiment_name += '-rel={}'.format(args.ph_relation_backend)
+        if getattr(args, 'ph_presence_conflict_mode', 'strict') != 'strict':
+            experiment_name += '-presence={}'.format(args.ph_presence_conflict_mode)
     return experiment_name
 
 
@@ -708,6 +710,8 @@ def train_one_epoch(
                 debug_timing=args.ph_debug_timing,
                 batch_index=batch_index,
                 correspondence_mode=args.ph_correspondence_mode,
+                relation_backend=args.ph_relation_backend,
+                presence_conflict_mode=args.ph_presence_conflict_mode,
             )
             update_ph_directional_loss_state(ph_mask_state, cps_losses)
         elif ph_mask_active:
@@ -1326,34 +1330,15 @@ def train_model(
         losses,
     ) = build_training_components(args, cfg)
     structural_diagnostics = None
-    if args.enable_struct_diagnostics or args.ph_mask_only or args.ph_directional_cps:
-        structural_diagnostics = StructuralDiagnostics(
-            trained_models_path,
-            min_area=args.struct_min_area,
-            match_iou=args.struct_match_iou,
-            boundary_width=args.struct_boundary_width,
-            save_examples=args.save_struct_examples,
-        )
-        print(
-            'Structural diagnostics CSV:',
-            os.path.join(trained_models_path, 'structural_diagnostics.csv'),
-        )
-    ph_mask_path = os.path.join(trained_models_path, 'ph_mask_only_diagnostics.csv')
-    if args.ph_mask_only:
-        print('PH Mask Only diagnostics CSV:', ph_mask_path)
-    ph_directional_path = os.path.join(
-        trained_models_path, 'ph_directional_diagnostics.csv'
+    ph_diagnostics_path = os.path.join(trained_models_path, 'ph_diagnostics.csv')
+    use_ph_diagnostics_csv = (
+        args.ph_directional_cps
+        and args.ph_conflict_detector == 'persistent_relation'
+        and args.ph_correspondence_mode != 'event_projection'
     )
-    if args.ph_directional_cps:
-        print('PH Directional diagnostics CSV:', ph_directional_path)
-    ph_correspondence_path = os.path.join(
-        trained_models_path, 'ph_correspondence_diagnostics.csv'
-    )
-    if args.ph_directional_cps and args.ph_conflict_detector == 'persistent_relation':
-        print('PH Correspondence diagnostics CSV:', ph_correspondence_path)
-    persistent_event_path = os.path.join(
-        trained_models_path, 'persistent_relation_events.csv'
-    )
+    if use_ph_diagnostics_csv:
+        print('PH diagnostics CSV:', ph_diagnostics_path)
+    ph_vis_state = {'sample_ids': None}
 
     model1, model2 = models
     best_val_eval_lists = (
@@ -1373,45 +1358,16 @@ def train_model(
             metrics_file, fieldnames=METRIC_FIELDS
         )
         metrics_writer.writeheader()
-        ph_mask_file = None
-        ph_mask_writer = None
-        ph_directional_file = None
-        ph_directional_writer = None
-        ph_correspondence_file = None
-        ph_correspondence_writer = None
-        persistent_event_file = None
-        persistent_event_writer = None
-        if args.ph_mask_only:
-            ph_mask_file = open(ph_mask_path, 'w', newline='', encoding='utf-8')
-            ph_mask_writer = csv.DictWriter(
-                ph_mask_file, fieldnames=PH_MASK_ONLY_FIELDS
+        ph_diagnostics_file = None
+        ph_diagnostics_writer = None
+        if use_ph_diagnostics_csv:
+            ph_diagnostics_file = open(
+                ph_diagnostics_path, 'w', newline='', encoding='utf-8'
             )
-            ph_mask_writer.writeheader()
-        if args.ph_directional_cps:
-            ph_directional_file = open(
-                ph_directional_path, 'w', newline='', encoding='utf-8'
+            ph_diagnostics_writer = csv.DictWriter(
+                ph_diagnostics_file, fieldnames=PH_DIAGNOSTIC_FIELDS
             )
-            ph_directional_writer = csv.DictWriter(
-                ph_directional_file, fieldnames=PH_DIRECTIONAL_FIELDS
-            )
-            ph_directional_writer.writeheader()
-            if args.ph_conflict_detector == 'persistent_relation':
-                ph_correspondence_file = open(
-                    ph_correspondence_path, 'w', newline='', encoding='utf-8'
-                )
-                ph_correspondence_writer = csv.DictWriter(
-                    ph_correspondence_file,
-                    fieldnames=PH_CORRESPONDENCE_FIELDS,
-                )
-                ph_correspondence_writer.writeheader()
-                persistent_event_file = open(
-                    persistent_event_path, 'w', newline='', encoding='utf-8'
-                )
-                persistent_event_writer = csv.DictWriter(
-                    persistent_event_file,
-                    fieldnames=PERSISTENT_RELATION_EVENT_FIELDS,
-                )
-                persistent_event_writer.writeheader()
+            ph_diagnostics_writer.writeheader()
 
         for epoch in range(args.num_epochs):
             epoch_start = time.time()
@@ -1482,7 +1438,11 @@ def train_model(
                 structural_diagnostics,
                 struct_epoch_state,
                 collect_inputs=(
-                    args.ph_directional_cps and args.save_ph_match_examples
+                    args.ph_directional_cps
+                    and (
+                        args.save_ph_match_examples
+                        or args.ph_save_conflict_vis
+                    )
                     and run_ph_validation_diagnostics
                 ),
             )
@@ -1515,30 +1475,13 @@ def train_model(
                     struct_epoch_state
                 )
             if (
-                ph_directional_writer is not None
+                ph_diagnostics_writer is not None
                 and ph_mask_state is not None
                 and ph_mask_state['ph_enabled']
                 and run_ph_validation_diagnostics
             ):
-                update_ph_directional_oracle_state(
-                    ph_mask_state,
-                    validation['scores1'],
-                    validation['scores2'],
-                    validation['masks'],
-                    min_area=args.struct_min_area,
-                    match_iou=args.struct_match_iou,
-                    dilation=args.ph_mask_dilation,
-                    match_radius=args.ph_match_radius,
-                    unmatched_mode=args.ph_unmatched_mode,
-                    detector_mode=args.ph_conflict_detector,
-                    correspondence_mode=args.ph_correspondence_mode,
-                )
-                if (
-                    args.ph_conflict_detector == 'persistent_relation'
-                    and persistent_event_writer is not None
-                ):
-                    write_persistent_relation_event_rows(
-                        persistent_event_writer,
+                ph_diagnostics_writer.writerow(
+                    build_ph_diagnostics_row(
                         epoch + 1,
                         validation['names'],
                         validation['scores1'],
@@ -1547,8 +1490,17 @@ def train_model(
                         dilation=args.ph_mask_dilation,
                         unmatched_mode=args.ph_unmatched_mode,
                         correspondence_mode=args.ph_correspondence_mode,
+                        relation_backend=args.ph_relation_backend,
+                        presence_conflict_mode=args.ph_presence_conflict_mode,
+                        output_dir=trained_models_path,
+                        save_conflict_vis=args.ph_save_conflict_vis,
+                        vis_interval=args.ph_vis_interval,
+                        vis_num_samples=args.ph_vis_num_samples,
+                        vis_state=ph_vis_state,
+                        images=validation.get('inputs1'),
                     )
-                    persistent_event_file.flush()
+                )
+                ph_diagnostics_file.flush()
                 if args.save_ph_match_examples:
                     save_ph_match_examples(
                         trained_models_path,
@@ -1565,32 +1517,11 @@ def train_model(
                         match_iou=args.struct_match_iou,
                         detector_mode=args.ph_conflict_detector,
                         correspondence_mode=args.ph_correspondence_mode,
+                        relation_backend=args.ph_relation_backend,
+                        presence_conflict_mode=args.ph_presence_conflict_mode,
                     )
-            if ph_mask_writer is not None:
-                _write_ph_mask_only_diagnostics(
-                    ph_mask_writer,
-                    ph_mask_state,
-                    val_eval1,
-                    val_eval2,
-                    diagnostics,
-                    structural_summary,
-                )
-                ph_mask_file.flush()
-            if ph_directional_writer is not None:
-                _write_ph_directional_diagnostics(
-                    ph_directional_writer,
-                    ph_mask_state,
-                    val_eval1,
-                    val_eval2,
-                    structural_summary,
-                )
-                ph_directional_file.flush()
+            if args.ph_directional_cps:
                 ph_timing = finalize_ph_directional_epoch_state(ph_mask_state)
-                if ph_correspondence_writer is not None:
-                    ph_correspondence_writer.writerow(
-                        correspondence_diagnostics_row(ph_mask_state)
-                    )
-                    ph_correspondence_file.flush()
                 logger.info(
                     'PH timing | epoch=%d | ph_extract=%.4fs | support=%.4fs | support_overlap=%.4fs | entity_match=%.4fs | relation=%.4fs | roi=%.4fs | total=%.4fs',
                     epoch + 1,
@@ -1715,14 +1646,8 @@ def train_model(
                 best_val_eval_lists,
             )
             _log_epoch(logger, args, metrics)
-        if ph_mask_file is not None:
-            ph_mask_file.close()
-        if ph_directional_file is not None:
-            ph_directional_file.close()
-        if ph_correspondence_file is not None:
-            ph_correspondence_file.close()
-        if persistent_event_file is not None:
-            persistent_event_file.close()
+        if ph_diagnostics_file is not None:
+            ph_diagnostics_file.close()
 
     elapsed = time.time() - training_start
     minutes, seconds = divmod(elapsed, 60)
@@ -2148,9 +2073,48 @@ def parse_args():
     )
     parser.add_argument(
         '--ph-correspondence-mode',
-        choices=('birth_nearest', 'support_identity'),
+        choices=('birth_nearest', 'support_identity', 'event_projection'),
         default='birth_nearest',
         help='persistent_relation correspondence backend for E2 ablations',
+    )
+    parser.add_argument(
+        '--ph-relation-backend',
+        choices=('cc', 'ph_tree'),
+        default='cc',
+        help='persistent_relation structural relation backend for E2 ablations',
+    )
+    parser.add_argument(
+        '--ph-presence-conflict-mode',
+        '--ph_presence_conflict_mode',
+        dest='ph_presence_conflict_mode',
+        choices=('strict', 'connectivity_outcome'),
+        default='strict',
+        help='PH-tree ABSENT handling for structural conflict training',
+    )
+    parser.add_argument(
+        '--ph-save-conflict-vis',
+        '--ph_save_conflict_vis',
+        '--save-conflicts-vis',
+        '--save_conflicts_vis',
+        dest='ph_save_conflict_vis',
+        action='store_true',
+        help='save fixed-sample validation PH pure-relation conflict visualizations',
+    )
+    parser.add_argument(
+        '--ph-vis-interval',
+        '--ph_vis_interval',
+        dest='ph_vis_interval',
+        default=10,
+        type=int,
+        help='epoch interval for --ph-save-conflict-vis outputs',
+    )
+    parser.add_argument(
+        '--ph-vis-num-samples',
+        '--ph_vis_num_samples',
+        dest='ph_vis_num_samples',
+        default=4,
+        type=int,
+        help='number of fixed validation samples to visualize for PH conflicts',
     )
     parser.add_argument(
         '--struct-analysis-checkpoint',

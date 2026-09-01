@@ -7,6 +7,10 @@ import torch.nn.functional as F
 from PIL import Image, ImageDraw
 
 from utils.ph_correspondence import build_persistent_relation_conflict_events
+from utils.ph_event_projection import (
+    build_event_projection_conflict_events,
+    update_event_projection_oracle_state,
+)
 from utils.ph_mask_only import build_ph_conflict_events
 from utils.structural_diagnostics import _component_error_sets, _extract_components
 
@@ -167,6 +171,46 @@ PH_CORRESPONDENCE_FIELDS = [
     'complementary_conflict_rate',
 ]
 
+PH_RELATION_TREE_DIAGNOSTIC_FIELDS = [
+    'epoch',
+    'num_branches_A',
+    'num_branches_B',
+    'num_direct_edges_A',
+    'num_direct_edges_B',
+    'num_matched_branches',
+    'num_relation_candidates',
+    'num_valid_relation_queries',
+    'num_absent_A',
+    'num_absent_B',
+    'num_connected_A',
+    'num_separated_A',
+    'num_connected_B',
+    'num_separated_B',
+    'num_relation_conflicts',
+    'num_A_connected_B_separated',
+    'num_A_separated_B_connected',
+    'mean_merge_level_A',
+    'mean_merge_level_B',
+    'mean_abs_g_A',
+    'mean_abs_g_B',
+    'mean_conflict_merge_level_A',
+    'mean_conflict_merge_level_B',
+    'num_roi',
+    'conflict_pixel_ratio',
+    'valid_compare_count',
+    'ph_cc_agree_A',
+    'ph_cc_agree_B',
+    'ph_cc_agreement_rate_A',
+    'ph_cc_agreement_rate_B',
+    'ph_extract',
+    'birth_matching',
+    'candidate_build',
+    'relation_tree_query',
+    'roi',
+    'routing',
+    'total',
+]
+
 
 PERSISTENT_RELATION_EVENT_FIELDS = [
     'epoch',
@@ -197,6 +241,88 @@ PERSISTENT_RELATION_EVENT_FIELDS = [
     'routing_weight',
     'oracle_direction',
     'routing_correct',
+]
+
+PH_RELATION_TREE_EVENT_FIELDS = [
+    'epoch',
+    'sample_id',
+    'source',
+    'A_branch_u',
+    'A_branch_v',
+    'B_branch_u',
+    'B_branch_v',
+    'birth_u_A',
+    'birth_v_A',
+    'birth_u_B',
+    'birth_v_B',
+    'merge_level_A',
+    'merge_level_B',
+    'g_A',
+    'g_B',
+    'state_A',
+    'state_B',
+    'saddle_row',
+    'saddle_col',
+    'routing_direction',
+    'routing_weight',
+    'roi_pixels',
+]
+
+PH_PRESENCE_CONFLICT_DIAGNOSTIC_FIELDS = [
+    'epoch',
+    'num_relation_questions',
+    'num_pair_present_both',
+    'num_pair_absent_a',
+    'num_pair_absent_b',
+    'num_pair_absent_both',
+    'num_pure_relation_conflicts',
+    'num_presence_involved_conflicts',
+    'num_total_structural_conflicts',
+    'num_presence_disagreement_nonconflict',
+    'pure_relation_conflict_pixel_ratio',
+    'presence_involved_conflict_pixel_ratio',
+    'total_structural_conflict_pixel_ratio',
+    'a_connected_b_not_count',
+    'b_connected_a_not_count',
+    'old_cc_conflicts',
+    'new_conflicts',
+    'old_cc_retained_conflicts',
+    'old_cc_lost_conflicts',
+    'new_extra_conflicts',
+    'old_cc_recall',
+    'new_vs_old_jaccard',
+    'old_cc_to_pure_relation',
+    'old_cc_to_presence_involved',
+    'old_cc_to_nonconflict',
+    'old_cc_candidate_missing',
+]
+
+PH_PRESENCE_CONFLICT_EVENT_FIELDS = [
+    'epoch',
+    'sample_id',
+    'candidate_id',
+    'source_event_side',
+    'a_u_id',
+    'a_v_id',
+    'b_u_id',
+    'b_v_id',
+    'birth_a_u',
+    'birth_a_v',
+    'birth_b_u',
+    'birth_b_v',
+    'pair_present_a',
+    'pair_present_b',
+    'merge_level_a',
+    'merge_level_b',
+    'connected_a',
+    'connected_b',
+    'semantic_state_a',
+    'semantic_state_b',
+    'conflict_type',
+    'connected_side',
+    'saddle_x',
+    'saddle_y',
+    'roi_pixels',
 ]
 
 
@@ -302,6 +428,82 @@ def new_ph_directional_epoch_state(epoch, enabled):
         'conflict_B_only_correct': 0,
         'conflict_both_wrong': 0,
         'complementary_conflict_rate': 0.0,
+        'raw_ph_branches_A': 0,
+        'raw_ph_branches_B': 0,
+        'merge_events_A': 0,
+        'merge_events_B': 0,
+        'valid_source_events_A': 0,
+        'valid_source_events_B': 0,
+        'invalid_source_events_A': 0,
+        'invalid_source_events_B': 0,
+        'unmatched_target_events_A2B': 0,
+        'unmatched_target_events_B2A': 0,
+        'queried_events_A2B': 0,
+        'queried_events_B2A': 0,
+        'same_relation_events': 0,
+        'structural_conflict_events': 0,
+        'A_separate_B_connected': 0,
+        'A_connected_B_separate': 0,
+        'conflict_roi_count': 0,
+        'event_projection_roi_size_sum': 0.0,
+        'event_projection_roi_sizes': [],
+        'event_projection_ph_extract_time_sum': 0.0,
+        'event_projection_cc_time_sum': 0.0,
+        'event_projection_event_query_time_sum': 0.0,
+        'event_projection_roi_time_sum': 0.0,
+        'event_projection_routing_time_sum': 0.0,
+        'event_projection_total_ph_directional_time_sum': 0.0,
+        'event_projection_oracle_valid_conflicts': 0,
+        'event_projection_A_correct_B_wrong': 0,
+        'event_projection_A_wrong_B_correct': 0,
+        'event_projection_routing_correct': 0,
+        'event_projection_routing_wrong': 0,
+        'event_projection_false_merge_conflicts': 0,
+        'event_projection_false_split_conflicts': 0,
+        'num_valid_relation_queries': 0,
+        'num_absent_A': 0,
+        'num_absent_B': 0,
+        'num_connected_A': 0,
+        'num_separated_A': 0,
+        'num_connected_B': 0,
+        'num_separated_B': 0,
+        'merge_level_A_sum': 0.0,
+        'merge_level_B_sum': 0.0,
+        'abs_g_A_sum': 0.0,
+        'abs_g_B_sum': 0.0,
+        'num_relation_conflicts': 0,
+        'num_A_connected_B_separated': 0,
+        'num_A_separated_B_connected': 0,
+        'conflict_merge_level_A_sum': 0.0,
+        'conflict_merge_level_B_sum': 0.0,
+        'valid_compare_count': 0,
+        'ph_cc_agree_A': 0,
+        'ph_cc_agree_B': 0,
+        'birth_matching_time_sum': 0.0,
+        'candidate_build_time_sum': 0.0,
+        'relation_tree_query_time_sum': 0.0,
+        'routing_time_sum': 0.0,
+        'total_ph_directional_time_sum': 0.0,
+        'num_relation_questions': 0,
+        'num_pair_present_both': 0,
+        'num_pair_absent_a': 0,
+        'num_pair_absent_b': 0,
+        'num_pair_absent_both': 0,
+        'num_pure_relation_conflicts': 0,
+        'num_presence_involved_conflicts': 0,
+        'num_total_structural_conflicts': 0,
+        'num_presence_disagreement_nonconflict': 0,
+        'pure_relation_conflict_pixels': 0,
+        'presence_involved_conflict_pixels': 0,
+        'old_cc_conflicts': 0,
+        'new_conflicts': 0,
+        'old_cc_retained_conflicts': 0,
+        'old_cc_lost_conflicts': 0,
+        'new_extra_conflicts': 0,
+        'old_cc_to_pure_relation': 0,
+        'old_cc_to_presence_involved': 0,
+        'old_cc_to_nonconflict': 0,
+        'old_cc_candidate_missing': 0,
     }
 
 
@@ -315,11 +517,28 @@ def compute_ph_directional_cps_losses(
     debug_timing=False,
     batch_index=None,
     correspondence_mode='birth_nearest',
+    relation_backend='cc',
+    presence_conflict_mode='strict',
 ):
     with torch.no_grad():
         prob_a = torch.softmax(prediction_a.detach(), dim=1)[:, 1]
         prob_b = torch.softmax(prediction_b.detach(), dim=1)[:, 1]
-        if detector_mode == 'persistent_relation':
+        if (
+            detector_mode == 'persistent_relation'
+            and correspondence_mode == 'event_projection'
+        ):
+            pred_a = prediction_a.detach().argmax(dim=1)
+            pred_b = prediction_b.detach().argmax(dim=1)
+            _ph_mask_np, events, ph_stats = build_event_projection_conflict_events(
+                prob_a.cpu().numpy(),
+                prob_b.cpu().numpy(),
+                pred_a.cpu().numpy(),
+                pred_b.cpu().numpy(),
+                dilation=dilation,
+                debug_timing=debug_timing,
+                batch_index=batch_index,
+            )
+        elif detector_mode == 'persistent_relation':
             _ph_mask_np, events, ph_stats = build_persistent_relation_conflict_events(
                 prob_a.cpu().numpy(),
                 prob_b.cpu().numpy(),
@@ -328,6 +547,8 @@ def compute_ph_directional_cps_losses(
                 debug_timing=debug_timing,
                 batch_index=batch_index,
                 correspondence_mode=correspondence_mode,
+                relation_backend=relation_backend,
+                presence_conflict_mode=presence_conflict_mode,
             )
         else:
             _ph_mask_np, events, ph_stats = build_ph_conflict_events(
@@ -338,10 +559,17 @@ def compute_ph_directional_cps_losses(
                 match_radius=match_radius,
                 unmatched_mode=unmatched_mode,
             )
+        import time
+        routing_start = time.perf_counter()
         weight_a_from_b, weight_b_from_a, routing_stats = _build_directional_weights(
             prob_a,
             prob_b,
             events,
+        )
+        ph_stats['routing_time'] = time.perf_counter() - routing_start
+        ph_stats['total_ph_directional_time'] = (
+            float(ph_stats.get('total_ph_directional_time', ph_stats.get('total_ph_time', 0.0)))
+            + ph_stats['routing_time']
         )
 
     pseudo_a = prediction_a.detach().argmax(dim=1)
@@ -423,6 +651,56 @@ def update_ph_directional_loss_state(state, losses):
         'existence_conflict_a_only',
         'existence_conflict_b_only',
         'directional_events_from_persistent_conflicts',
+        'raw_ph_branches_A',
+        'raw_ph_branches_B',
+        'merge_events_A',
+        'merge_events_B',
+        'valid_source_events_A',
+        'valid_source_events_B',
+        'invalid_source_events_A',
+        'invalid_source_events_B',
+        'unmatched_target_events_A2B',
+        'unmatched_target_events_B2A',
+        'queried_events_A2B',
+        'queried_events_B2A',
+        'same_relation_events',
+        'structural_conflict_events',
+        'A_separate_B_connected',
+        'A_connected_B_separate',
+        'conflict_roi_count',
+        'num_valid_relation_queries',
+        'num_absent_A',
+        'num_absent_B',
+        'num_connected_A',
+        'num_separated_A',
+        'num_connected_B',
+        'num_separated_B',
+        'num_relation_conflicts',
+        'num_A_connected_B_separated',
+        'num_A_separated_B_connected',
+        'valid_compare_count',
+        'ph_cc_agree_A',
+        'ph_cc_agree_B',
+        'num_relation_questions',
+        'num_pair_present_both',
+        'num_pair_absent_a',
+        'num_pair_absent_b',
+        'num_pair_absent_both',
+        'num_pure_relation_conflicts',
+        'num_presence_involved_conflicts',
+        'num_total_structural_conflicts',
+        'num_presence_disagreement_nonconflict',
+        'pure_relation_conflict_pixels',
+        'presence_involved_conflict_pixels',
+        'old_cc_conflicts',
+        'new_conflicts',
+        'old_cc_retained_conflicts',
+        'old_cc_lost_conflicts',
+        'new_extra_conflicts',
+        'old_cc_to_pure_relation',
+        'old_cc_to_presence_involved',
+        'old_cc_to_nonconflict',
+        'old_cc_candidate_missing',
     ):
         state[key] += int(stats.get(key, 0))
     for key in (
@@ -433,6 +711,12 @@ def update_ph_directional_loss_state(state, losses):
         'core_iou_sum',
         'centroid_distance_sum',
         'merge_tree_cc_consistency_sum',
+        'merge_level_A_sum',
+        'merge_level_B_sum',
+        'abs_g_A_sum',
+        'abs_g_B_sum',
+        'conflict_merge_level_A_sum',
+        'conflict_merge_level_B_sum',
     ):
         state[key] += float(stats.get(key, 0.0))
     for key in (
@@ -444,6 +728,11 @@ def update_ph_directional_loss_state(state, losses):
         'relation_time',
         'roi_time',
         'total_ph_time',
+        'birth_matching_time',
+        'candidate_build_time',
+        'relation_tree_query_time',
+        'routing_time',
+        'total_ph_directional_time',
     ):
         if key == 'mean_conflict_roi_pixels_sum':
             state[key] += float(stats.get(key, 0.0))
@@ -455,6 +744,17 @@ def update_ph_directional_loss_state(state, losses):
     state['support_iou_sum'] += float(stats.get('support_iou_sum', 0.0))
     state['support_iou_count'] += int(stats.get('support_iou_count', 0))
     state['support_iou_values'].extend(stats.get('support_iou_values', []))
+    state['event_projection_roi_sizes'].extend(stats.get('roi_sizes', []))
+    state['event_projection_roi_size_sum'] += float(sum(stats.get('roi_sizes', [])))
+    for key in (
+        'ph_extract_time',
+        'cc_time',
+        'event_query_time',
+        'roi_time',
+        'routing_time',
+        'total_ph_directional_time',
+    ):
+        state['event_projection_' + key + '_sum'] += float(stats.get(key, 0.0))
     state['mean_support_area_a_sum'] += float(stats.get('mean_support_area_a', 0.0))
     state['mean_support_area_b_sum'] += float(stats.get('mean_support_area_b', 0.0))
     state['support_area_batches'] += 1
@@ -727,6 +1027,98 @@ def correspondence_diagnostics_row(ph_state):
     }
 
 
+def relation_tree_diagnostics_row(ph_state):
+    row = finalize_ph_directional_epoch_state(ph_state)
+    valid_queries = ph_state.get('num_valid_relation_queries', 0)
+    conflicts = ph_state.get('num_relation_conflicts', 0)
+    valid_compare = ph_state.get('valid_compare_count', 0)
+    return {
+        'epoch': row['epoch'],
+        'num_branches_A': ph_state.get('raw_ph_branches_a', 0),
+        'num_branches_B': ph_state.get('raw_ph_branches_b', 0),
+        'num_direct_edges_A': ph_state.get('direct_merge_edges_a', 0),
+        'num_direct_edges_B': ph_state.get('direct_merge_edges_b', 0),
+        'num_matched_branches': ph_state.get('matched_branches', 0),
+        'num_relation_candidates': ph_state.get('relation_candidates', 0),
+        'num_valid_relation_queries': valid_queries,
+        'num_absent_A': ph_state.get('num_absent_A', 0),
+        'num_absent_B': ph_state.get('num_absent_B', 0),
+        'num_connected_A': ph_state.get('num_connected_A', 0),
+        'num_separated_A': ph_state.get('num_separated_A', 0),
+        'num_connected_B': ph_state.get('num_connected_B', 0),
+        'num_separated_B': ph_state.get('num_separated_B', 0),
+        'num_relation_conflicts': conflicts,
+        'num_A_connected_B_separated': ph_state.get('num_A_connected_B_separated', 0),
+        'num_A_separated_B_connected': ph_state.get('num_A_separated_B_connected', 0),
+        'mean_merge_level_A': _ratio(ph_state.get('merge_level_A_sum', 0.0), valid_queries),
+        'mean_merge_level_B': _ratio(ph_state.get('merge_level_B_sum', 0.0), valid_queries),
+        'mean_abs_g_A': _ratio(ph_state.get('abs_g_A_sum', 0.0), valid_queries),
+        'mean_abs_g_B': _ratio(ph_state.get('abs_g_B_sum', 0.0), valid_queries),
+        'mean_conflict_merge_level_A': _ratio(
+            ph_state.get('conflict_merge_level_A_sum', 0.0), conflicts
+        ),
+        'mean_conflict_merge_level_B': _ratio(
+            ph_state.get('conflict_merge_level_B_sum', 0.0), conflicts
+        ),
+        'num_roi': ph_state.get('mean_conflict_roi_pixels_count', 0),
+        'conflict_pixel_ratio': row['conflict_pixel_ratio'],
+        'valid_compare_count': valid_compare,
+        'ph_cc_agree_A': ph_state.get('ph_cc_agree_A', 0),
+        'ph_cc_agree_B': ph_state.get('ph_cc_agree_B', 0),
+        'ph_cc_agreement_rate_A': _ratio(ph_state.get('ph_cc_agree_A', 0), valid_compare),
+        'ph_cc_agreement_rate_B': _ratio(ph_state.get('ph_cc_agree_B', 0), valid_compare),
+        'ph_extract': _ratio(ph_state.get('ph_extract_time_sum', 0.0), ph_state.get('ph_timing_batches', 0)),
+        'birth_matching': _ratio(ph_state.get('birth_matching_time_sum', 0.0), ph_state.get('ph_timing_batches', 0)),
+        'candidate_build': _ratio(ph_state.get('candidate_build_time_sum', 0.0), ph_state.get('ph_timing_batches', 0)),
+        'relation_tree_query': _ratio(ph_state.get('relation_tree_query_time_sum', 0.0), ph_state.get('ph_timing_batches', 0)),
+        'roi': _ratio(ph_state.get('roi_time_sum', 0.0), ph_state.get('ph_timing_batches', 0)),
+        'routing': _ratio(ph_state.get('routing_time_sum', 0.0), ph_state.get('ph_timing_batches', 0)),
+        'total': _ratio(ph_state.get('total_ph_directional_time_sum', 0.0), ph_state.get('ph_timing_batches', 0)),
+    }
+
+
+def presence_conflict_diagnostics_row(ph_state):
+    total_pixels = ph_state.get('total_unlabeled_pixels', 0)
+    old_cc_conflicts = ph_state.get('old_cc_conflicts', 0)
+    new_conflicts = ph_state.get('new_conflicts', 0)
+    retained = ph_state.get('old_cc_retained_conflicts', 0)
+    union = old_cc_conflicts + new_conflicts - retained
+    return {
+        'epoch': ph_state['epoch'],
+        'num_relation_questions': ph_state.get('num_relation_questions', 0),
+        'num_pair_present_both': ph_state.get('num_pair_present_both', 0),
+        'num_pair_absent_a': ph_state.get('num_pair_absent_a', 0),
+        'num_pair_absent_b': ph_state.get('num_pair_absent_b', 0),
+        'num_pair_absent_both': ph_state.get('num_pair_absent_both', 0),
+        'num_pure_relation_conflicts': ph_state.get('num_pure_relation_conflicts', 0),
+        'num_presence_involved_conflicts': ph_state.get('num_presence_involved_conflicts', 0),
+        'num_total_structural_conflicts': ph_state.get('num_total_structural_conflicts', 0),
+        'num_presence_disagreement_nonconflict': ph_state.get('num_presence_disagreement_nonconflict', 0),
+        'pure_relation_conflict_pixel_ratio': _ratio(
+            ph_state.get('pure_relation_conflict_pixels', 0), total_pixels
+        ),
+        'presence_involved_conflict_pixel_ratio': _ratio(
+            ph_state.get('presence_involved_conflict_pixels', 0), total_pixels
+        ),
+        'total_structural_conflict_pixel_ratio': _ratio(
+            ph_state.get('ph_conflict_pixels', 0), total_pixels
+        ),
+        'a_connected_b_not_count': ph_state.get('num_A_connected_B_separated', 0),
+        'b_connected_a_not_count': ph_state.get('num_A_separated_B_connected', 0),
+        'old_cc_conflicts': old_cc_conflicts,
+        'new_conflicts': new_conflicts,
+        'old_cc_retained_conflicts': retained,
+        'old_cc_lost_conflicts': ph_state.get('old_cc_lost_conflicts', 0),
+        'new_extra_conflicts': ph_state.get('new_extra_conflicts', 0),
+        'old_cc_recall': _ratio(retained, old_cc_conflicts),
+        'new_vs_old_jaccard': _ratio(retained, union),
+        'old_cc_to_pure_relation': ph_state.get('old_cc_to_pure_relation', 0),
+        'old_cc_to_presence_involved': ph_state.get('old_cc_to_presence_involved', 0),
+        'old_cc_to_nonconflict': ph_state.get('old_cc_to_nonconflict', 0),
+        'old_cc_candidate_missing': ph_state.get('old_cc_candidate_missing', 0),
+    }
+
+
 @torch.no_grad()
 def update_ph_directional_oracle_state(
     state,
@@ -740,9 +1132,24 @@ def update_ph_directional_oracle_state(
     unmatched_mode='vanilla',
     detector_mode='persistent_relation',
     correspondence_mode='birth_nearest',
+    relation_backend='cc',
+    presence_conflict_mode='strict',
 ):
     prob_a = torch.softmax(logits_a.detach(), dim=1)[:, 1]
     prob_b = torch.softmax(logits_b.detach(), dim=1)[:, 1]
+    if detector_mode == 'persistent_relation' and correspondence_mode == 'event_projection':
+        pred_a = logits_a.detach().argmax(dim=1)
+        pred_b = logits_b.detach().argmax(dim=1)
+        _mask, events, _stats = build_event_projection_conflict_events(
+            prob_a.cpu().numpy(),
+            prob_b.cpu().numpy(),
+            pred_a.cpu().numpy(),
+            pred_b.cpu().numpy(),
+            dilation=dilation,
+        )
+        weights = _event_routing_weights(prob_a, prob_b, events)
+        update_event_projection_oracle_state(state, prob_a, prob_b, gt, events, weights)
+        return
     if detector_mode == 'persistent_relation':
         _mask, events, _stats = build_persistent_relation_conflict_events(
             prob_a.cpu().numpy(),
@@ -750,7 +1157,26 @@ def update_ph_directional_oracle_state(
             dilation=dilation,
             unmatched_mode=unmatched_mode,
             correspondence_mode=correspondence_mode,
+            relation_backend=relation_backend,
+            collect_cc_agreement=(relation_backend == 'ph_tree'),
+            presence_conflict_mode=presence_conflict_mode,
         )
+        if relation_backend == 'ph_tree':
+            for key in (
+                'valid_compare_count',
+                'ph_cc_agree_A',
+                'ph_cc_agree_B',
+                'old_cc_conflicts',
+                'new_conflicts',
+                'old_cc_retained_conflicts',
+                'old_cc_lost_conflicts',
+                'new_extra_conflicts',
+                'old_cc_to_pure_relation',
+                'old_cc_to_presence_involved',
+                'old_cc_to_nonconflict',
+                'old_cc_candidate_missing',
+            ):
+                state[key] += int(_stats.get(key, 0))
         _update_persistent_relation_oracle_state(
             state,
             prob_a,
@@ -812,6 +1238,8 @@ def save_ph_match_examples(
     detector_mode='persistent_relation',
     max_examples=3,
     correspondence_mode='birth_nearest',
+    relation_backend='cc',
+    presence_conflict_mode='strict',
 ):
     if images_a is None or images_b is None:
         return
@@ -826,6 +1254,8 @@ def save_ph_match_examples(
             dilation=dilation,
             unmatched_mode=unmatched_mode,
             correspondence_mode=correspondence_mode,
+            relation_backend=relation_backend,
+            presence_conflict_mode=presence_conflict_mode,
         )
     else:
         _mask, events, _stats = build_ph_conflict_events(
@@ -883,6 +1313,8 @@ def write_persistent_relation_event_rows(
     dilation=1,
     unmatched_mode='vanilla',
     correspondence_mode='birth_nearest',
+    relation_backend='cc',
+    presence_conflict_mode='strict',
 ):
     prob_a = torch.softmax(logits_a.detach(), dim=1)[:, 1]
     prob_b = torch.softmax(logits_b.detach(), dim=1)[:, 1]
@@ -892,6 +1324,9 @@ def write_persistent_relation_event_rows(
         dilation=dilation,
         unmatched_mode=unmatched_mode,
         correspondence_mode=correspondence_mode,
+        relation_backend=relation_backend,
+        collect_cc_agreement=(relation_backend == 'ph_tree'),
+        presence_conflict_mode=presence_conflict_mode,
     )
     if not events:
         return
@@ -914,6 +1349,155 @@ def write_persistent_relation_event_rows(
             routing_weight,
             oracle,
         ))
+
+
+@torch.no_grad()
+def write_ph_relation_tree_event_rows(
+    writer,
+    epoch,
+    image_ids,
+    logits_a,
+    logits_b,
+    dilation=1,
+    unmatched_mode='vanilla',
+    correspondence_mode='birth_nearest',
+    presence_conflict_mode='strict',
+):
+    prob_a = torch.softmax(logits_a.detach(), dim=1)[:, 1]
+    prob_b = torch.softmax(logits_b.detach(), dim=1)[:, 1]
+    _mask, events, _stats = build_persistent_relation_conflict_events(
+        prob_a.cpu().numpy(),
+        prob_b.cpu().numpy(),
+        dilation=dilation,
+        unmatched_mode=unmatched_mode,
+        correspondence_mode=correspondence_mode,
+        relation_backend='ph_tree',
+        collect_cc_agreement=True,
+        presence_conflict_mode=presence_conflict_mode,
+    )
+    if not events:
+        return
+    weights = _event_routing_weights(prob_a, prob_b, events)
+    for event in events:
+        sample = int(event['sample_index'])
+        routing, routing_weight = _predicted_direction(weights[id(event)])
+        writer.writerow(_ph_relation_tree_event_row(
+            epoch,
+            image_ids[sample],
+            event,
+            routing,
+            routing_weight,
+        ))
+
+
+@torch.no_grad()
+def write_ph_presence_conflict_event_rows(
+    writer,
+    epoch,
+    image_ids,
+    logits_a,
+    logits_b,
+    dilation=1,
+    unmatched_mode='vanilla',
+    correspondence_mode='birth_nearest',
+    presence_conflict_mode='strict',
+):
+    prob_a = torch.softmax(logits_a.detach(), dim=1)[:, 1]
+    prob_b = torch.softmax(logits_b.detach(), dim=1)[:, 1]
+    _mask, events, _stats = build_persistent_relation_conflict_events(
+        prob_a.cpu().numpy(),
+        prob_b.cpu().numpy(),
+        dilation=dilation,
+        unmatched_mode=unmatched_mode,
+        correspondence_mode=correspondence_mode,
+        relation_backend='ph_tree',
+        collect_cc_agreement=True,
+        presence_conflict_mode=presence_conflict_mode,
+    )
+    for event in events:
+        sample = int(event['sample_index'])
+        writer.writerow(_ph_presence_conflict_event_row(
+            epoch,
+            image_ids[sample],
+            event,
+        ))
+
+
+def _ph_presence_conflict_event_row(epoch, image_id, event):
+    left = event['left_match']
+    right = event['right_match']
+    left_a = left['entity_a']
+    left_b = left['entity_b']
+    right_a = right['entity_a']
+    right_b = right['entity_b']
+    query_a = event.get('relation_query_a')
+    query_b = event.get('relation_query_b')
+    saddle_y, saddle_x = event['saddle_coord_a'] if event['connected_a'] else event['saddle_coord_b']
+    return {
+        'epoch': epoch,
+        'sample_id': image_id,
+        'candidate_id': event.get('candidate_id', ''),
+        'source_event_side': event.get('relation_source', ''),
+        'a_u_id': left_a.entity_id,
+        'a_v_id': right_a.entity_id,
+        'b_u_id': left_b.entity_id,
+        'b_v_id': right_b.entity_id,
+        'birth_a_u': left_a.birth,
+        'birth_a_v': right_a.birth,
+        'birth_b_u': left_b.birth,
+        'birth_b_v': right_b.birth,
+        'pair_present_a': int(event.get('pair_present_a', False)),
+        'pair_present_b': int(event.get('pair_present_b', False)),
+        'merge_level_a': event['mu_a'],
+        'merge_level_b': event['mu_b'],
+        'connected_a': int(event['connected_a']),
+        'connected_b': int(event['connected_b']),
+        'semantic_state_a': query_a.state if query_a is not None else '',
+        'semantic_state_b': query_b.state if query_b is not None else '',
+        'conflict_type': event.get('structural_conflict_type', ''),
+        'connected_side': event.get('connected_side', ''),
+        'saddle_x': saddle_x,
+        'saddle_y': saddle_y,
+        'roi_pixels': event['roi_size'],
+    }
+
+
+def _ph_relation_tree_event_row(epoch, image_id, event, routing, routing_weight):
+    left = event['left_match']
+    right = event['right_match']
+    left_a = left['entity_a']
+    left_b = left['entity_b']
+    right_a = right['entity_a']
+    right_b = right['entity_b']
+    query_a = event.get('relation_query_a')
+    query_b = event.get('relation_query_b')
+    saddle_y, saddle_x = event['saddle_coord_a'] if event['connected_a'] else event['saddle_coord_b']
+    merge_a = float(event['mu_a'])
+    merge_b = float(event['mu_b'])
+    return {
+        'epoch': epoch,
+        'sample_id': image_id,
+        'source': event.get('relation_source', ''),
+        'A_branch_u': left_a.entity_id,
+        'A_branch_v': right_a.entity_id,
+        'B_branch_u': left_b.entity_id,
+        'B_branch_v': right_b.entity_id,
+        'birth_u_A': left_a.birth,
+        'birth_v_A': right_a.birth,
+        'birth_u_B': left_b.birth,
+        'birth_v_B': right_b.birth,
+        'merge_level_A': merge_a,
+        'merge_level_B': merge_b,
+        'g_A': merge_a - 0.5,
+        'g_B': merge_b - 0.5,
+        'state_A': query_a.state if query_a is not None else '',
+        'state_B': query_b.state if query_b is not None else '',
+        'saddle_row': saddle_y,
+        'saddle_col': saddle_x,
+        'routing_direction': routing,
+        'routing_weight': routing_weight,
+        'roi_pixels': event['roi_size'],
+    }
 
 
 def _persistent_event_row(epoch, image_id, event, weights, routing, routing_weight, oracle):

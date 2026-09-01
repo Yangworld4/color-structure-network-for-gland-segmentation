@@ -254,7 +254,7 @@ def parse_args():
     parser.add_argument('--checkpoint_root', default='checkpoints')
     parser.add_argument(
         '--input_view',
-        default='auto',
+        default='student1',
         choices=['auto', 'student1', 'student2'],
         help=(
             'model input: auto maps best_result1 to student1 and best_result2 to student2'
@@ -269,7 +269,7 @@ def parse_args():
         help='rgb_rgb evaluates RGB input; rgb_stain provides stain RGB for student2; rgb_hed provides HED for student2',
     )
     parser.add_argument('--output_dir', default=None)
-    parser.add_argument('--network', default='xnet_sb')
+    parser.add_argument('--network', default='unet')
     parser.add_argument('--batch_size', default=2, type=int)
     parser.add_argument('--num_workers', default=4, type=int)
     parser.add_argument('--threshold', default='0.5',

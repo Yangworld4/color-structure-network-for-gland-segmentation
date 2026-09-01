@@ -4,6 +4,11 @@ import time
 import numpy as np
 from scipy.ndimage import binary_dilation, find_objects, label
 from scipy.spatial import cKDTree
+from utils.ph_relation_tree import (
+    build_merge_hierarchy,
+    build_relation_candidates,
+    detect_ph_relation_conflicts,
+)
 
 try:
     from numba import njit
@@ -41,6 +46,18 @@ class DirectMergeEdge:
     merge_level: float
     merge_coord: tuple
 
+    @property
+    def child_id(self):
+        return self.child_branch_id
+
+    @property
+    def parent_id(self):
+        return self.parent_branch_id
+
+    @property
+    def saddle_coord(self):
+        return self.merge_coord
+
 
 @dataclass
 class BranchDecomposition:
@@ -59,6 +76,9 @@ def build_persistent_relation_conflict_events(
     debug_timing=False,
     batch_index=None,
     correspondence_mode='birth_nearest',
+    relation_backend='cc',
+    collect_cc_agreement=False,
+    presence_conflict_mode='strict',
 ):
     del unmatched_mode
     prob_a = np.asarray(prob_a, dtype=np.float32)
@@ -75,12 +95,17 @@ def build_persistent_relation_conflict_events(
             dilation=dilation,
             tau=tau,
             correspondence_mode=correspondence_mode,
+            relation_backend=relation_backend,
+            collect_cc_agreement=collect_cc_agreement,
+            presence_conflict_mode=presence_conflict_mode,
         )
         masks[index] = sample_mask
         _merge_correspondence_stats(stats, sample_stats)
         for event in sample_events:
             event['sample_index'] = index
             events.append(event)
+        for question in stats.get('relation_question_records', []):
+            question.setdefault('sample_index', index)
 
     stats['conflict_pixel_ratio'] = _ratio(stats['ph_conflict_pixels'], masks.size)
     if debug_timing:
@@ -94,6 +119,9 @@ def detect_connectivity_conflicts(
     dilation=1,
     tau=0.5,
     correspondence_mode='birth_nearest',
+    relation_backend='cc',
+    collect_cc_agreement=False,
+    presence_conflict_mode='strict',
 ):
     timings = {key: 0.0 for key in _timing_keys()}
     total_start = time.perf_counter()
@@ -121,25 +149,56 @@ def detect_connectivity_conflicts(
     else:
         raise ValueError('Unsupported PH correspondence mode: {}'.format(correspondence_mode))
     timings['entity_match_time'] = time.perf_counter() - start
+    timings['birth_matching_time'] = timings['entity_match_time']
 
     start = time.perf_counter()
     pred_a = np.asarray(prob_a) >= tau
     pred_b = np.asarray(prob_b) >= tau
-    cc_a, _count_a = label(pred_a, structure=np.ones((3, 3), dtype=np.uint8))
-    cc_b, _count_b = label(pred_b, structure=np.ones((3, 3), dtype=np.uint8))
-    relation_candidates = _aligned_direct_edges(
-        decomposition_a.edges,
-        decomposition_b.edges,
-        matches,
-    )
-    conflict_specs = _connectivity_conflicts(
-        relation_candidates,
-        decomposition_a.branches,
-        decomposition_b.branches,
-        matches,
-        cc_a,
-        cc_b,
-    )
+    if relation_backend == 'ph_tree':
+        candidate_start = time.perf_counter()
+        tree_a = build_merge_hierarchy(decomposition_a)
+        tree_b = build_merge_hierarchy(decomposition_b)
+        relation_candidates = build_relation_candidates(
+            decomposition_a.edges,
+            decomposition_b.edges,
+            matches,
+        )
+        timings['candidate_build_time'] = time.perf_counter() - candidate_start
+        query_start = time.perf_counter()
+        conflict_specs, relation_tree_stats = detect_ph_relation_conflicts(
+            relation_candidates,
+            tree_a,
+            tree_b,
+            matches,
+            tau=tau,
+            collect_cc_agreement=collect_cc_agreement,
+            pred_a=pred_a,
+            pred_b=pred_b,
+            presence_conflict_mode=presence_conflict_mode,
+        )
+        timings['relation_tree_query_time'] = time.perf_counter() - query_start
+    elif relation_backend == 'cc':
+        candidate_start = time.perf_counter()
+        cc_a, _count_a = label(pred_a, structure=np.ones((3, 3), dtype=np.uint8))
+        cc_b, _count_b = label(pred_b, structure=np.ones((3, 3), dtype=np.uint8))
+        relation_candidates = _aligned_direct_edges(
+            decomposition_a.edges,
+            decomposition_b.edges,
+            matches,
+        )
+        timings['candidate_build_time'] = time.perf_counter() - candidate_start
+        conflict_specs = _connectivity_conflicts(
+            relation_candidates,
+            decomposition_a.branches,
+            decomposition_b.branches,
+            matches,
+            cc_a,
+            cc_b,
+        )
+        relation_tree_stats = {}
+        timings['relation_tree_query_time'] = 0.0
+    else:
+        raise ValueError('Unsupported PH relation backend: {}'.format(relation_backend))
     timings['relation_time'] = time.perf_counter() - start
 
     start = time.perf_counter()
@@ -167,6 +226,7 @@ def detect_connectivity_conflicts(
         events,
         roi_sizes,
         masks,
+        relation_tree_stats,
     )
     return masks, events, stats
 
@@ -413,20 +473,20 @@ def _build_conflict_rois(pred_a, pred_b, conflict_specs, dilation):
             'right_match': spec['right_match'],
             'edge_a': spec['edge_a'],
             'edge_b': spec['edge_b'],
-            'mu_a': _edge_level(spec['edge_a']),
-            'mu_b': _edge_level(spec['edge_b']),
+            'mu_a': _spec_merge_level(spec, 'a'),
+            'mu_b': _spec_merge_level(spec, 'b'),
             'connected_a': spec['connected_a'],
             'connected_b': spec['connected_b'],
-            'saddle_coord_a': _edge_coord(
-                spec['edge_a'],
-                spec['left_match']['entity_a'],
-                spec['right_match']['entity_a'],
-            ),
-            'saddle_coord_b': _edge_coord(
-                spec['edge_b'],
-                spec['left_match']['entity_b'],
-                spec['right_match']['entity_b'],
-            ),
+            'saddle_coord_a': _spec_saddle_coord(spec, 'a'),
+            'saddle_coord_b': _spec_saddle_coord(spec, 'b'),
+            'relation_query_a': spec.get('query_a'),
+            'relation_query_b': spec.get('query_b'),
+            'relation_source': spec.get('source', ''),
+            'structural_conflict_type': spec.get('structural_conflict_type', ''),
+            'connected_side': spec.get('connected_side', ''),
+            'candidate_id': spec.get('candidate_id', ''),
+            'pair_present_a': spec.get('pair_present_a', False),
+            'pair_present_b': spec.get('pair_present_b', False),
         })
     return masks, events, roi_sizes
 
@@ -444,6 +504,7 @@ def _fill_correspondence_stats(
     events,
     roi_sizes,
     masks,
+    relation_tree_stats=None,
 ):
     support_iou_values = match_stats['matched_support_iou_values']
     birth_distance_values = match_stats['birth_distance_values']
@@ -487,6 +548,22 @@ def _fill_correspondence_stats(
         1 for event in events if event['conflict_type'] == 'a_connected_b_separate'
     )
     stats['conflict_pixel_ratio'] = _ratio(stats['ph_conflict_pixels'], masks.size)
+    stats['pure_relation_conflict_pixels'] = int(sum(
+        event['roi_size']
+        for event in events
+        if event.get('structural_conflict_type') == 'pure_relation'
+    ))
+    stats['presence_involved_conflict_pixels'] = int(sum(
+        event['roi_size']
+        for event in events
+        if event.get('structural_conflict_type') == 'presence_involved'
+    ))
+    if relation_tree_stats:
+        for key, value in relation_tree_stats.items():
+            if key in stats:
+                stats[key] += value
+            else:
+                stats[key] = value
 
 
 def _new_match(branch_a, branch_b, support_intersection, support_iou, birth_distance):
@@ -533,7 +610,9 @@ def _decomposition_from_arrays(arrays, branch_id):
             death=float(branch_death[index]),
             birth_coord=(int(birth_y[index]), int(birth_x[index])),
             death_coord=(int(death_y[index]), int(death_x[index])),
-            parent_branch_id=int(parent_branch[index]),
+            parent_branch_id=(
+                None if int(parent_branch[index]) < 0 else int(parent_branch[index])
+            ),
             is_essential=bool(is_essential[index]),
         ))
     edges = []
@@ -622,7 +701,7 @@ def _decompose_h0_branches_python(probability, order, branch_id='A'):
                 death=value,
                 birth_coord=(y, x),
                 death_coord=(y, x),
-                parent_branch_id=-1,
+                parent_branch_id=None,
                 is_essential=True,
             ))
             continue
@@ -704,6 +783,25 @@ def _edge_level(edge):
     if edge is None:
         return 0.0
     return float(edge.merge_level)
+
+
+def _spec_merge_level(spec, branch):
+    query = spec.get('query_' + branch)
+    if query is not None:
+        return float(query.merge_level)
+    return _edge_level(spec.get('edge_' + branch))
+
+
+def _spec_saddle_coord(spec, branch):
+    query = spec.get('query_' + branch)
+    if query is not None and query.saddle_coord is not None:
+        return query.saddle_coord
+    left_key = 'entity_' + branch
+    return _edge_coord(
+        spec.get('edge_' + branch),
+        spec['left_match'][left_key],
+        spec['right_match'][left_key],
+    )
 
 
 def _dilate(mask, radius):
@@ -791,6 +889,46 @@ def _new_correspondence_stats():
         'directional_events_from_persistent_conflicts': 0,
         'mean_conflict_roi_pixels_sum': 0.0,
         'mean_conflict_roi_pixels_count': 0,
+        'num_valid_relation_queries': 0,
+        'num_absent_A': 0,
+        'num_absent_B': 0,
+        'num_connected_A': 0,
+        'num_separated_A': 0,
+        'num_connected_B': 0,
+        'num_separated_B': 0,
+        'merge_level_A_sum': 0.0,
+        'merge_level_B_sum': 0.0,
+        'abs_g_A_sum': 0.0,
+        'abs_g_B_sum': 0.0,
+        'num_relation_conflicts': 0,
+        'num_A_connected_B_separated': 0,
+        'num_A_separated_B_connected': 0,
+        'conflict_merge_level_A_sum': 0.0,
+        'conflict_merge_level_B_sum': 0.0,
+        'valid_compare_count': 0,
+        'ph_cc_agree_A': 0,
+        'ph_cc_agree_B': 0,
+        'num_relation_questions': 0,
+        'num_pair_present_both': 0,
+        'num_pair_absent_a': 0,
+        'num_pair_absent_b': 0,
+        'num_pair_absent_both': 0,
+        'num_pure_relation_conflicts': 0,
+        'num_presence_involved_conflicts': 0,
+        'num_total_structural_conflicts': 0,
+        'num_presence_disagreement_nonconflict': 0,
+        'pure_relation_conflict_pixels': 0,
+        'presence_involved_conflict_pixels': 0,
+        'old_cc_conflicts': 0,
+        'new_conflicts': 0,
+        'old_cc_retained_conflicts': 0,
+        'old_cc_lost_conflicts': 0,
+        'new_extra_conflicts': 0,
+        'old_cc_to_pure_relation': 0,
+        'old_cc_to_presence_involved': 0,
+        'old_cc_to_nonconflict': 0,
+        'old_cc_candidate_missing': 0,
+        'relation_question_records': [],
     }
     for key in _timing_keys():
         stats[key] = 0.0
@@ -799,7 +937,7 @@ def _new_correspondence_stats():
 
 def _merge_correspondence_stats(total, update):
     for key, value in update.items():
-        if key in ('roi_sizes', 'support_iou_values'):
+        if key in ('roi_sizes', 'support_iou_values', 'relation_question_records'):
             total[key].extend(value)
         elif key == 'conflict_pixel_ratio':
             continue
@@ -855,6 +993,9 @@ def _timing_keys():
         'relation_time',
         'roi_time',
         'total_ph_time',
+        'birth_matching_time',
+        'candidate_build_time',
+        'relation_tree_query_time',
     )
 
 

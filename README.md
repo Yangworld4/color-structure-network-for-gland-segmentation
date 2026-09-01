@@ -191,3 +191,32 @@ If you use this work in your research or project, please cite the following pape
 
 ```bash
 ```
+
+
+python main.py \
+    --path_trained_models checkpoints/semi_10_seed_24_rgbstain_e1 \
+    --path_seg_results seg_pred/semi_10_seed_24_rgbstain_e1 \
+    --path_dataset datasets/GLaS \
+    --dataset_name GlaS \
+    --input_mode rgb_stain \
+    --input1 image \
+    --labeled_ratio 10 \
+    --sup_mark 9 \
+    --unsup_mark 76 \
+    --batch_size 2 \
+    --num_epochs 200 \
+    --milestone_interval 10 \
+    --best_save_interval 10 \
+    --step_size 50 \
+    --lr 0.5 \
+    --gamma 0.5 \
+    --unsup_weight 5.0 \
+    --loss dice \
+    --warm_up_duration 20 \
+    --momentum 0.9 \
+    --wd -5 \
+    --sd 24 \
+    --network unet \
+    --ph-mask-only \
+    --ph-start-epoch 20 \
+    --ph-mask-dilation 1

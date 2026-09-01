@@ -6,6 +6,18 @@ set -e
 source /data/software/miniconda3/etc/profile.d/conda.sh
 
 # 2. 激活指定的虚拟环境
+conda activate cg-seg程序报错退出，整个脚本会自动停止，防止后续错误运行
+set -e
+# 1. 载入 conda 环境脚本（注意：根据你的报错日志，修改为你的实际 miniconda 路径）
+source /data/software/miniconda3/e报错退出，整个脚本会自动停止，防止后续错误运行
+set -e
+# 1. 载入 conda 环境脚本（注意：根据你的报错日志，修改为你的实际 miniconda 路径）
+source /data/software/miniconda3/e报错退出，整个脚本会自动停止，防止后续错误运行
+set -e
+# 1. 载入 conda 环境脚本（注意：根据你的报错日志，修改为你的实际 miniconda 路径）
+source /data/software/miniconda3/etc/profile.d/conda.sh
+
+# 2. 激活指定的虚拟环境
 conda activate cg-seg
 
 echo "=== 开始运行实验 ==="
@@ -41,18 +53,39 @@ python main.py \
 echo "=== 所有实验已全部完成！ ==="
 
 
-
-
 python main.py \
-    --path_trained_models checkpoints/semi_10_seed_24_rgbstain_e2_persistent_relation_100 \
-    --path_seg_results seg_pred/semi_10_seed_24_rgbstain_e2_persistent_relation \
+    --path_trained_models checkpoints/semi_20_seed_24_rgbstain \
+    --path_seg_results seg_pred/semi_20_seed_24_rgbstain \
     --path_dataset datasets/GLaS \
     --dataset_name GlaS \
     --input_mode rgb_stain \
+    --labeled_ratio 20 \
+    --batch_size 2 \
+    --num_epochs 200 \
+    --ph-unmatched-mode vanilla 
+    --ph-unmatched-mode vanilla 
+ 
+
+python main.py \
+    --path_trained_models checkpoints/semi_10_seed_24_rgbstain \
+    --path_seg_results seg_pred/semi_10_seed_24_rgbstain \
+    --path_dataset datasets/CRAG \
+    --dataset_name CRAG \
+    --input_mode rgb_stain \
+    --labeled_ratio 10 \
+    --batch_size 2 \
+    --num_epochs 200 \
+    --ph-unmatched-mode vanilla 
+
+
+python main.py \
+    --path_trained_models checkpoints/semi_10_seed_24_rgb_e2_persistent_relation\
+    --path_seg_results seg_pred/semi_10_seed_24_rgb_e2_persistent_relation \
+    --path_dataset datasets/CRAG \
+    --dataset_name CRAG \
+    --input_mode rgb_rgb \
     --input1 image \
     --labeled_ratio 10 \
-    --sup_mark 9 \
-    --unsup_mark 76 \
     --batch_size 2 \
     --num_epochs 200 \
     --milestone_interval 10 \
@@ -61,14 +94,13 @@ python main.py \
     --lr 0.5 \
     --gamma 0.5 \
     --unsup_weight 5.0 \
-    --loss dice \
     --warm_up_duration 20 \
     --momentum 0.9 \
     --wd -5 \
     --sd 24 \
     --network unet \
     --ph-directional-cps \
-    --ph-start-epoch 100 \
+    --ph-start-epoch 20 \
     --ph-mask-dilation 1 \
     --ph-match-radius 16 \
     --ph-unmatched-mode vanilla \
@@ -79,13 +111,13 @@ python main.py \
 
 
     python main.py \
-    --path_trained_models checkpoints/semi_10_seed_24_rgbstain_e2_support_identity \
-    --path_seg_results seg_pred/semi_10_seed_24_rgbstain_e2_support_identity \
+    --path_trained_models checkpoints/semi_10_seed_24_rgbrgb_e2_support_identity \
+    --path_seg_results seg_pred/semi_10_seed_24_rgbrgb_e2_support_identity \
     --path_dataset datasets/GLaS \
     --dataset_name GlaS \
-    --input_mode rgb_stain \
+    --input_mode rgb_rgb \
     --input1 image \
-    --labeled_ratio 20 \
+    --labeled_ratio 10 \
     --batch_size 2 \
     --num_epochs 200 \
     --milestone_interval 10 \
@@ -108,4 +140,66 @@ python main.py \
     --ph-debug-timing
 
 
+  python main.py \
+    --path_trained_models checkpoints/semi_10_seed_24_rgbstain_event_projection \
+    --path_seg_results seg_pred/semi_10_seed_24_rgbstain_event_projection \
+    --path_dataset datasets/GLaS \
+    --dataset_name GlaS \
+    --input_mode rgb_stain \
+    --input1 image \
+    --labeled_ratio 10 \
+    --batch_size 2 \
+    --num_epochs 200 \
+    --milestone_interval 10 \
+    --best_save_interval 10 \
+    --step_size 50 \
+    --lr 0.5 \
+    --gamma 0.5 \
+    --unsup_weight 5.0 \
+    --loss dice \
+    --warm_up_duration 20 \
+    --momentum 0.9 \
+    --sd 24 \
+    --network unet \
+    --ph-directional-cps \
+    --ph-start-epoch 20 \
+    --ph-mask-dilation 1 \
+    --ph-match-radius 16 \
+    --ph-unmatched-mode vanilla \
+    --ph-conflict-detector persistent_relation \
+    --ph-correspondence-mode event_projection \
+    --ph-validation-diagnostics-interval 10 \
+    --ph-debug-timing
 
+
+
+  python main.py \
+    --path_trained_models checkpoints/semi_10_seed_24_rgb_e2_ph_tree_connectivity_outcome \
+    --path_seg_results seg_pred/semi_10_seed_24_rgb_e2_ph_tree_connectivity_outcome \
+    --path_dataset datasets/GLaS \
+    --dataset_name GlaS \
+    --input_mode rgb_rgb \
+    --input1 image \
+    --labeled_ratio 10 \
+    --batch_size 2 \
+    --num_epochs 200 \
+    --milestone_interval 10 \
+    --best_save_interval 10 \
+    --step_size 50 \
+    --lr 0.5 \
+    --gamma 0.5 \
+    --unsup_weight 5.0 \
+    --warm_up_duration 20 \
+    --sd 24 \
+    --network unet \
+    --ph-directional-cps \
+    --ph-start-epoch 20 \
+    --ph-mask-dilation 1 \
+    --ph-match-radius 16 \
+    --ph-unmatched-mode vanilla \
+    --ph-conflict-detector persistent_relation \
+    --ph-correspondence-mode birth_nearest \
+    --ph-relation-backend ph_tree \
+    --ph-presence-conflict-mode connectivity_outcome \
+    --ph-validation-diagnostics-interval 10 \
+    --ph-save-conflict-vis
