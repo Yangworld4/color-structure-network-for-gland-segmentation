@@ -501,10 +501,13 @@ def _experiment_name(args, split_sup_mark, split_unsup_mark):
         if getattr(args, 'ph_presence_conflict_mode', 'strict') != 'strict':
             experiment_name += '-presence={}'.format(args.ph_presence_conflict_mode)
     if getattr(args, 'cc_graph', False):
-        experiment_name += '-cc_graph-start={}-cov={}-int={}'.format(
+        experiment_name += '-cc_graph-start={}-cov={}-int={}-area={}-bbox={}-fd={}'.format(
             args.cc_graph_start_epoch,
             args.cc_graph_min_coverage,
             args.cc_graph_min_intersection,
+            args.cc_graph_max_cut_area,
+            args.cc_graph_max_cut_bbox_pixels,
+            args.cc_graph_full_diagnostic_interval,
         )
     return experiment_name
 
@@ -743,8 +746,13 @@ def train_one_epoch(
                     min_coverage=args.cc_graph_min_coverage,
                     min_intersection=args.cc_graph_min_intersection,
                     agreement_radius=args.cc_graph_agreement_radius,
-                    require_dual_agreement=args.cc_graph_require_dual_agreement,
+                    # Training V1 is cut-only.  This deliberately ignores
+                    # require_dual_agreement so join/Dijkstra is never run.
+                    require_dual_agreement=False,
                     roi_mode=args.cc_graph_roi_mode,
+                    compute_join=False,
+                    max_cut_area=args.cc_graph_max_cut_area,
+                    max_cut_bbox_pixels=args.cc_graph_max_cut_bbox_pixels,
                 )
                 accumulate_cc_graph_state(cc_graph_state, cc_analysis['state'])
                 # V1 uses the connected-side cut ROI in both CPS directions.
@@ -1132,6 +1140,11 @@ def validate(
                     min_coverage=cc_graph_params['min_coverage'],
                     min_intersection=cc_graph_params['min_intersection'],
                     agreement_radius=cc_graph_params['agreement_radius'],
+                    compute_cut=cc_graph_params['compute_cut'],
+                    compute_join=cc_graph_params['compute_join'],
+                    max_terminal_count=cc_graph_params['max_terminal_count'],
+                    max_cut_area=cc_graph_params['max_cut_area'],
+                    max_cut_bbox_pixels=cc_graph_params['max_cut_bbox_pixels'],
                 )
                 update_cc_graph_state(cc_graph_state, cc_analysis, gt=mask)
                 if cc_graph_vis_enabled and cc_graph_vis_dir is not None:
@@ -1423,6 +1436,11 @@ def train_model(
     use_cc_graph = bool(args.cc_graph)
     if use_cc_graph:
         print('CC-Graph metrics CSV:', cc_graph_metrics_path)
+        if args.cc_graph_require_dual_agreement:
+            logger.info(
+                'CC-Graph training ignores cc_graph_require_dual_agreement; '
+                'training is cut-only and join diagnostics are disabled.'
+            )
     ph_diagnostics_path = os.path.join(trained_models_path, 'ph_diagnostics.csv')
     use_ph_diagnostics_csv = (
         args.ph_directional_cps
@@ -1544,6 +1562,11 @@ def train_model(
                 new_cc_graph_epoch_state(epoch + 1, enabled=True)
                 if cc_graph_active else None
             )
+            cc_graph_full_diagnostic = (
+                cc_graph_active
+                and args.cc_graph_full_diagnostic_interval > 0
+                and (epoch + 1) % args.cc_graph_full_diagnostic_interval == 0
+            )
             cc_graph_params = None
             if cc_graph_active:
                 cc_graph_params = {
@@ -1551,9 +1574,14 @@ def train_model(
                     'min_coverage': args.cc_graph_min_coverage,
                     'min_intersection': args.cc_graph_min_intersection,
                     'agreement_radius': args.cc_graph_agreement_radius,
+                    'compute_cut': cc_graph_full_diagnostic,
+                    'compute_join': cc_graph_full_diagnostic,
+                    'max_terminal_count': None if cc_graph_full_diagnostic else 2,
+                    'max_cut_area': args.cc_graph_max_cut_area,
+                    'max_cut_bbox_pixels': args.cc_graph_max_cut_bbox_pixels,
                 }
             cc_graph_vis_enabled = (
-                cc_graph_active
+                cc_graph_full_diagnostic
                 and args.cc_graph_save_vis
                 and args.cc_graph_vis_interval > 0
                 and (epoch + 1) % args.cc_graph_vis_interval == 0
@@ -2256,6 +2284,24 @@ def parse_args():
         help='maximum overview samples saved per visualization epoch',
     )
     parser.add_argument(
+        '--cc_graph_max_cut_area',
+        default=6000,
+        type=int,
+        help='skip pixel cut when the connected component exceeds this area',
+    )
+    parser.add_argument(
+        '--cc_graph_max_cut_bbox_pixels',
+        default=12000,
+        type=int,
+        help='skip pixel cut when its component bbox exceeds this size',
+    )
+    parser.add_argument(
+        '--cc_graph_full_diagnostic_interval',
+        default=20,
+        type=int,
+        help='run validation Cut+Join diagnostics every N epochs; 0 disables',
+    )
+    parser.add_argument(
         '--ph-mask-only',
         action='store_true',
         help='E1 ablation: abstain vanilla bidirectional CPS inside PH-H0 topology conflict masks',
@@ -2414,6 +2460,12 @@ def parse_args():
         parser.error('--cc_graph_vis_interval must be non-negative')
     if args.cc_graph_vis_num_samples < 0:
         parser.error('--cc_graph_vis_num_samples must be non-negative')
+    if args.cc_graph_max_cut_area < 0:
+        parser.error('--cc_graph_max_cut_area must be non-negative')
+    if args.cc_graph_max_cut_bbox_pixels < 0:
+        parser.error('--cc_graph_max_cut_bbox_pixels must be non-negative')
+    if args.cc_graph_full_diagnostic_interval < 0:
+        parser.error('--cc_graph_full_diagnostic_interval must be non-negative')
     if args.ph_start_epoch < 1:
         parser.error('--ph-start-epoch must be >= 1')
     if args.ph_mask_dilation < 0:

@@ -9,6 +9,7 @@ import csv
 import os
 import time
 from dataclasses import dataclass
+from itertools import combinations
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 import networkx as nx
@@ -26,6 +27,8 @@ CC_GRAPH_FIELDS = [
     'components_b',
     'graph_edges',
     'one_to_one_groups',
+    'eligible_pair_conflicts',
+    'skipped_multiterminal_events',
     'unmatched_a',
     'unmatched_b',
     'merge_conflicts',
@@ -34,6 +37,10 @@ CC_GRAPH_FIELDS = [
     'total_structural_conflicts',
     'valid_cut_events',
     'cut_failure_events',
+    'cut_area_skip_events',
+    'cut_bbox_skip_events',
+    'cut_attempt_events',
+    'cut_success_events',
     'cut_flip_success_events',
     'cut_flip_success_rate',
     'valid_join_events',
@@ -79,7 +86,7 @@ CC_GRAPH_FIELDS = [
 @dataclass
 class Component:
     id: int
-    mask: np.ndarray
+    mask: Optional[np.ndarray]
     area: int
     centroid: Tuple[float, float]
     bbox: Tuple[slice, slice]
@@ -111,6 +118,8 @@ def new_cc_graph_epoch_state(epoch: int, enabled: bool = True) -> Dict:
         'components_b': 0,
         'graph_edges': 0,
         'one_to_one_groups': 0,
+        'eligible_pair_conflicts': 0,
+        'skipped_multiterminal_events': 0,
         'unmatched_a': 0,
         'unmatched_b': 0,
         'merge_conflicts': 0,
@@ -119,6 +128,10 @@ def new_cc_graph_epoch_state(epoch: int, enabled: bool = True) -> Dict:
         'total_structural_conflicts': 0,
         'valid_cut_events': 0,
         'cut_failure_events': 0,
+        'cut_area_skip_events': 0,
+        'cut_bbox_skip_events': 0,
+        'cut_attempt_events': 0,
+        'cut_success_events': 0,
         'cut_flip_success_events': 0,
         'valid_join_events': 0,
         'join_failure_events': 0,
@@ -168,22 +181,42 @@ def _as_batch_numpy(value) -> np.ndarray:
 def _component_decomposition(prediction: np.ndarray) -> Tuple[np.ndarray, List[Component]]:
     structure = np.ones((3, 3), dtype=np.uint8)
     labels, count = ndimage.label(prediction.astype(bool), structure=structure)
+    count = int(count)
+    if count == 0:
+        return labels, []
+    flat_labels = labels.ravel().astype(np.int64, copy=False)
+    ids = np.arange(1, count + 1, dtype=np.int64)
+    areas = np.bincount(flat_labels, minlength=count + 1)[1:]
+    height, width = labels.shape
+    yy, xx = np.indices(labels.shape)
+    sum_y = np.bincount(flat_labels, weights=yy.ravel(), minlength=count + 1)[1:]
+    sum_x = np.bincount(flat_labels, weights=xx.ravel(), minlength=count + 1)[1:]
+    objects = ndimage.find_objects(labels, max_label=count)
     components = []
-    for component_id in range(1, int(count) + 1):
-        component_mask = labels == component_id
-        coords = np.argwhere(component_mask)
-        if coords.size == 0:
+    for component_id, area, sum_y_value, sum_x_value, component_slice in zip(
+        ids, areas, sum_y, sum_x, objects
+    ):
+        if area <= 0 or component_slice is None:
             continue
-        y0, x0 = coords.min(axis=0)
-        y1, x1 = coords.max(axis=0) + 1
         components.append(Component(
-            id=component_id,
-            mask=component_mask,
-            area=int(coords.shape[0]),
-            centroid=(float(coords[:, 0].mean()), float(coords[:, 1].mean())),
-            bbox=(slice(int(y0), int(y1)), slice(int(x0), int(x1))),
+            id=int(component_id),
+            # Materialized only for conflict endpoints; this avoids creating
+            # one full-resolution mask per tiny unmatched component.
+            mask=None,
+            area=int(area),
+            centroid=(float(sum_y_value / area), float(sum_x_value / area)),
+            bbox=component_slice,
         ))
     return labels, components
+
+
+def _materialize_components(components: Sequence[Component], labels: np.ndarray,
+                            component_ids: Iterable[int]):
+    component_by_id = {component.id: component for component in components}
+    for component_id in component_ids:
+        component = component_by_id.get(int(component_id))
+        if component is not None and component.mask is None:
+            component.mask = labels == component.id
 
 
 def _intersection_matrix(labels_a: np.ndarray, labels_b: np.ndarray,
@@ -258,6 +291,10 @@ def build_cc_graph_conflicts(
             if len(nodes_a) == 1 and len(nodes_b) == 1:
                 one_to_one_groups += 1
                 continue
+            # Keep masks lazy for unmatched/single-match components. A
+            # localization event is the only path that needs pixel masks.
+            _materialize_components(components_a, labels_a, nodes_a)
+            _materialize_components(components_b, labels_b, nodes_b)
             if len(nodes_b) == 1 and len(nodes_a) >= 2:
                 conflicts.append(StructuralConflict(
                     sample_idx=sample_offset + batch_index,
@@ -528,29 +565,57 @@ def _mask_distance(mask_a: np.ndarray, mask_b: np.ndarray) -> float:
     return float(distance_transform_edt(~mask_a)[mask_b].min())
 
 
+def _empty_localization_result(shape, compute_cut=True, compute_join=True, reason=''):
+    skipped = reason in ('multiterminal', 'complex', 'diagnostics_only')
+    return {
+        'cut_mask': np.zeros(shape, dtype=bool),
+        'join_mask': np.zeros(shape, dtype=bool),
+        'cut_cost': float('nan'),
+        'join_cost': float('nan'),
+        'cut_flip_success': False,
+        'join_flip_success': False,
+        'localization_valid': False,
+        'join_localization_valid': False,
+        'dual_agreement': False,
+        'cut_join_iou': float('nan'),
+        'cut_join_min_distance': float('inf'),
+        'cut_failure': bool(reason) and not skipped if compute_cut else False,
+        'join_failure': bool(reason) and not skipped if compute_join else False,
+        'cut_runtime': 0.0,
+        'join_runtime': 0.0,
+        'compute_cut': bool(compute_cut),
+        'cut_attempt': False,
+        'cut_success': False,
+        'compute_join': bool(compute_join),
+        'skipped_multiterminal': reason in ('multiterminal', 'complex'),
+        'cut_area_skip': reason == 'area_guard',
+        'cut_bbox_skip': reason == 'bbox_guard',
+        'skip_reason': reason,
+    }
+
+
 def localize_cc_graph_conflict(
     conflict: StructuralConflict,
     prob_a,
     prob_b,
     tau: float = 0.5,
     agreement_radius: float = 3.0,
+    compute_cut: bool = True,
+    compute_join: bool = True,
+    max_terminal_count: Optional[int] = None,
+    max_cut_area: Optional[int] = None,
+    max_cut_bbox_pixels: Optional[int] = None,
 ) -> Dict:
     """Localize one merge/split event with minimum cut and completion paths."""
     probability_a = np.asarray(prob_a, dtype=np.float32)
     probability_b = np.asarray(prob_b, dtype=np.float32)
     if conflict.conflict_type == 'complex_conflict':
-        return {
-            'cut_mask': np.zeros(probability_a.shape, dtype=bool),
-            'join_mask': np.zeros(probability_a.shape, dtype=bool),
-            'cut_cost': float('nan'), 'join_cost': float('nan'),
-            'cut_flip_success': False, 'join_flip_success': False,
-            'localization_valid': False, 'join_localization_valid': False,
-            'dual_agreement': False, 'cut_join_iou': float('nan'),
-            'cut_join_min_distance': float('inf'), 'cut_failure': True,
-            'join_failure': True,
-            'cut_runtime': 0.0,
-            'join_runtime': 0.0,
-        }
+        return _empty_localization_result(
+            probability_a.shape,
+            compute_cut=compute_cut,
+            compute_join=compute_join,
+            reason='complex',
+        )
 
     if conflict.connected_student == 'a':
         connected_probability = probability_a
@@ -565,28 +630,49 @@ def localize_cc_graph_conflict(
     terminal_cores = _terminal_cores(connected_component, separated_components)
     empty = np.zeros(probability_a.shape, dtype=bool)
     if len(terminal_cores) < 2:
-        return {
-            'cut_mask': empty.copy(), 'join_mask': empty.copy(),
-            'cut_cost': float('nan'), 'join_cost': float('nan'),
-            'cut_flip_success': False, 'join_flip_success': False,
-            'localization_valid': False, 'join_localization_valid': False,
-            'dual_agreement': False, 'cut_join_iou': float('nan'),
-            'cut_join_min_distance': float('inf'), 'cut_failure': True,
-            'join_failure': True,
-            'cut_runtime': 0.0,
-            'join_runtime': 0.0,
-        }
+        return _empty_localization_result(
+            probability_a.shape,
+            compute_cut=compute_cut,
+            compute_join=compute_join,
+            reason='terminals',
+        )
+    if max_terminal_count is not None and len(terminal_cores) != max_terminal_count:
+        return _empty_localization_result(
+            probability_a.shape,
+            compute_cut=compute_cut,
+            compute_join=compute_join,
+            reason='multiterminal',
+        )
 
     cut_mask = empty.copy()
     join_mask = empty.copy()
-    cut_cost = 0.0
-    join_cost = 0.0
     cut_failure = False
     join_failure = False
     cut_runtime = 0.0
     join_runtime = 0.0
-    for first in range(len(terminal_cores)):
-        for second in range(first + 1, len(terminal_cores)):
+    cut_attempt = False
+    cut_area_skip = False
+    cut_bbox_skip = False
+
+    if compute_cut:
+        bbox_height = connected_component.bbox[0].stop - connected_component.bbox[0].start
+        bbox_width = connected_component.bbox[1].stop - connected_component.bbox[1].start
+        if max_cut_area is not None and connected_component.area > max_cut_area:
+            cut_failure = True
+            cut_area_skip = True
+        elif max_cut_bbox_pixels is not None and bbox_height * bbox_width > max_cut_bbox_pixels:
+            cut_failure = True
+            cut_bbox_skip = True
+
+    # The training call has max_terminal_count=2, so this branch contains
+    # exactly one pair and cannot enumerate O(k^2) terminal pairs.
+    if compute_cut and not cut_failure:
+        cut_pairs = (
+            [(0, 1)] if len(terminal_cores) == 2
+            else list(combinations(range(len(terminal_cores)), 2))
+        )
+        for first, second in cut_pairs:
+            cut_attempt = True
             cut_start = time.perf_counter()
             try:
                 pair_cut, pair_cost = _minimum_vertex_cut(
@@ -601,10 +687,16 @@ def localize_cc_graph_conflict(
                     ),
                 )
                 cut_mask |= pair_cut
-                cut_cost += pair_cost
-            except (ValueError, nx.NetworkXError):
+            except Exception:
                 cut_failure = True
             cut_runtime += time.perf_counter() - cut_start
+
+    if compute_join:
+        join_pairs = (
+            [(0, 1)] if len(terminal_cores) == 2
+            else list(combinations(range(len(terminal_cores)), 2))
+        )
+        for first, second in join_pairs:
             join_start = time.perf_counter()
             try:
                 pair_join, pair_cost = _minimum_completion_path(
@@ -616,13 +708,11 @@ def localize_cc_graph_conflict(
                     bbox_masks=[component.mask for component in separated_components],
                 )
                 join_mask |= pair_join
-                join_cost += pair_cost
-            except (ValueError, nx.NetworkXError):
+            except Exception:
                 join_failure = True
             join_runtime += time.perf_counter() - join_start
 
-    # The event is one deduplicated ROI; report the cost of its union rather
-    # than counting pixels repeatedly when several terminal pairs share them.
+    # Report the cost of the deduplicated event ROI, not repeated pair costs.
     cut_cost = float(
         np.maximum(connected_probability - float(tau), 1e-4)[cut_mask].sum()
     ) if cut_mask.any() else 0.0
@@ -630,25 +720,36 @@ def localize_cc_graph_conflict(
         np.maximum(float(tau) - separated_probability, 0.0)[join_mask].sum()
     ) if join_mask.any() else 0.0
 
-    cut_flip_success = bool(cut_mask.any() and _groups_all_separated(
-        connected_component.mask & (~cut_mask), terminal_cores
-    ))
-    join_flip_success = bool(join_mask.any() and _groups_connected(
-        separated_foreground | join_mask, terminal_cores
-    ))
-    if not cut_flip_success:
+    cut_flip_success = bool(
+        compute_cut and cut_mask.any() and _groups_all_separated(
+            connected_component.mask & (~cut_mask), terminal_cores
+        )
+    )
+    join_flip_success = bool(
+        compute_join and join_mask.any() and _groups_connected(
+            separated_foreground | join_mask, terminal_cores
+        )
+    )
+    if compute_cut and not cut_flip_success:
         cut_failure = True
-    if not join_flip_success:
+    if compute_join and not join_flip_success:
         join_failure = True
-    cut_iou_intersection = np.logical_and(cut_mask, join_mask).sum()
-    cut_iou_union = np.logical_or(cut_mask, join_mask).sum()
-    cut_join_iou = (
-        float(cut_iou_intersection / cut_iou_union) if cut_iou_union else 0.0
-    )
-    cut_join_min_distance = _mask_distance(cut_mask, join_mask)
-    dual_agreement = bool(
-        cut_join_iou > 0.0 or cut_join_min_distance <= float(agreement_radius)
-    )
+    if compute_join:
+        cut_iou_intersection = np.logical_and(cut_mask, join_mask).sum()
+        cut_iou_union = np.logical_or(cut_mask, join_mask).sum()
+        cut_join_iou = (
+            float(cut_iou_intersection / cut_iou_union)
+            if cut_iou_union else 0.0
+        )
+        cut_join_min_distance = _mask_distance(cut_mask, join_mask)
+        dual_agreement = bool(
+            cut_join_iou > 0.0
+            or cut_join_min_distance <= float(agreement_radius)
+        )
+    else:
+        cut_join_iou = float('nan')
+        cut_join_min_distance = float('nan')
+        dual_agreement = False
     return {
         'cut_mask': cut_mask,
         'join_mask': join_mask,
@@ -665,6 +766,17 @@ def localize_cc_graph_conflict(
         'join_failure': join_failure,
         'cut_runtime': cut_runtime,
         'join_runtime': join_runtime,
+        'compute_cut': bool(compute_cut),
+        'cut_attempt': cut_attempt,
+        'cut_success': cut_flip_success,
+        'compute_join': bool(compute_join),
+        'skipped_multiterminal': False,
+        'cut_area_skip': cut_area_skip,
+        'cut_bbox_skip': cut_bbox_skip,
+        'skip_reason': (
+            'area_guard' if cut_area_skip
+            else 'bbox_guard' if cut_bbox_skip else ''
+        ),
         'connected_probability': connected_probability,
         'separated_probability': separated_probability,
         'terminal_cores': terminal_cores,
@@ -681,11 +793,12 @@ def _gt_relation(conflict: StructuralConflict, gt: np.ndarray) -> str:
     else:
         return 'invalid'
     del connected
-    labels, _count = ndimage.label(gt.astype(bool), structure=np.ones((3, 3), dtype=np.uint8))
+    gt_bool = gt.astype(bool)
+    labels, _count = ndimage.label(gt_bool, structure=np.ones((3, 3), dtype=np.uint8))
     group_labels = []
     for component in separated:
         terminal = conflict.connected_component.mask & component.mask
-        values = np.unique(labels[terminal & gt])
+        values = np.unique(labels[terminal & gt_bool])
         values = values[values > 0]
         if values.size != 1:
             return 'invalid'
@@ -728,30 +841,53 @@ def _record_sample_statistics(state: Dict, sample: Dict, localizations: Sequence
     )
     state['total_pixels'] += int(sample['pred_a'].size)
     for conflict, result in zip(sample['conflicts'], localizations):
+        if len(conflict.separated_components) == 2:
+            state['eligible_pair_conflicts'] += 1
+        if result.get('skipped_multiterminal', False):
+            state['skipped_multiterminal_events'] += 1
+        if result.get('cut_attempt', False):
+            state['cut_attempt_events'] += 1
+        if result.get('cut_success', False):
+            state['cut_success_events'] += 1
+        if result.get('cut_area_skip', False):
+            state['cut_area_skip_events'] += 1
+        if result.get('cut_bbox_skip', False):
+            state['cut_bbox_skip_events'] += 1
         connected_area = conflict.connected_component.area
         separated_area = sum(component.area for component in conflict.separated_components)
         state['connected_areas'].append(float(connected_area))
         state['separated_areas'].append(float(separated_area))
-        if result['localization_valid']:
+        if result.get('compute_cut', True) and result['localization_valid']:
             state['valid_cut_events'] += 1
             state['cut_costs'].append(result['cut_cost'])
             state['cut_pixels'].append(int(result['cut_mask'].sum()))
-            state['cut_join_ious'].append(result['cut_join_iou'])
-            state['cut_join_distances'].append(result['cut_join_min_distance'])
+            if result.get('compute_join', True):
+                state['cut_join_ious'].append(result['cut_join_iou'])
+                state['cut_join_distances'].append(result['cut_join_min_distance'])
             state['structural_roi_pixels'] += int(result['cut_mask'].sum())
             if result['cut_flip_success']:
                 state['cut_flip_success_events'] += 1
             if result['dual_agreement']:
                 state['dual_agree_events'] += 1
-        else:
+        elif (
+            result.get('compute_cut', True)
+            and not result.get('skipped_multiterminal', False)
+            and not result.get('cut_area_skip', False)
+            and not result.get('cut_bbox_skip', False)
+            and result.get('skip_reason', '') != 'diagnostics_only'
+        ):
             state['cut_failure_events'] += 1
-        if result['join_localization_valid']:
+        if result.get('compute_join', True) and result['join_localization_valid']:
             state['valid_join_events'] += 1
             state['join_costs'].append(result['join_cost'])
             state['join_pixels'].append(int(result['join_mask'].sum()))
             if result['join_flip_success']:
                 state['join_flip_success_events'] += 1
-        else:
+        elif (
+            result.get('compute_join', True)
+            and not result.get('skipped_multiterminal', False)
+            and result.get('skip_reason', '') != 'diagnostics_only'
+        ):
             state['join_failure_events'] += 1
         if gt is not None and conflict.conflict_type != 'complex_conflict':
             relation = _gt_relation(conflict, gt)
@@ -788,6 +924,11 @@ def analyze_cc_graph_batch(
     min_intersection: int = 10,
     agreement_radius: float = 3.0,
     gt=None,
+    compute_cut: bool = True,
+    compute_join: bool = True,
+    max_terminal_count: Optional[int] = None,
+    max_cut_area: Optional[int] = None,
+    max_cut_bbox_pixels: Optional[int] = None,
 ) -> Dict:
     """Analyze one detached batch and return localizations plus timing."""
     total_start = time.perf_counter()
@@ -803,13 +944,36 @@ def analyze_cc_graph_batch(
     for sample in samples:
         sample_results = []
         for conflict in sample['conflicts']:
-            result = localize_cc_graph_conflict(
-                conflict,
-                sample['prob_a'],
-                sample['prob_b'],
-                tau=tau,
-                agreement_radius=agreement_radius,
-            )
+            try:
+                if not compute_cut and not compute_join:
+                    result = _empty_localization_result(
+                        sample['prob_a'].shape,
+                        compute_cut=False,
+                        compute_join=False,
+                        reason='diagnostics_only',
+                    )
+                else:
+                    result = localize_cc_graph_conflict(
+                        conflict,
+                        sample['prob_a'],
+                        sample['prob_b'],
+                        tau=tau,
+                        agreement_radius=agreement_radius,
+                        compute_cut=compute_cut,
+                        compute_join=compute_join,
+                        max_terminal_count=max_terminal_count,
+                        max_cut_area=max_cut_area,
+                        max_cut_bbox_pixels=max_cut_bbox_pixels,
+                    )
+            except Exception:
+                # A single malformed/oversized event must never abort the
+                # batch.  Its all-one weights are the Vanilla CPS fallback.
+                result = _empty_localization_result(
+                    sample['prob_a'].shape,
+                    compute_cut=compute_cut,
+                    compute_join=compute_join,
+                    reason='exception',
+                )
             cut_time += result['cut_runtime']
             join_time += result['join_runtime']
             sample_results.append(result)
@@ -845,6 +1009,9 @@ def build_cc_graph_cps_weights(
     agreement_radius: float = 3.0,
     require_dual_agreement: bool = False,
     roi_mode: str = 'cut',
+    compute_join: bool = False,
+    max_cut_area: Optional[int] = 6000,
+    max_cut_bbox_pixels: Optional[int] = 12000,
 ) -> Tuple[np.ndarray, np.ndarray, Dict]:
     """Return bidirectional CPS weights and one-batch CC-Graph diagnostics."""
     if roi_mode != 'cut':
@@ -854,6 +1021,11 @@ def build_cc_graph_cps_weights(
     analysis = analyze_cc_graph_batch(
         prob_a_np, prob_b_np, tau, min_coverage, min_intersection,
         agreement_radius,
+        compute_cut=True,
+        compute_join=compute_join,
+        max_terminal_count=2,
+        max_cut_area=max_cut_area,
+        max_cut_bbox_pixels=max_cut_bbox_pixels,
     )
     weight_a_from_b = np.ones(prob_a_np.shape, dtype=np.float32)
     weight_b_from_a = np.ones(prob_b_np.shape, dtype=np.float32)
@@ -861,7 +1033,7 @@ def build_cc_graph_cps_weights(
         for result in sample_results:
             if not result['localization_valid']:
                 continue
-            if require_dual_agreement and not result['dual_agreement']:
+            if compute_join and require_dual_agreement and not result['dual_agreement']:
                 continue
             roi = result['cut_mask']
             weight_a_from_b[sample['sample_idx']] [roi] = 0.0
@@ -880,9 +1052,12 @@ def accumulate_cc_graph_state(target: Dict, source: Dict):
     """Add a batch state into an epoch state without sharing mutable lists."""
     for key in (
         'samples', 'components_a', 'components_b', 'graph_edges',
-        'one_to_one_groups', 'unmatched_a', 'unmatched_b',
+        'one_to_one_groups', 'eligible_pair_conflicts',
+        'skipped_multiterminal_events', 'unmatched_a', 'unmatched_b',
         'merge_conflicts', 'split_conflicts', 'complex_conflicts',
         'total_structural_conflicts', 'valid_cut_events', 'cut_failure_events',
+        'cut_area_skip_events', 'cut_bbox_skip_events',
+        'cut_attempt_events', 'cut_success_events',
         'cut_flip_success_events', 'valid_join_events', 'join_failure_events',
         'join_flip_success_events', 'dual_agree_events',
         'structural_roi_pixels', 'masked_cps_pixels', 'total_pixels',
@@ -916,6 +1091,8 @@ def finalize_cc_graph_epoch_state(state: Dict) -> Dict:
         'components_b': state['components_b'],
         'graph_edges': state['graph_edges'],
         'one_to_one_groups': state['one_to_one_groups'],
+        'eligible_pair_conflicts': state['eligible_pair_conflicts'],
+        'skipped_multiterminal_events': state['skipped_multiterminal_events'],
         'unmatched_a': state['unmatched_a'],
         'unmatched_b': state['unmatched_b'],
         'merge_conflicts': state['merge_conflicts'],
@@ -924,6 +1101,10 @@ def finalize_cc_graph_epoch_state(state: Dict) -> Dict:
         'total_structural_conflicts': total_conflicts,
         'valid_cut_events': valid_cut,
         'cut_failure_events': state['cut_failure_events'],
+        'cut_area_skip_events': state['cut_area_skip_events'],
+        'cut_bbox_skip_events': state['cut_bbox_skip_events'],
+        'cut_attempt_events': state['cut_attempt_events'],
+        'cut_success_events': state['cut_success_events'],
         'cut_flip_success_events': state['cut_flip_success_events'],
         'cut_flip_success_rate': state['cut_flip_success_events'] / max(valid_cut, 1),
         'valid_join_events': valid_join,
