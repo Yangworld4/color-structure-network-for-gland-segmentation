@@ -17,7 +17,10 @@ import numpy as np
 from scipy import ndimage
 from scipy.ndimage import distance_transform_edt
 from scipy.sparse import csr_matrix
-from scipy.sparse.csgraph import dijkstra
+from scipy.sparse.csgraph import breadth_first_order, dijkstra, maximum_flow
+
+
+CC_GRAPH_CAPACITY_SCALE = 10000
 
 
 CC_GRAPH_FIELDS = [
@@ -68,8 +71,17 @@ CC_GRAPH_FIELDS = [
     'runtime_cc',
     'runtime_correspondence',
     'runtime_cut',
+    'runtime_cut_build',
+    'runtime_cut_solve',
+    'runtime_cut_validate',
     'runtime_join',
     'runtime_total',
+    'cut_node_count_mean',
+    'cut_node_count_max',
+    'cut_edge_count_mean',
+    'cut_edge_count_max',
+    'cut_local_bbox_pixels_mean',
+    'cut_local_bbox_pixels_max',
     'gt_valid_conflicts',
     'connected_side_correct_events',
     'separated_side_correct_events',
@@ -151,8 +163,14 @@ def new_cc_graph_epoch_state(epoch: int, enabled: bool = True) -> Dict:
         'runtime_cc': 0.0,
         'runtime_correspondence': 0.0,
         'runtime_cut': 0.0,
+        'runtime_cut_build': 0.0,
+        'runtime_cut_solve': 0.0,
+        'runtime_cut_validate': 0.0,
         'runtime_join': 0.0,
         'runtime_total': 0.0,
+        'cut_node_counts': [],
+        'cut_edge_counts': [],
+        'cut_local_bbox_pixels': [],
         'gt_valid_conflicts': 0,
         'connected_side_correct_events': 0,
         'separated_side_correct_events': 0,
@@ -400,14 +418,27 @@ def _minimum_vertex_cut(
     target_mask: np.ndarray,
     tau: float,
     protected_mask: Optional[np.ndarray] = None,
-) -> Tuple[np.ndarray, float]:
-    """Solve a weighted 8-neighbour minimum s-t vertex cut with node splitting."""
-    coords = np.argwhere(foreground)
-    if coords.size == 0 or not source_mask.any() or not target_mask.any():
-        raise ValueError('empty foreground or terminal')
-    y0, x0 = coords.min(axis=0)
-    y1, x1 = coords.max(axis=0) + 1
-    local_fg = foreground[y0:y1, x0:x1]
+    padding: int = 16,
+) -> Tuple[np.ndarray, float, Dict]:
+    """Solve a weighted 8-neighbour vertex cut with a sparse max-flow graph.
+
+    The graph uses node splitting, but all split and 8-neighbour edges are
+    assembled as NumPy arrays before construction of the CSR matrix. The
+    returned graph statistics are used only for epoch-level diagnostics.
+    """
+    terminal_union = np.logical_or(source_mask, target_mask)
+    terminal_coords = np.argwhere(terminal_union)
+    if terminal_coords.size == 0:
+        raise ValueError('empty terminal')
+    y0, x0 = terminal_coords.min(axis=0)
+    y1, x1 = terminal_coords.max(axis=0) + 1
+    y0 = max(0, int(y0) - int(padding))
+    x0 = max(0, int(x0) - int(padding))
+    y1 = min(foreground.shape[0], int(y1) + int(padding))
+    x1 = min(foreground.shape[1], int(x1) + int(padding))
+    local_bbox_pixels = int((y1 - y0) * (x1 - x0))
+
+    local_fg = foreground[y0:y1, x0:x1].astype(bool, copy=False)
     local_prob = probability[y0:y1, x0:x1]
     local_source = source_mask[y0:y1, x0:x1] & local_fg
     local_target = target_mask[y0:y1, x0:x1] & local_fg
@@ -415,49 +446,110 @@ def _minimum_vertex_cut(
         np.zeros_like(local_fg, dtype=bool) if protected_mask is None
         else protected_mask[y0:y1, x0:x1] & local_fg
     )
-    local_coords = np.argwhere(local_fg)
-    index = -np.ones(local_fg.shape, dtype=np.int64)
-    index[local_fg] = np.arange(local_coords.shape[0])
-    node_count = int(local_coords.shape[0])
+    if not local_fg.any() or not local_source.any() or not local_target.any():
+        raise ValueError('empty foreground or terminal')
+
+    pixel_index = -np.ones(local_fg.shape, dtype=np.int64)
+    pixel_index[local_fg] = np.arange(int(local_fg.sum()), dtype=np.int64)
+    node_count = int(local_fg.sum())
+    pixel_ids = np.arange(node_count, dtype=np.int64)
+    node_in = 2 * pixel_ids
+    node_out = node_in + 1
     source = 2 * node_count
     sink = source + 1
-    graph = nx.DiGraph()
-    graph.add_nodes_from(range(sink + 1))
-    costs = np.maximum(local_prob[local_fg] - float(tau), 1e-4)
-    inf = max(1e6, float(costs.sum()) + 1.0)
-    terminal = local_source | local_target | local_protected
-    for node_id, (y, x) in enumerate(local_coords):
-        node_in = 2 * node_id
-        node_out = node_in + 1
-        capacity = inf if terminal[y, x] else float(costs[node_id])
-        graph.add_edge(node_in, node_out, capacity=capacity)
-        for dy in (-1, 0, 1):
-            for dx in (-1, 0, 1):
-                if dy == 0 and dx == 0:
-                    continue
-                ny, nx_ = int(y + dy), int(x + dx)
-                if 0 <= ny < local_fg.shape[0] and 0 <= nx_ < local_fg.shape[1] and local_fg[ny, nx_]:
-                    graph.add_edge(node_out, 2 * int(index[ny, nx_]), capacity=inf)
-    for y, x in np.argwhere(local_source):
-        graph.add_edge(source, 2 * int(index[y, x]), capacity=inf)
-    for y, x in np.argwhere(local_target):
-        graph.add_edge(2 * int(index[y, x]) + 1, sink, capacity=inf)
 
-    _value, partition = nx.minimum_cut(graph, source, sink, capacity='capacity')
-    reachable, _non_reachable = partition
+    costs = np.maximum(local_prob[local_fg] - float(tau), 1e-4)
+    cost_int = np.maximum(
+        1, np.rint(costs * CC_GRAPH_CAPACITY_SCALE)
+    ).astype(np.int64)
+    finite_capacity_sum = int(cost_int.sum(dtype=np.int64))
+    if finite_capacity_sum >= np.iinfo(np.int64).max - 1:
+        raise OverflowError('pixel cut capacity sum exceeds int64')
+    inf = np.int64(finite_capacity_sum + 1)
+    terminal = local_source | local_target | local_protected
+
+    build_start = time.perf_counter()
+    # Node-splitting and terminal edges are built in bulk. The four offsets
+    # cover each undirected 8-neighbour pair exactly once, then both directed
+    # arcs are emitted for the max-flow graph.
+    rows_parts = [node_in]
+    cols_parts = [node_out]
+    data_parts = [np.where(terminal[local_fg], inf, cost_int)]
+    for dy, dx in ((0, 1), (1, 0), (1, 1), (1, -1)):
+        source_y = slice(max(0, -dy), min(local_fg.shape[0], local_fg.shape[0] - dy))
+        source_x = slice(max(0, -dx), min(local_fg.shape[1], local_fg.shape[1] - dx))
+        target_y = slice(max(0, dy), min(local_fg.shape[0], local_fg.shape[0] + dy))
+        target_x = slice(max(0, dx), min(local_fg.shape[1], local_fg.shape[1] + dx))
+        pair_mask = local_fg[source_y, source_x] & local_fg[target_y, target_x]
+        source_ids = pixel_index[source_y, source_x][pair_mask]
+        target_ids = pixel_index[target_y, target_x][pair_mask]
+        rows_parts.extend((2 * source_ids + 1, 2 * target_ids + 1))
+        cols_parts.extend((2 * target_ids, 2 * source_ids))
+        data_parts.extend((
+            np.full(source_ids.shape, inf, dtype=np.int64),
+            np.full(source_ids.shape, inf, dtype=np.int64),
+        ))
+
+    source_ids = pixel_index[local_source]
+    target_ids = pixel_index[local_target]
+    rows_parts.extend((np.full(source_ids.shape, source, dtype=np.int64),
+                       2 * target_ids + 1))
+    cols_parts.extend((2 * source_ids, np.full(target_ids.shape, sink, dtype=np.int64)))
+    data_parts.extend((
+        np.full(source_ids.shape, inf, dtype=np.int64),
+        np.full(target_ids.shape, inf, dtype=np.int64),
+    ))
+
+    graph = csr_matrix(
+        (
+            np.concatenate(data_parts),
+            (np.concatenate(rows_parts), np.concatenate(cols_parts)),
+        ),
+        shape=(sink + 1, sink + 1),
+        dtype=np.int64,
+    )
+    graph.sum_duplicates()
+    graph.eliminate_zeros()
+    build_runtime = time.perf_counter() - build_start
+    edge_count = int(graph.nnz)
+
+    solve_start = time.perf_counter()
+    flow_result = maximum_flow(graph, source, sink)
+    solve_runtime = time.perf_counter() - solve_start
+
+    # SciPy stores signed flow in residual. Subtracting it from the original
+    # capacity yields positive residual capacities in both directions.
+    residual_capacity = (graph - flow_result.residual).tocsr()
+    residual_capacity.data = (residual_capacity.data > 0).astype(np.int8)
+    residual_capacity.eliminate_zeros()
+    reachable = breadth_first_order(
+        residual_capacity,
+        source,
+        directed=True,
+        return_predecessors=False,
+    )
+    reachable_nodes = np.zeros(sink + 1, dtype=bool)
+    reachable_nodes[reachable] = True
+    cut_ids = pixel_ids[
+        reachable_nodes[node_in] & ~reachable_nodes[node_out]
+    ]
+    if cut_ids.size and terminal[local_fg][cut_ids].any():
+        raise ValueError('minimum cut crossed a protected terminal')
+    if cut_ids.size == 0:
+        raise ValueError('minimum cut returned an empty cut')
+
     cut_local = np.zeros(local_fg.shape, dtype=bool)
-    cut_cost = 0.0
-    for node_id, (y, x) in enumerate(local_coords):
-        if 2 * node_id in reachable and 2 * node_id + 1 not in reachable:
-            if terminal[y, x]:
-                raise ValueError('minimum cut crossed a protected terminal')
-            cut_local[y, x] = True
-            cut_cost += float(costs[node_id])
+    local_foreground_ids = np.flatnonzero(local_fg)
+    cut_local.flat[local_foreground_ids[cut_ids]] = True
     cut_mask = np.zeros(foreground.shape, dtype=bool)
     cut_mask[y0:y1, x0:x1] = cut_local
-    if not cut_mask.any():
-        raise ValueError('minimum cut returned an empty cut')
-    return cut_mask, cut_cost
+    return cut_mask, float(costs[cut_ids].sum()), {
+        'build_runtime': build_runtime,
+        'solve_runtime': solve_runtime,
+        'node_count': node_count,
+        'edge_count': edge_count,
+        'local_bbox_pixels': local_bbox_pixels,
+    }
 
 
 def _minimum_completion_path(
@@ -582,6 +674,12 @@ def _empty_localization_result(shape, compute_cut=True, compute_join=True, reaso
         'cut_failure': bool(reason) and not skipped if compute_cut else False,
         'join_failure': bool(reason) and not skipped if compute_join else False,
         'cut_runtime': 0.0,
+        'cut_build_runtime': 0.0,
+        'cut_solve_runtime': 0.0,
+        'cut_validate_runtime': 0.0,
+        'cut_node_count': 0,
+        'cut_edge_count': 0,
+        'cut_local_bbox_pixels': 0,
         'join_runtime': 0.0,
         'compute_cut': bool(compute_cut),
         'cut_attempt': False,
@@ -605,6 +703,7 @@ def localize_cc_graph_conflict(
     max_terminal_count: Optional[int] = None,
     max_cut_area: Optional[int] = None,
     max_cut_bbox_pixels: Optional[int] = None,
+    cut_padding: int = 16,
 ) -> Dict:
     """Localize one merge/split event with minimum cut and completion paths."""
     probability_a = np.asarray(prob_a, dtype=np.float32)
@@ -649,14 +748,25 @@ def localize_cc_graph_conflict(
     cut_failure = False
     join_failure = False
     cut_runtime = 0.0
+    cut_build_runtime = 0.0
+    cut_solve_runtime = 0.0
+    cut_validate_runtime = 0.0
+    cut_node_count = 0
+    cut_edge_count = 0
+    cut_local_bbox_pixels = 0
     join_runtime = 0.0
     cut_attempt = False
     cut_area_skip = False
     cut_bbox_skip = False
 
     if compute_cut:
-        bbox_height = connected_component.bbox[0].stop - connected_component.bbox[0].start
-        bbox_width = connected_component.bbox[1].stop - connected_component.bbox[1].start
+        cut_bbox = _expanded_bbox(
+            (terminal_cores[0], terminal_cores[1]),
+            probability_a.shape,
+            padding=cut_padding,
+        )
+        bbox_height = cut_bbox[0].stop - cut_bbox[0].start
+        bbox_width = cut_bbox[1].stop - cut_bbox[1].start
         if max_cut_area is not None and connected_component.area > max_cut_area:
             cut_failure = True
             cut_area_skip = True
@@ -675,7 +785,7 @@ def localize_cc_graph_conflict(
             cut_attempt = True
             cut_start = time.perf_counter()
             try:
-                pair_cut, pair_cost = _minimum_vertex_cut(
+                pair_cut, pair_cost, pair_stats = _minimum_vertex_cut(
                     connected_component.mask,
                     connected_probability,
                     terminal_cores[first],
@@ -685,8 +795,16 @@ def localize_cc_graph_conflict(
                         [connected_component.mask & component.mask
                          for component in separated_components]
                     ),
+                    padding=cut_padding,
                 )
                 cut_mask |= pair_cut
+                cut_build_runtime += pair_stats['build_runtime']
+                cut_solve_runtime += pair_stats['solve_runtime']
+                cut_node_count = max(cut_node_count, pair_stats['node_count'])
+                cut_edge_count = max(cut_edge_count, pair_stats['edge_count'])
+                cut_local_bbox_pixels = max(
+                    cut_local_bbox_pixels, pair_stats['local_bbox_pixels']
+                )
             except Exception:
                 cut_failure = True
             cut_runtime += time.perf_counter() - cut_start
@@ -720,11 +838,15 @@ def localize_cc_graph_conflict(
         np.maximum(float(tau) - separated_probability, 0.0)[join_mask].sum()
     ) if join_mask.any() else 0.0
 
+    cut_validate_start = time.perf_counter()
     cut_flip_success = bool(
         compute_cut and cut_mask.any() and _groups_all_separated(
             connected_component.mask & (~cut_mask), terminal_cores
         )
     )
+    if compute_cut:
+        cut_validate_runtime = time.perf_counter() - cut_validate_start
+        cut_runtime += cut_validate_runtime
     join_flip_success = bool(
         compute_join and join_mask.any() and _groups_connected(
             separated_foreground | join_mask, terminal_cores
@@ -765,6 +887,12 @@ def localize_cc_graph_conflict(
         'cut_failure': cut_failure,
         'join_failure': join_failure,
         'cut_runtime': cut_runtime,
+        'cut_build_runtime': cut_build_runtime,
+        'cut_solve_runtime': cut_solve_runtime,
+        'cut_validate_runtime': cut_validate_runtime,
+        'cut_node_count': cut_node_count,
+        'cut_edge_count': cut_edge_count,
+        'cut_local_bbox_pixels': cut_local_bbox_pixels,
         'join_runtime': join_runtime,
         'compute_cut': bool(compute_cut),
         'cut_attempt': cut_attempt,
@@ -853,6 +981,12 @@ def _record_sample_statistics(state: Dict, sample: Dict, localizations: Sequence
             state['cut_area_skip_events'] += 1
         if result.get('cut_bbox_skip', False):
             state['cut_bbox_skip_events'] += 1
+        if result.get('cut_attempt', False) and result.get('cut_node_count', 0) > 0:
+            state['cut_node_counts'].append(int(result['cut_node_count']))
+            state['cut_edge_counts'].append(int(result['cut_edge_count']))
+            state['cut_local_bbox_pixels'].append(
+                int(result['cut_local_bbox_pixels'])
+            )
         connected_area = conflict.connected_component.area
         separated_area = sum(component.area for component in conflict.separated_components)
         state['connected_areas'].append(float(connected_area))
@@ -912,7 +1046,11 @@ def _record_sample_statistics(state: Dict, sample: Dict, localizations: Sequence
 
 
 def _merge_runtime(state: Dict, runtime: Dict):
-    for key in ('runtime_cc', 'runtime_correspondence', 'runtime_cut', 'runtime_join', 'runtime_total'):
+    for key in (
+        'runtime_cc', 'runtime_correspondence', 'runtime_cut',
+        'runtime_cut_build', 'runtime_cut_solve', 'runtime_cut_validate',
+        'runtime_join', 'runtime_total',
+    ):
         state[key] += float(runtime.get(key, 0.0))
 
 
@@ -929,6 +1067,7 @@ def analyze_cc_graph_batch(
     max_terminal_count: Optional[int] = None,
     max_cut_area: Optional[int] = None,
     max_cut_bbox_pixels: Optional[int] = None,
+    cut_padding: int = 16,
 ) -> Dict:
     """Analyze one detached batch and return localizations plus timing."""
     total_start = time.perf_counter()
@@ -964,6 +1103,7 @@ def analyze_cc_graph_batch(
                         max_terminal_count=max_terminal_count,
                         max_cut_area=max_cut_area,
                         max_cut_bbox_pixels=max_cut_bbox_pixels,
+                        cut_padding=cut_padding,
                     )
             except Exception:
                 # A single malformed/oversized event must never abort the
@@ -982,6 +1122,21 @@ def analyze_cc_graph_batch(
         'runtime_cc': cc_time,
         'runtime_correspondence': correspondence_time,
         'runtime_cut': cut_time,
+        'runtime_cut_build': sum(
+            result['cut_build_runtime']
+            for sample_results in localizations
+            for result in sample_results
+        ),
+        'runtime_cut_solve': sum(
+            result['cut_solve_runtime']
+            for sample_results in localizations
+            for result in sample_results
+        ),
+        'runtime_cut_validate': sum(
+            result['cut_validate_runtime']
+            for sample_results in localizations
+            for result in sample_results
+        ),
         'runtime_join': join_time,
         'runtime_total': time.perf_counter() - total_start,
     }
@@ -1012,6 +1167,7 @@ def build_cc_graph_cps_weights(
     compute_join: bool = False,
     max_cut_area: Optional[int] = 6000,
     max_cut_bbox_pixels: Optional[int] = 12000,
+    cut_padding: int = 16,
 ) -> Tuple[np.ndarray, np.ndarray, Dict]:
     """Return bidirectional CPS weights and one-batch CC-Graph diagnostics."""
     if roi_mode != 'cut':
@@ -1026,6 +1182,7 @@ def build_cc_graph_cps_weights(
         max_terminal_count=2,
         max_cut_area=max_cut_area,
         max_cut_bbox_pixels=max_cut_bbox_pixels,
+        cut_padding=cut_padding,
     )
     weight_a_from_b = np.ones(prob_a_np.shape, dtype=np.float32)
     weight_b_from_a = np.ones(prob_b_np.shape, dtype=np.float32)
@@ -1072,7 +1229,8 @@ def accumulate_cc_graph_state(target: Dict, source: Dict):
     for key in (
         'cut_costs', 'join_costs', 'cut_pixels', 'join_pixels',
         'cut_join_ious', 'cut_join_distances', 'connected_areas',
-        'separated_areas',
+        'separated_areas', 'cut_node_counts', 'cut_edge_counts',
+        'cut_local_bbox_pixels',
     ):
         target[key].extend(source[key])
     _merge_runtime(target, source)
@@ -1132,8 +1290,17 @@ def finalize_cc_graph_epoch_state(state: Dict) -> Dict:
         'runtime_cc': state['runtime_cc'],
         'runtime_correspondence': state['runtime_correspondence'],
         'runtime_cut': state['runtime_cut'],
+        'runtime_cut_build': state['runtime_cut_build'],
+        'runtime_cut_solve': state['runtime_cut_solve'],
+        'runtime_cut_validate': state['runtime_cut_validate'],
         'runtime_join': state['runtime_join'],
         'runtime_total': state['runtime_total'],
+        'cut_node_count_mean': _nanmean(state['cut_node_counts']),
+        'cut_node_count_max': max(state['cut_node_counts'], default=0),
+        'cut_edge_count_mean': _nanmean(state['cut_edge_counts']),
+        'cut_edge_count_max': max(state['cut_edge_counts'], default=0),
+        'cut_local_bbox_pixels_mean': _nanmean(state['cut_local_bbox_pixels']),
+        'cut_local_bbox_pixels_max': max(state['cut_local_bbox_pixels'], default=0),
         'gt_valid_conflicts': gt_valid,
         'connected_side_correct_events': state['connected_side_correct_events'],
         'separated_side_correct_events': state['separated_side_correct_events'],

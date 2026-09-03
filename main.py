@@ -501,12 +501,13 @@ def _experiment_name(args, split_sup_mark, split_unsup_mark):
         if getattr(args, 'ph_presence_conflict_mode', 'strict') != 'strict':
             experiment_name += '-presence={}'.format(args.ph_presence_conflict_mode)
     if getattr(args, 'cc_graph', False):
-        experiment_name += '-cc_graph-start={}-cov={}-int={}-area={}-bbox={}-fd={}'.format(
+        experiment_name += '-cc_graph-start={}-cov={}-int={}-area={}-bbox={}-pad={}-fd={}'.format(
             args.cc_graph_start_epoch,
             args.cc_graph_min_coverage,
             args.cc_graph_min_intersection,
             args.cc_graph_max_cut_area,
             args.cc_graph_max_cut_bbox_pixels,
+            args.cc_graph_cut_padding,
             args.cc_graph_full_diagnostic_interval,
         )
     return experiment_name
@@ -753,6 +754,7 @@ def train_one_epoch(
                     compute_join=False,
                     max_cut_area=args.cc_graph_max_cut_area,
                     max_cut_bbox_pixels=args.cc_graph_max_cut_bbox_pixels,
+                    cut_padding=args.cc_graph_cut_padding,
                 )
                 accumulate_cc_graph_state(cc_graph_state, cc_analysis['state'])
                 # V1 uses the connected-side cut ROI in both CPS directions.
@@ -1145,6 +1147,7 @@ def validate(
                     max_terminal_count=cc_graph_params['max_terminal_count'],
                     max_cut_area=cc_graph_params['max_cut_area'],
                     max_cut_bbox_pixels=cc_graph_params['max_cut_bbox_pixels'],
+                    cut_padding=cc_graph_params['cut_padding'],
                 )
                 update_cc_graph_state(cc_graph_state, cc_analysis, gt=mask)
                 if cc_graph_vis_enabled and cc_graph_vis_dir is not None:
@@ -1576,9 +1579,12 @@ def train_model(
                     'agreement_radius': args.cc_graph_agreement_radius,
                     'compute_cut': cc_graph_full_diagnostic,
                     'compute_join': cc_graph_full_diagnostic,
-                    'max_terminal_count': None if cc_graph_full_diagnostic else 2,
+                    # Online validation is also restricted to one terminal
+                    # pair; multi-terminal analysis is offline-only.
+                    'max_terminal_count': 2,
                     'max_cut_area': args.cc_graph_max_cut_area,
                     'max_cut_bbox_pixels': args.cc_graph_max_cut_bbox_pixels,
+                    'cut_padding': args.cc_graph_cut_padding,
                 }
             cc_graph_vis_enabled = (
                 cc_graph_full_diagnostic
@@ -2293,7 +2299,13 @@ def parse_args():
         '--cc_graph_max_cut_bbox_pixels',
         default=12000,
         type=int,
-        help='skip pixel cut when its component bbox exceeds this size',
+        help='skip pixel cut when its relation-local bbox exceeds this size',
+    )
+    parser.add_argument(
+        '--cc_graph_cut_padding',
+        default=16,
+        type=int,
+        help='padding around the two terminal cores for the local pixel cut',
     )
     parser.add_argument(
         '--cc_graph_full_diagnostic_interval',
@@ -2464,6 +2476,8 @@ def parse_args():
         parser.error('--cc_graph_max_cut_area must be non-negative')
     if args.cc_graph_max_cut_bbox_pixels < 0:
         parser.error('--cc_graph_max_cut_bbox_pixels must be non-negative')
+    if args.cc_graph_cut_padding < 0:
+        parser.error('--cc_graph_cut_padding must be non-negative')
     if args.cc_graph_full_diagnostic_interval < 0:
         parser.error('--cc_graph_full_diagnostic_interval must be non-negative')
     if args.ph_start_epoch < 1:
