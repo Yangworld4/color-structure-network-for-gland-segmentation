@@ -39,10 +39,127 @@ class PHMergeTree:
             )
             self.edges.append(merge_edge)
             self.edge_by_child[merge_edge.child_id] = (index, merge_edge)
+        self._query_index = None
+
+    def build_query_index(self):
+        """Build the binary-lifting index used by sparse relation questions."""
+        if self._query_index is not None:
+            return self._query_index
+        node_ids = sorted(self.branches)
+        if not node_ids:
+            self._query_index = {
+                'depth': {}, 'root': {}, 'up': [], 'min_merge': [],
+                'min_edge': [], 'max_log': 0,
+            }
+            return self._query_index
+        parent = {node_id: node_id for node_id in node_ids}
+        parent_edge = {}
+        for child, (_edge_id, edge) in self.edge_by_child.items():
+            if child in parent and int(edge.parent_id) in self.branches:
+                parent[child] = int(edge.parent_id)
+                parent_edge[child] = (_edge_id, edge)
+
+        depth = {}
+        root = {}
+        visiting = set()
+
+        def visit(node):
+            if node in depth:
+                return
+            if node in visiting:
+                # A malformed PH decomposition is treated as a singleton root.
+                depth[node] = 0
+                root[node] = node
+                return
+            visiting.add(node)
+            ancestor = parent[node]
+            if ancestor == node or ancestor not in parent:
+                depth[node] = 0
+                root[node] = node
+            else:
+                visit(ancestor)
+                depth[node] = depth[ancestor] + 1
+                root[node] = root[ancestor]
+            visiting.discard(node)
+
+        for node_id in node_ids:
+            visit(node_id)
+
+        max_log = max(1, max(depth.values(), default=0).bit_length() + 1)
+        up = []
+        min_merge = []
+        min_edge = []
+        up0 = {node_id: parent[node_id] for node_id in node_ids}
+        merge0 = {node_id: float('inf') for node_id in node_ids}
+        edge0 = {node_id: -1 for node_id in node_ids}
+        for child, (edge_id, edge) in parent_edge.items():
+            merge0[child] = float(edge.merge_level)
+            edge0[child] = int(edge_id)
+        up.append(up0)
+        min_merge.append(merge0)
+        min_edge.append(edge0)
+        for level in range(1, max_log):
+            previous_up = up[-1]
+            previous_merge = min_merge[-1]
+            previous_edge = min_edge[-1]
+            current_up = {}
+            current_merge = {}
+            current_edge = {}
+            for node_id in node_ids:
+                middle = previous_up[node_id]
+                current_up[node_id] = previous_up[middle]
+                first = (previous_merge[node_id], previous_edge[node_id])
+                second = (previous_merge[middle], previous_edge[middle])
+                current_merge[node_id], current_edge[node_id] = _min_edge_pair(
+                    first, second
+                )
+            up.append(current_up)
+            min_merge.append(current_merge)
+            min_edge.append(current_edge)
+        self._query_index = {
+            'depth': depth,
+            'root': root,
+            'up': up,
+            'min_merge': min_merge,
+            'min_edge': min_edge,
+            'max_log': max_log,
+        }
+        return self._query_index
+
+    def path_branch_ids(self, branch_u, branch_v):
+        """Return branch IDs on the unique tree path, including both ends."""
+        index = self.build_query_index()
+        u = int(branch_u)
+        v = int(branch_v)
+        if u not in self.branches or v not in self.branches:
+            return []
+        if index['root'].get(u) != index['root'].get(v):
+            return []
+        left = []
+        right = []
+        while index['depth'][u] > index['depth'][v]:
+            left.append(u)
+            u = index['up'][0][u]
+        while index['depth'][v] > index['depth'][u]:
+            right.append(v)
+            v = index['up'][0][v]
+        while u != v:
+            left.append(u)
+            right.append(v)
+            u = index['up'][0][u]
+            v = index['up'][0][v]
+        return left + [u] + list(reversed(right))
 
 
 def build_merge_hierarchy(decomposition):
     return PHMergeTree(decomposition.branches, decomposition.edges)
+
+
+def _min_edge_pair(first, second):
+    """Select the lower merge level while retaining its edge identity."""
+    if first[0] <= second[0]:
+        return first
+    return second
 
 
 def trace_to_root(tree, branch_id):
@@ -106,6 +223,53 @@ def query_pair_merge(tree, branch_u, branch_v):
     )
 
 
+def query_pair_merge_fast(tree, branch_u, branch_v):
+    """Query the first superlevel connection in O(log B) after preprocessing."""
+    index = tree.build_query_index()
+    u = int(branch_u)
+    v = int(branch_v)
+    if u not in tree.branches or v not in tree.branches:
+        return None, None, None
+    if u == v:
+        branch = tree.branches[u]
+        return float(branch.birth), tuple(branch.birth_coord), -1
+    if index['root'].get(u) != index['root'].get(v):
+        return None, None, None
+
+    best = (float('inf'), -1)
+
+    def take(level, node):
+        nonlocal best
+        best = _min_edge_pair(
+            best,
+            (index['min_merge'][level][node], index['min_edge'][level][node]),
+        )
+
+    if index['depth'][u] < index['depth'][v]:
+        u, v = v, u
+    depth_delta = index['depth'][u] - index['depth'][v]
+    level = 0
+    while depth_delta:
+        if depth_delta & 1:
+            take(level, u)
+            u = index['up'][level][u]
+        depth_delta >>= 1
+        level += 1
+    if u != v:
+        for level in range(index['max_log'] - 1, -1, -1):
+            if index['up'][level][u] != index['up'][level][v]:
+                take(level, u)
+                take(level, v)
+                u = index['up'][level][u]
+                v = index['up'][level][v]
+        take(0, u)
+        take(0, v)
+    if not np.isfinite(best[0]) or best[1] < 0:
+        return None, None, None
+    edge = tree.edges[best[1]]
+    return float(best[0]), tuple(edge.saddle_coord), int(best[1])
+
+
 def query_ph_relation(tree, branch_u, branch_v, tau=0.5):
     branch_u = int(branch_u)
     branch_v = int(branch_v)
@@ -113,10 +277,11 @@ def query_ph_relation(tree, branch_u, branch_v, tau=0.5):
     v = tree.branches.get(branch_v)
     if u is None or v is None:
         return PHRelationQuery(ABSENT, 0.0, None, -1)
+    # Keep the legacy public semantic intact. Structural projection calls the
+    # fast query directly and deliberately does not apply this presence filter.
     if float(u.birth) < tau or float(v.birth) < tau:
         return PHRelationQuery(ABSENT, 0.0, None, -1)
-
-    merge_level, saddle_coord, edge_id = query_pair_merge(tree, branch_u, branch_v)
+    merge_level, saddle_coord, edge_id = query_pair_merge_fast(tree, branch_u, branch_v)
     if merge_level is None:
         return PHRelationQuery(ABSENT, 0.0, None, -1)
     state = CONNECTED if float(merge_level) >= tau else SEPARATED

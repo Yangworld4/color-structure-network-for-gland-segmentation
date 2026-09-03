@@ -53,6 +53,15 @@ from utils.ph_directional_cps import (
     update_ph_directional_vanilla_state,
 )
 from utils.structural_diagnostics import StructuralDiagnostics
+from utils.structural_projection import (
+    STRUCTURAL_PROJECTION_FIELDS,
+    compute_structural_projection,
+    compute_structural_projection_cps_losses,
+    finalize_structural_projection_epoch_state,
+    has_compiled_mincut_backend,
+    new_structural_projection_epoch_state,
+    update_structural_projection_epoch_state,
+)
 
 
 simplefilter(action='ignore', category=FutureWarning)
@@ -479,6 +488,16 @@ def _experiment_name(args, split_sup_mark, split_unsup_mark):
             experiment_name += '-rel={}'.format(args.ph_relation_backend)
         if getattr(args, 'ph_presence_conflict_mode', 'strict') != 'strict':
             experiment_name += '-presence={}'.format(args.ph_presence_conflict_mode)
+    if getattr(args, 'use_structural_projection', False):
+        experiment_name += (
+            '-struct_projection-start={}-tau={}-margin={}-max={}-kappa={}'
+        ).format(
+            args.struct_start_epoch,
+            args.struct_tau,
+            args.struct_graph_margin,
+            args.struct_graph_max_pixels,
+            args.struct_arbitration_threshold,
+        )
     return experiment_name
 
 
@@ -605,6 +624,7 @@ def train_one_epoch(
     metrics_writer,
     metrics_file,
     ph_mask_state=None,
+    structural_projection_state=None,
 ):
     model1, model2 = models
     optimizer1, optimizer2 = optimizers
@@ -699,7 +719,46 @@ def train_one_epoch(
             and ph_mask_state is not None
             and (epoch + 1) >= args.ph_start_epoch
         )
-        if ph_directional_active:
+        structural_projection_active = (
+            args.use_structural_projection
+            and structural_projection_state is not None
+            and (epoch + 1) >= args.struct_start_epoch
+        )
+        if structural_projection_active:
+            with torch.no_grad():
+                prob_a = torch.softmax(unsup_prediction1.detach(), dim=1)[:, 1]
+                prob_b = torch.softmax(unsup_prediction2.detach(), dim=1)[:, 1]
+                projection = compute_structural_projection(
+                    prob_a.cpu().numpy(),
+                    prob_b.cpu().numpy(),
+                    tau=args.struct_tau,
+                    graph_margin=args.struct_graph_margin,
+                    graph_max_pixels=args.struct_graph_max_pixels,
+                    arbitration_threshold=args.struct_arbitration_threshold,
+                    use_ph_corridor=args.struct_use_ph_corridor,
+                    use_mincut_fallback=args.struct_use_mincut_fallback,
+                    connectivity=args.struct_connectivity,
+                    matching=args.struct_matching,
+                )
+            update_structural_projection_epoch_state(
+                structural_projection_state, projection['stats']
+            )
+            has_structural_pixels = bool(
+                projection['struct_mask_a'].any()
+                or projection['struct_mask_b'].any()
+                or projection['abstain_mask_a'].any()
+                or projection['abstain_mask_b'].any()
+            )
+            if not has_structural_pixels:
+                # No accepted relation and no abstention: preserve vanilla CPS exactly.
+                cps_losses = compute_cps_losses(
+                    losses['ce'], unsup_prediction1, unsup_prediction2
+                )
+            else:
+                cps_losses = compute_structural_projection_cps_losses(
+                    unsup_prediction1, unsup_prediction2, projection
+                )
+        elif ph_directional_active:
             cps_losses = compute_ph_directional_cps_losses(
                 unsup_prediction1,
                 unsup_prediction2,
@@ -1331,6 +1390,9 @@ def train_model(
     ) = build_training_components(args, cfg)
     structural_diagnostics = None
     ph_diagnostics_path = os.path.join(trained_models_path, 'ph_diagnostics.csv')
+    structural_projection_path = os.path.join(
+        trained_models_path, 'structural_projection_metrics.csv'
+    )
     use_ph_diagnostics_csv = (
         args.ph_directional_cps
         and args.ph_conflict_detector == 'persistent_relation'
@@ -1338,6 +1400,9 @@ def train_model(
     )
     if use_ph_diagnostics_csv:
         print('PH diagnostics CSV:', ph_diagnostics_path)
+    use_structural_projection_csv = bool(args.use_structural_projection)
+    if use_structural_projection_csv:
+        print('Structural projection metrics CSV:', structural_projection_path)
     ph_vis_state = {'sample_ids': None}
 
     model1, model2 = models
@@ -1368,6 +1433,17 @@ def train_model(
                 ph_diagnostics_file, fieldnames=PH_DIAGNOSTIC_FIELDS
             )
             ph_diagnostics_writer.writeheader()
+        structural_projection_file = None
+        structural_projection_writer = None
+        if use_structural_projection_csv:
+            structural_projection_file = open(
+                structural_projection_path, 'w', newline='', encoding='utf-8'
+            )
+            structural_projection_writer = csv.DictWriter(
+                structural_projection_file,
+                fieldnames=STRUCTURAL_PROJECTION_FIELDS,
+            )
+            structural_projection_writer.writeheader()
 
         for epoch in range(args.num_epochs):
             epoch_start = time.time()
@@ -1383,6 +1459,13 @@ def train_model(
                 )
             else:
                 ph_mask_state = None
+            structural_projection_state = (
+                new_structural_projection_epoch_state(
+                    epoch + 1,
+                    (epoch + 1) >= args.struct_start_epoch,
+                )
+                if args.use_structural_projection else None
+            )
             loss_totals, train_predictions, global_step = train_one_epoch(
                 args,
                 epoch,
@@ -1394,7 +1477,15 @@ def train_model(
                 metrics_writer,
                 metrics_file,
                 ph_mask_state,
+                structural_projection_state,
             )
+            if structural_projection_writer is not None:
+                structural_projection_writer.writerow(
+                    finalize_structural_projection_epoch_state(
+                        structural_projection_state
+                    )
+                )
+                structural_projection_file.flush()
             schedulers[0].step()
             schedulers[1].step()
 
@@ -1648,6 +1739,8 @@ def train_model(
             _log_epoch(logger, args, metrics)
         if ph_diagnostics_file is not None:
             ph_diagnostics_file.close()
+        if structural_projection_file is not None:
+            structural_projection_file.close()
 
     elapsed = time.time() - training_start
     minutes, seconds = divmod(elapsed, 60)
@@ -2023,6 +2116,66 @@ def parse_args():
         help='E2 ablation: PH-guided directional CPS inside topology conflict ROIs',
     )
     parser.add_argument(
+        '--use-structural-projection',
+        action='store_true',
+        help='enable persistent relation-guided receiver-side structural projection CPS',
+    )
+    parser.add_argument(
+        '--struct-start-epoch',
+        default=20,
+        type=int,
+        help='first epoch that enables structural projection; earlier epochs use vanilla CPS',
+    )
+    parser.add_argument(
+        '--struct-tau',
+        default=0.5,
+        type=float,
+        help='task operating threshold for binary relation validation (not PH extraction)',
+    )
+    parser.add_argument(
+        '--struct-matching',
+        choices=('birth_nearest',),
+        default='birth_nearest',
+        help='persistent branch identity matching method',
+    )
+    parser.add_argument(
+        '--struct-graph-margin',
+        default=2,
+        type=int,
+        help='small dilation margin for relation-local structural graph domains',
+    )
+    parser.add_argument(
+        '--struct-graph-max-pixels',
+        default=4096,
+        type=int,
+        help='maximum relation-local domain size before abstention',
+    )
+    parser.add_argument(
+        '--struct-arbitration-threshold',
+        default=0.2,
+        type=float,
+        help='minimum normalized structural compatibility energy gap',
+    )
+    parser.add_argument(
+        '--struct-use-ph-corridor',
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help='try the PH merge corridor before local cut fallback',
+    )
+    parser.add_argument(
+        '--struct-use-mincut-fallback',
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help='use optional compiled local mincut when the PH corridor fails (auto by backend)',
+    )
+    parser.add_argument(
+        '--struct-connectivity',
+        choices=(4, 8),
+        default=8,
+        type=int,
+        help='pixel connectivity used by structural relation counterfactual checks',
+    )
+    parser.add_argument(
         '--ph-start-epoch',
         default=20,
         type=int,
@@ -2159,6 +2312,16 @@ def parse_args():
         parser.error('--struct-boundary-width must be non-negative')
     if args.ph_start_epoch < 1:
         parser.error('--ph-start-epoch must be >= 1')
+    if args.struct_start_epoch < 1:
+        parser.error('--struct-start-epoch must be >= 1')
+    if not 0.0 < args.struct_tau < 1.0:
+        parser.error('--struct-tau must be in (0, 1)')
+    if args.struct_graph_margin < 0:
+        parser.error('--struct-graph-margin must be non-negative')
+    if args.struct_graph_max_pixels < 1:
+        parser.error('--struct-graph-max-pixels must be positive')
+    if args.struct_arbitration_threshold < 0.0 or args.struct_arbitration_threshold > 1.0:
+        parser.error('--struct-arbitration-threshold must be in [0, 1]')
     if args.ph_mask_dilation < 0:
         parser.error('--ph-mask-dilation must be non-negative')
     if args.ph_match_radius < 0:
@@ -2170,6 +2333,10 @@ def parse_args():
         parser.error('--ph-validation-diagnostics-interval must be non-negative')
     if args.ph_mask_only and args.ph_directional_cps:
         parser.error('--ph-mask-only and --ph-directional-cps are mutually exclusive')
+    if args.use_structural_projection and (args.ph_mask_only or args.ph_directional_cps):
+        parser.error(
+            '--use-structural-projection cannot be combined with legacy PH CPS modes'
+        )
     if (
         args.struct_analysis_checkpoint is None
         and bool(args.struct_analysis_checkpoint_a) != bool(args.struct_analysis_checkpoint_b)
@@ -2188,6 +2355,8 @@ def parse_args():
         args.path_seg_results = 'seg_pred/semi_fdcl_paper_{}'.format(
             args.labeled_ratio
         )
+    if args.struct_use_mincut_fallback is None:
+        args.struct_use_mincut_fallback = has_compiled_mincut_backend()
     return args
 
 
