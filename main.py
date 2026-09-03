@@ -53,6 +53,16 @@ from utils.ph_directional_cps import (
     update_ph_directional_vanilla_state,
 )
 from utils.structural_diagnostics import StructuralDiagnostics
+from utils.cc_graph_cps import (
+    accumulate_cc_graph_state,
+    analyze_cc_graph_batch,
+    build_cc_graph_cps_weights,
+    finalize_cc_graph_epoch_state,
+    new_cc_graph_epoch_state,
+    save_cc_graph_overview,
+    update_cc_graph_state,
+    write_cc_graph_header,
+)
 
 
 simplefilter(action='ignore', category=FutureWarning)
@@ -112,6 +122,17 @@ def init_seeds(seed):
     os.environ['PYTHONHASHSEED'] = str(seed)
     torch.backends.cudnn.benchmark = False
     torch.backends.cudnn.deterministic = True
+
+
+def _parse_bool(value):
+    if isinstance(value, bool):
+        return value
+    normalized = str(value).strip().lower()
+    if normalized in ('1', 'true', 'yes', 'y', 'on'):
+        return True
+    if normalized in ('0', 'false', 'no', 'n', 'off'):
+        return False
+    raise argparse.ArgumentTypeError('expected a boolean value')
 
 
 def get_training_views(
@@ -479,6 +500,12 @@ def _experiment_name(args, split_sup_mark, split_unsup_mark):
             experiment_name += '-rel={}'.format(args.ph_relation_backend)
         if getattr(args, 'ph_presence_conflict_mode', 'strict') != 'strict':
             experiment_name += '-presence={}'.format(args.ph_presence_conflict_mode)
+    if getattr(args, 'cc_graph', False):
+        experiment_name += '-cc_graph-start={}-cov={}-int={}'.format(
+            args.cc_graph_start_epoch,
+            args.cc_graph_min_coverage,
+            args.cc_graph_min_intersection,
+        )
     return experiment_name
 
 
@@ -605,6 +632,7 @@ def train_one_epoch(
     metrics_writer,
     metrics_file,
     ph_mask_state=None,
+    cc_graph_state=None,
 ):
     model1, model2 = models
     optimizer1, optimizer2 = optimizers
@@ -699,7 +727,36 @@ def train_one_epoch(
             and ph_mask_state is not None
             and (epoch + 1) >= args.ph_start_epoch
         )
-        if ph_directional_active:
+        cc_graph_active = (
+            args.cc_graph
+            and cc_graph_state is not None
+            and (epoch + 1) >= args.cc_graph_start_epoch
+        )
+        if cc_graph_active:
+            with torch.no_grad():
+                prob_a = _foreground_probability(unsup_prediction1)[:, 0]
+                prob_b = _foreground_probability(unsup_prediction2)[:, 0]
+                weight_a_from_b, weight_b_from_a, cc_analysis = build_cc_graph_cps_weights(
+                    prob_a,
+                    prob_b,
+                    tau=args.cc_graph_tau,
+                    min_coverage=args.cc_graph_min_coverage,
+                    min_intersection=args.cc_graph_min_intersection,
+                    agreement_radius=args.cc_graph_agreement_radius,
+                    require_dual_agreement=args.cc_graph_require_dual_agreement,
+                    roi_mode=args.cc_graph_roi_mode,
+                )
+                accumulate_cc_graph_state(cc_graph_state, cc_analysis['state'])
+                # V1 uses the connected-side cut ROI in both CPS directions.
+                safe_mask = torch.from_numpy(weight_a_from_b).to(
+                    unsup_prediction1.device, non_blocking=True
+                )
+            cps_losses = compute_masked_cps_losses(
+                unsup_prediction1,
+                unsup_prediction2,
+                safe_mask,
+            )
+        elif ph_directional_active:
             cps_losses = compute_ph_directional_cps_losses(
                 unsup_prediction1,
                 unsup_prediction2,
@@ -1017,6 +1074,11 @@ def validate(
     structural_diagnostics=None,
     epoch_state=None,
     collect_inputs=False,
+    cc_graph_state=None,
+    cc_graph_params=None,
+    cc_graph_vis_enabled=False,
+    cc_graph_vis_dir=None,
+    cc_graph_vis_num_samples=4,
 ):
     model1, model2 = models
     model1.eval()
@@ -1060,6 +1122,31 @@ def validate(
             diagnostic_features['b'] = None
             output1 = model1(input1)[0]
             output2 = model2(input2)[0]
+            if cc_graph_state is not None and cc_graph_params is not None:
+                prob_a = _foreground_probability(output1)[:, 0]
+                prob_b = _foreground_probability(output2)[:, 0]
+                cc_analysis = analyze_cc_graph_batch(
+                    prob_a,
+                    prob_b,
+                    tau=cc_graph_params['tau'],
+                    min_coverage=cc_graph_params['min_coverage'],
+                    min_intersection=cc_graph_params['min_intersection'],
+                    agreement_radius=cc_graph_params['agreement_radius'],
+                )
+                update_cc_graph_state(cc_graph_state, cc_analysis, gt=mask)
+                if cc_graph_vis_enabled and cc_graph_vis_dir is not None:
+                    for sample, localizations, image in zip(
+                        cc_analysis['samples'],
+                        cc_analysis['localizations'],
+                        input1.detach().cpu().numpy(),
+                    ):
+                        if not sample['conflicts'] or len(cc_graph_state['visualizations']) >= cc_graph_vis_num_samples:
+                            continue
+                        cc_graph_state['visualizations'].append({
+                            'image': image,
+                            'sample': sample,
+                            'localizations': localizations,
+                        })
             if structural_diagnostics is not None and epoch_state is not None:
                 structural_diagnostics.update_batch(
                     epoch_state,
@@ -1330,6 +1417,12 @@ def train_model(
         losses,
     ) = build_training_components(args, cfg)
     structural_diagnostics = None
+    cc_graph_metrics_path = os.path.join(
+        trained_models_path, 'cc_graph_metrics.csv'
+    )
+    use_cc_graph = bool(args.cc_graph)
+    if use_cc_graph:
+        print('CC-Graph metrics CSV:', cc_graph_metrics_path)
     ph_diagnostics_path = os.path.join(trained_models_path, 'ph_diagnostics.csv')
     use_ph_diagnostics_csv = (
         args.ph_directional_cps
@@ -1368,9 +1461,24 @@ def train_model(
                 ph_diagnostics_file, fieldnames=PH_DIAGNOSTIC_FIELDS
             )
             ph_diagnostics_writer.writeheader()
+        cc_graph_file = None
+        cc_graph_writer = None
+        if use_cc_graph:
+            cc_graph_file = open(
+                cc_graph_metrics_path, 'w', newline='', encoding='utf-8'
+            )
+            cc_graph_writer = write_cc_graph_header(cc_graph_file)
 
         for epoch in range(args.num_epochs):
             epoch_start = time.time()
+            cc_graph_active = (
+                use_cc_graph and (epoch + 1) >= args.cc_graph_start_epoch
+            )
+            cc_graph_train_state = (
+                new_cc_graph_epoch_state(epoch + 1, enabled=True)
+                if cc_graph_active
+                else new_cc_graph_epoch_state(epoch + 1, enabled=False)
+            ) if use_cc_graph else None
             if args.ph_mask_only:
                 ph_mask_state = new_ph_mask_epoch_state(
                     epoch + 1,
@@ -1394,6 +1502,7 @@ def train_model(
                 metrics_writer,
                 metrics_file,
                 ph_mask_state,
+                cc_graph_train_state,
             )
             schedulers[0].step()
             schedulers[1].step()
@@ -1431,6 +1540,24 @@ def train_model(
                 ph_validation_interval > 0
                 and (epoch + 1) % ph_validation_interval == 0
             )
+            cc_graph_validation_state = (
+                new_cc_graph_epoch_state(epoch + 1, enabled=True)
+                if cc_graph_active else None
+            )
+            cc_graph_params = None
+            if cc_graph_active:
+                cc_graph_params = {
+                    'tau': args.cc_graph_tau,
+                    'min_coverage': args.cc_graph_min_coverage,
+                    'min_intersection': args.cc_graph_min_intersection,
+                    'agreement_radius': args.cc_graph_agreement_radius,
+                }
+            cc_graph_vis_enabled = (
+                cc_graph_active
+                and args.cc_graph_save_vis
+                and args.cc_graph_vis_interval > 0
+                and (epoch + 1) % args.cc_graph_vis_interval == 0
+            )
             validation = validate(
                 models,
                 losses,
@@ -1445,6 +1572,14 @@ def train_model(
                     )
                     and run_ph_validation_diagnostics
                 ),
+                cc_graph_state=cc_graph_validation_state,
+                cc_graph_params=cc_graph_params,
+                cc_graph_vis_enabled=cc_graph_vis_enabled,
+                cc_graph_vis_dir=(
+                    os.path.join(trained_models_path, 'cc_graph_visualizations')
+                    if cc_graph_vis_enabled else None
+                ),
+                cc_graph_vis_num_samples=args.cc_graph_vis_num_samples,
             )
             print_val_loss(
                 validation['loss1'],
@@ -1520,6 +1655,40 @@ def train_model(
                         relation_backend=args.ph_relation_backend,
                         presence_conflict_mode=args.ph_presence_conflict_mode,
                     )
+            if cc_graph_writer is not None:
+                cc_row = finalize_cc_graph_epoch_state(cc_graph_train_state)
+                if cc_graph_validation_state is not None:
+                    validation_row = finalize_cc_graph_epoch_state(
+                        cc_graph_validation_state
+                    )
+                    for field in (
+                        'gt_valid_conflicts',
+                        'connected_side_correct_events',
+                        'separated_side_correct_events',
+                        'both_wrong_structure_events',
+                        'connected_side_correct_rate',
+                        'separated_side_correct_rate',
+                        'cut_roi_gt_error_rate',
+                        'join_roi_gt_error_rate',
+                        'cut_flip_and_connected_wrong_rate',
+                        'join_flip_and_separated_wrong_rate',
+                    ):
+                        cc_row[field] = validation_row[field]
+                    for visualization_index, visualization in enumerate(
+                        cc_graph_validation_state['visualizations']
+                    ):
+                        save_cc_graph_overview(
+                            os.path.join(
+                                trained_models_path, 'cc_graph_visualizations'
+                            ),
+                            epoch + 1,
+                            visualization_index,
+                            visualization['image'],
+                            visualization['sample'],
+                            visualization['localizations'],
+                        )
+                cc_graph_writer.writerow(cc_row)
+                cc_graph_file.flush()
             if args.ph_directional_cps:
                 ph_timing = finalize_ph_directional_epoch_state(ph_mask_state)
                 logger.info(
@@ -1648,6 +1817,8 @@ def train_model(
             _log_epoch(logger, args, metrics)
         if ph_diagnostics_file is not None:
             ph_diagnostics_file.close()
+        if cc_graph_file is not None:
+            cc_graph_file.close()
 
     elapsed = time.time() - training_start
     minutes, seconds = divmod(elapsed, 60)
@@ -2013,6 +2184,78 @@ def parse_args():
         help='save up to five structural example mosaics per category',
     )
     parser.add_argument(
+        '--cc_graph',
+        nargs='?',
+        const=True,
+        default=False,
+        type=_parse_bool,
+        help='enable standalone CC-Graph V1 structural conflict masking',
+    )
+    parser.add_argument(
+        '--cc_graph_start_epoch',
+        default=20,
+        type=int,
+        help='first epoch that enables CC-Graph CPS masking',
+    )
+    parser.add_argument(
+        '--cc_graph_tau',
+        default=0.5,
+        type=float,
+        help='foreground threshold for CC-Graph predictions',
+    )
+    parser.add_argument(
+        '--cc_graph_min_coverage',
+        default=0.5,
+        type=float,
+        help='directional coverage threshold for CC correspondence edges',
+    )
+    parser.add_argument(
+        '--cc_graph_min_intersection',
+        default=10,
+        type=int,
+        help='minimum intersection pixels for CC correspondence edges',
+    )
+    parser.add_argument(
+        '--cc_graph_agreement_radius',
+        default=3.0,
+        type=float,
+        help='maximum cut/join localization distance for V1 agreement',
+    )
+    parser.add_argument(
+        '--cc_graph_require_dual_agreement',
+        nargs='?',
+        const=True,
+        default=False,
+        type=_parse_bool,
+        help='only mask cut ROIs when cut and join localizations agree',
+    )
+    parser.add_argument(
+        '--cc_graph_roi_mode',
+        choices=('cut',),
+        default='cut',
+        help='CC-Graph V1 CPS ROI mode (only cut is implemented)',
+    )
+    parser.add_argument(
+        '--cc_graph_save_vis',
+        nargs='?',
+        const=True,
+        default=False,
+        type=_parse_bool,
+        help='save selected validation CC-Graph overview images',
+    )
+    parser.add_argument(
+        '--cc_graph_vis_interval',
+        default=20,
+        type=int,
+        help='validation epoch interval for CC-Graph overview images',
+    )
+    parser.add_argument(
+        '--cc_graph_vis_num_samples',
+        default=4,
+        type=int,
+        help='maximum overview samples saved per visualization epoch',
+    )
+    parser.add_argument(
         '--ph-mask-only',
         action='store_true',
         help='E1 ablation: abstain vanilla bidirectional CPS inside PH-H0 topology conflict masks',
@@ -2157,6 +2400,20 @@ def parse_args():
         parser.error('--struct-match-iou must be in [0, 1]')
     if args.struct_boundary_width < 0:
         parser.error('--struct-boundary-width must be non-negative')
+    if args.cc_graph_start_epoch < 1:
+        parser.error('--cc_graph_start_epoch must be >= 1')
+    if args.cc_graph_tau < 0.0 or args.cc_graph_tau > 1.0:
+        parser.error('--cc_graph_tau must be in [0, 1]')
+    if args.cc_graph_min_coverage < 0.0 or args.cc_graph_min_coverage > 1.0:
+        parser.error('--cc_graph_min_coverage must be in [0, 1]')
+    if args.cc_graph_min_intersection < 1:
+        parser.error('--cc_graph_min_intersection must be >= 1')
+    if args.cc_graph_agreement_radius < 0.0:
+        parser.error('--cc_graph_agreement_radius must be non-negative')
+    if args.cc_graph_vis_interval < 0:
+        parser.error('--cc_graph_vis_interval must be non-negative')
+    if args.cc_graph_vis_num_samples < 0:
+        parser.error('--cc_graph_vis_num_samples must be non-negative')
     if args.ph_start_epoch < 1:
         parser.error('--ph-start-epoch must be >= 1')
     if args.ph_mask_dilation < 0:
@@ -2170,6 +2427,8 @@ def parse_args():
         parser.error('--ph-validation-diagnostics-interval must be non-negative')
     if args.ph_mask_only and args.ph_directional_cps:
         parser.error('--ph-mask-only and --ph-directional-cps are mutually exclusive')
+    if args.cc_graph and (args.ph_mask_only or args.ph_directional_cps):
+        parser.error('--cc_graph cannot be combined with PH-guided CPS modes')
     if (
         args.struct_analysis_checkpoint is None
         and bool(args.struct_analysis_checkpoint_a) != bool(args.struct_analysis_checkpoint_b)

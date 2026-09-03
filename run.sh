@@ -54,16 +54,20 @@ echo "=== 所有实验已全部完成！ ==="
 
 
 python main.py \
-    --path_trained_models checkpoints/semi_20_seed_24_rgbstain \
-    --path_seg_results seg_pred/semi_20_seed_24_rgbstain \
+    --path_trained_models checkpoints/semi_10_seed_24_rgbrgb_cc_graph_v1 \
+    --path_seg_results seg_pred/semi_10_seed_24_rgbrgb_cc_graph_v1 \
     --path_dataset datasets/GLaS \
     --dataset_name GlaS \
-    --input_mode rgb_stain \
-    --labeled_ratio 20 \
+    --input_mode rgb_rgb \
+    --labeled_ratio 10 \
     --batch_size 2 \
     --num_epochs 200 \
-    --ph-unmatched-mode vanilla 
-    --ph-unmatched-mode vanilla 
+    --cc_graph \
+    --cc_graph_tau 0.5 \
+    --cc_graph_min_coverage 0.5 \
+    --cc_graph_min_intersection  10 \
+    --cc_graph_agreement_radius 3 \
+    --cc_graph_roi_mode cut 
  
 
 python main.py \
@@ -110,72 +114,9 @@ python main.py \
 
 
 
-    python main.py \
-    --path_trained_models checkpoints/semi_10_seed_24_rgbrgb_e2_support_identity \
-    --path_seg_results seg_pred/semi_10_seed_24_rgbrgb_e2_support_identity \
-    --path_dataset datasets/GLaS \
-    --dataset_name GlaS \
-    --input_mode rgb_rgb \
-    --input1 image \
-    --labeled_ratio 10 \
-    --batch_size 2 \
-    --num_epochs 200 \
-    --milestone_interval 10 \
-    --best_save_interval 10 \
-    --step_size 50 \
-    --lr 0.5 \
-    --gamma 0.5 \
-    --unsup_weight 5.0 \
-    --warm_up_duration 20 \
-    --sd 24 \
-    --network unet \
-    --ph-directional-cps \
-    --ph-start-epoch 20 \
-    --ph-mask-dilation 1 \
-    --ph-match-radius 16 \
-    --ph-unmatched-mode vanilla \
-    --ph-conflict-detector persistent_relation \
-    --ph-correspondence-mode support_identity \
-    --ph-validation-diagnostics-interval 10 \
-    --ph-debug-timing
-
-
   python main.py \
-    --path_trained_models checkpoints/semi_10_seed_24_rgbstain_event_projection \
-    --path_seg_results seg_pred/semi_10_seed_24_rgbstain_event_projection \
-    --path_dataset datasets/GLaS \
-    --dataset_name GlaS \
-    --input_mode rgb_stain \
-    --input1 image \
-    --labeled_ratio 10 \
-    --batch_size 2 \
-    --num_epochs 200 \
-    --milestone_interval 10 \
-    --best_save_interval 10 \
-    --step_size 50 \
-    --lr 0.5 \
-    --gamma 0.5 \
-    --unsup_weight 5.0 \
-    --loss dice \
-    --warm_up_duration 20 \
-    --momentum 0.9 \
-    --sd 24 \
-    --network unet \
-    --ph-directional-cps \
-    --ph-start-epoch 20 \
-    --ph-mask-dilation 1 \
-    --ph-match-radius 16 \
-    --ph-unmatched-mode vanilla \
-    --ph-conflict-detector persistent_relation \
-    --ph-correspondence-mode event_projection \
-    --ph-validation-diagnostics-interval 10 \
-    --ph-debug-timing
-
-
-
-  python main.py \
-    --path_trained_models checkpoints/semi_10_seed_24_rgb_e2_ph_tree_connectivity_outcome \
-    --path_seg_results seg_pred/semi_10_seed_24_rgb_e2_ph_tree_connectivity_outcome \
+    --path_trained_models checkpoints/semi_10_seed_24_rgb_e2_ph_tree_connectivity_outcome13 \
+    --path_seg_results seg_pred/semi_10_seed_24_rgb_e2_ph_tree_connectivity_outcome13 \
     --path_dataset datasets/GLaS \
     --dataset_name GlaS \
     --input_mode rgb_rgb \
