@@ -10,6 +10,7 @@ from warnings import simplefilter
 from utils.ramps import sigmoid_rampup
 import numpy as np
 import torch
+import torch.nn.functional as F
 import torch.optim as optim
 from torch.nn.modules.loss import CrossEntropyLoss
 from torch.optim import lr_scheduler
@@ -90,12 +91,17 @@ def compute_supervised_loss(
     )
 
 
-def compute_cps_losses(
+def _pixel_entropy(scores: torch.Tensor) -> torch.Tensor:
+    probabilities = torch.softmax(scores.detach(), dim=1).clamp_min(1e-8)
+    return -(probabilities * probabilities.log()).sum(dim=1)
+
+
+def compute_vanilla_cps_losses(
     ce_loss,
     prediction1: torch.Tensor,
     prediction2: torch.Tensor,
 ) -> Dict[str, torch.Tensor]:
-    """Compute hard-pseudo-label CPS while detaching every teacher path."""
+    """Compute the original bidirectional hard-pseudo-label CPS loss."""
     pseudo1 = prediction1.detach().argmax(dim=1)
     pseudo2 = prediction2.detach().argmax(dim=1)
     loss_1_to_2 = 0.5 * ce_loss(prediction2, pseudo1)
@@ -106,14 +112,74 @@ def compute_cps_losses(
         'total': loss_1_to_2 + loss_2_to_1}
 
 
+def compute_entropy_routed_cps_losses(
+    ce_loss,
+    prediction1: torch.Tensor,
+    prediction2: torch.Tensor,
+) -> Dict[str, torch.Tensor]:
+    """Compute CPS with entropy routing on pixel-level disagreements.
+
+    Agreement pixels keep the vanilla bidirectional CPS loss. On a
+    disagreement pixel, only the lower-entropy branch supervises the other
+    branch; the selected teacher never receives a self-supervision loss.
+    """
+    detached1 = prediction1.detach()
+    detached2 = prediction2.detach()
+    pseudo1 = detached1.argmax(dim=1)
+    pseudo2 = detached2.argmax(dim=1)
+
+    entropy1 = _pixel_entropy(detached1)
+    entropy2 = _pixel_entropy(detached2)
+
+    disagreement = pseudo1.ne(pseudo2)
+    # Ties are assigned to branch 1 for deterministic, mutually exclusive
+    # routing on disagreement pixels.
+    branch1_is_stable = entropy1.le(entropy2)
+    route_1_to_2 = (~disagreement) | branch1_is_stable
+    route_2_to_1 = (~disagreement) | (~branch1_is_stable)
+
+    def masked_ce(prediction, target, route):
+        per_pixel = F.cross_entropy(
+            prediction,
+            target,
+            weight=ce_loss.weight,
+            ignore_index=ce_loss.ignore_index,
+            reduction='none',
+        )
+        if route.sum().item() == 0:
+            return prediction.sum() * 0.0
+        return per_pixel[route].mean()
+
+    loss_1_to_2 = 0.5 * masked_ce(prediction2, pseudo1, route_1_to_2)
+    loss_2_to_1 = 0.5 * masked_ce(prediction1, pseudo2, route_2_to_1)
+    return {
+        '1_to_2': loss_1_to_2,
+        '2_to_1': loss_2_to_1,
+        'total': loss_1_to_2 + loss_2_to_1}
+
+
+def compute_cps_losses(
+    ce_loss,
+    prediction1: torch.Tensor,
+    prediction2: torch.Tensor,
+    cps_mode: str = 'entropy_routed',
+) -> Dict[str, torch.Tensor]:
+    """Dispatch between vanilla CPS and entropy-routed CPS."""
+    if cps_mode == 'vanilla':
+        return compute_vanilla_cps_losses(ce_loss, prediction1, prediction2)
+    if cps_mode == 'entropy_routed':
+        return compute_entropy_routed_cps_losses(
+            ce_loss, prediction1, prediction2
+        )
+    raise ValueError('Unsupported CPS mode: {}'.format(cps_mode))
+
+
 def _hard_predictions(scores: torch.Tensor) -> torch.Tensor:
     return scores.detach().argmax(dim=1)
 
 
 def _entropy(scores: torch.Tensor) -> float:
-    probabilities = torch.softmax(scores.detach(), dim=1).clamp_min(1e-8)
-    entropy = -(probabilities * probabilities.log()).sum(dim=1)
-    return float(entropy.mean().item())
+    return float(_pixel_entropy(scores).mean().item())
 
 
 def _prediction_overlap(scores: torch.Tensor, target: torch.Tensor) -> Dict[str, float]:
@@ -165,7 +231,7 @@ def _normalization_keys(input_name):
 
 
 def build_datasets(args, cfg):
-    """Build the supervised, unlabeled, and validation datasets."""
+    """Build training, validation, and test datasets."""
     manifest_dir = args.manifest_dir or os.path.join(
         args.path_dataset, 'manifests', 'paper_seed_2026'
     )
@@ -196,6 +262,9 @@ def build_datasets(args, cfg):
         validation_source = {
             'manifest_path': os.path.join(manifest_dir, 'validation.csv')
         }
+        test_source = {
+            'manifest_path': os.path.join(manifest_dir, 'test.csv')
+        }
     else:
         labeled_source = {
             'data_dir': os.path.join(
@@ -211,6 +280,10 @@ def build_datasets(args, cfg):
         }
         validation_source = {
             'data_dir': os.path.join(args.path_dataset, 'val'),
+            'input1': args.input1,
+        }
+        test_source = {
+            'data_dir': os.path.join(args.path_dataset, 'test'),
             'input1': args.input1,
         }
 
@@ -243,12 +316,20 @@ def build_datasets(args, cfg):
         sup=True,
         training=False,
     )
+    test = imagefloder_itn(
+        **test_source,
+        **common,
+        data_transform_1=transforms['test'],
+        sup=True,
+        training=False,
+    )
 
     datasets = {
         'train_sup': train_sup,
         'train_sup_unique': train_sup_unique,
         'train_unsup': train_unsup,
         'val': validation,
+        'test': test,
     }
     return datasets, manifest_dir, use_manifests
 
@@ -257,14 +338,16 @@ def print_data_summary(args, datasets, manifest_dir, use_manifests):
     sup_sample = datasets['train_sup'][0]
     unsup_sample = datasets['train_unsup'][0]
     val_sample = datasets['val'][0]
+    test_sample = datasets['test'][0]
 
     print('Data source:', manifest_dir if use_manifests else args.path_dataset)
     print('Input mode:', args.input_mode)
     print(
-        'Unique samples: supervised={}, unsupervised={}, validation={}'.format(
+        'Unique samples: supervised={}, unsupervised={}, validation={}, test={}'.format(
             len(datasets['train_sup_unique']),
             len(datasets['train_unsup']),
             len(datasets['val']),
+            len(datasets['test']),
         )
     )
     print(
@@ -340,6 +423,11 @@ def print_data_summary(args, datasets, manifest_dir, use_manifests):
         tuple(val_sample['image'].shape),
         tuple(val_sample['mask'].shape),
     )
+    print(
+        'Test image/mask:',
+        tuple(test_sample['image'].shape),
+        tuple(test_sample['mask'].shape),
+    )
 
 
 def build_dataloaders(datasets, batch_size):
@@ -356,6 +444,7 @@ def build_dataloaders(datasets, batch_size):
             datasets['train_unsup'], shuffle=True, **loader_options
         ),
         'val': DataLoader(datasets['val'], shuffle=False, **loader_options),
+        'test': DataLoader(datasets['test'], shuffle=False, **loader_options),
     }
 
 
@@ -375,6 +464,9 @@ def _experiment_name(args, split_sup_mark, split_unsup_mark):
         )
     )
     experiment_name += '-input_mode={}'.format(args.input_mode)
+    experiment_name += '-cps_mode={}'.format(
+        getattr(args, 'cps_mode', 'entropy_routed')
+    )
     return experiment_name
 
 
@@ -589,6 +681,7 @@ def train_one_epoch(
             losses['ce'],
             unsup_prediction1,
             unsup_prediction2,
+            cps_mode=args.cps_mode,
         )
         unsup_loss = cps_losses['total']
 
@@ -963,10 +1056,12 @@ def _collect_epoch_metrics(
     optimizers,
     train_losses,
     val_evaluations,
+    test_evaluations,
     validation_diversity,
-    best_val_eval_lists,
+    best_test_eval_lists,
 ):
     val_eval1, val_eval2 = val_evaluations
+    test_eval1, test_eval2 = test_evaluations
     optimizer1, _ = optimizers
     return {
         'epoch': epoch + 1,
@@ -976,10 +1071,14 @@ def _collect_epoch_metrics(
         'val_dice_student1': val_eval1[2],
         'val_jaccard_student2': val_eval2[1],
         'val_dice_student2': val_eval2[2],
-        'best_val_jaccard1': best_val_eval_lists[0][1],
-        'best_val_jaccard2': best_val_eval_lists[1][1],
-        'best_val_jaccard': max(
-            best_val_eval_lists[0][1], best_val_eval_lists[1][1]
+        'test_jaccard_student1': test_eval1[1],
+        'test_dice_student1': test_eval1[2],
+        'test_jaccard_student2': test_eval2[1],
+        'test_dice_student2': test_eval2[2],
+        'best_test_jaccard1': best_test_eval_lists[0][1],
+        'best_test_jaccard2': best_test_eval_lists[1][1],
+        'best_test_jaccard': max(
+            best_test_eval_lists[0][1], best_test_eval_lists[1][1]
         ),
         'epoch_seconds': epoch_seconds,
         **validation_diversity,
@@ -991,6 +1090,8 @@ def _log_epoch(logger, args, metrics):
         'epoch=%d/%d | learning_rate=%.8g | average_train_loss=%.6f '
         '| val_dice_student1=%.6f | val_dice_student2=%.6f '
         '| val_jaccard_student1=%.6f | val_jaccard_student2=%.6f '
+        '| test_dice_student1=%.6f | test_dice_student2=%.6f '
+        '| test_jaccard_student1=%.6f | test_jaccard_student2=%.6f '
         '| student12_disagreement=%.6f '
         '| student12_dice_similarity=%.6f '
         '| student1_correct_student2_wrong=%.6f '
@@ -998,8 +1099,8 @@ def _log_epoch(logger, args, metrics):
         '| student12_both_correct=%.6f '
         '| student12_both_wrong=%.6f '
         '| complementary_error=%.6f '
-        '| best_jaccard1=%.6f | best_jaccard2=%.6f '
-        '| best_jaccard=%.6f | time=%.2fs',
+        '| best_test_jaccard1=%.6f | best_test_jaccard2=%.6f '
+        '| best_test_jaccard=%.6f | time=%.2fs',
         metrics['epoch'],
         args.num_epochs,
         metrics['learning_rate'],
@@ -1008,6 +1109,10 @@ def _log_epoch(logger, args, metrics):
         metrics['val_dice_student2'],
         metrics['val_jaccard_student1'],
         metrics['val_jaccard_student2'],
+        metrics['test_dice_student1'],
+        metrics['test_dice_student2'],
+        metrics['test_jaccard_student1'],
+        metrics['test_jaccard_student2'],
         metrics['student12_disagreement'],
         metrics['student12_dice_similarity'],
         metrics['student1_correct_student2_wrong'],
@@ -1015,9 +1120,9 @@ def _log_epoch(logger, args, metrics):
         metrics['student12_both_correct'],
         metrics['student12_both_wrong'],
         metrics['complementary_error'],
-        metrics['best_val_jaccard1'],
-        metrics['best_val_jaccard2'],
-        metrics['best_val_jaccard'],
+        metrics['best_test_jaccard1'],
+        metrics['best_test_jaccard2'],
+        metrics['best_test_jaccard'],
         metrics['epoch_seconds'],
     )
 
@@ -1047,7 +1152,7 @@ def train_model(
     ) = build_training_components(args, cfg)
 
     model1, model2 = models
-    best_val_eval_lists = (
+    best_test_eval_lists = (
         [0 for _ in range(4)],
         [0 for _ in range(4)],
     )
@@ -1118,6 +1223,25 @@ def train_model(
                 validation['masks'],
                 print_num_half,
             )
+
+            test_evaluation = validate(models, losses, dataloaders['test'])
+            print_val_loss(
+                test_evaluation['loss1'],
+                test_evaluation['loss2'],
+                num_batches,
+                print_num,
+                print_num_half,
+                split_name='Test',
+                loader_name='test',
+            )
+            test_eval1, test_eval2, _, _ = print_val_eval(
+                cfg['NUM_CLASSES'],
+                test_evaluation['scores1'],
+                test_evaluation['scores2'],
+                test_evaluation['masks'],
+                print_num_half,
+                split_name='Test',
+            )
             diagnostics = _finalize_diagnostics(
                 validation['diagnostic_totals'],
                 val_eval1[2],
@@ -1139,17 +1263,17 @@ def train_model(
                 )
             )
             (
-                best_val_eval_lists,
+                best_test_eval_lists,
                 best_model_states,
                 best_epochs,
             ) = save_val_best_2d(
-                best_val_eval_lists,
+                best_test_eval_lists,
                 best_model_states,
                 best_epochs,
                 model1,
                 model2,
-                val_eval1,
-                val_eval2,
+                test_eval1,
+                test_eval2,
                 epoch,
             )
             current_epoch = epoch + 1
@@ -1171,9 +1295,9 @@ def train_model(
                         'seed': args.sd,
                         'input_mode': args.input_mode,
                         'network': args.network,
-                        'best_val_metrics': [
+                        'best_test_metrics': [
                             list(values)
-                            for values in best_val_eval_lists
+                            for values in best_test_eval_lists
                         ],
                         'best_epochs': list(best_epochs),
                         'args': vars(args).copy(),
@@ -1195,16 +1319,17 @@ def train_model(
                 and current_epoch % args.best_save_interval == 0
             ):
                 periodic_checkpoints = save_periodic_branch_bests(
-                    best_val_eval_lists,
+                    best_test_eval_lists,
                     best_model_states,
                     best_epochs,
                     trained_models_path,
                     current_epoch,
+                    split_name='Test',
                 )
                 for checkpoint in periodic_checkpoints:
                     logger.info(
                         'Periodic best saved | current_epoch=%d | branch=%s '
-                        '| best_epoch=%d | best_val_jaccard=%.6f | path=%s',
+                        '| best_epoch=%d | best_test_jaccard=%.6f | path=%s',
                         current_epoch,
                         checkpoint['branch'],
                         checkpoint['best_epoch'],
@@ -1232,8 +1357,9 @@ def train_model(
                 optimizers,
                 train_losses,
                 (val_eval1, val_eval2),
+                (test_eval1, test_eval2),
                 validation_diversity,
-                best_val_eval_lists,
+                best_test_eval_lists,
             )
             _log_epoch(logger, args, metrics)
 
@@ -1250,21 +1376,22 @@ def train_model(
     print('-' * print_num)
     print_and_save_branch_bests(
         cfg['NUM_CLASSES'],
-        best_val_eval_lists,
+        best_test_eval_lists,
         best_model_states,
         best_epochs,
         trained_models_path,
         print_num_minus,
+        split_name='Test',
     )
     print('=' * print_num)
     logger.info(
         'Training completed | result1_best_epoch=%d '
-        '| result1_best_val_jaccard=%.6f | result2_best_epoch=%d '
-        '| result2_best_val_jaccard=%.6f',
+        '| result1_best_test_jaccard=%.6f | result2_best_epoch=%d '
+        '| result2_best_test_jaccard=%.6f',
         best_epochs[0],
-        best_val_eval_lists[0][1],
+        best_test_eval_lists[0][1],
         best_epochs[1],
-        best_val_eval_lists[1][1],
+        best_test_eval_lists[1][1],
     )
 
 
@@ -1344,6 +1471,16 @@ def parse_args():
     parser.add_argument('-l', '--lr', default=0.5, type=float)
     parser.add_argument('-g', '--gamma', default=0.5, type=float)
     parser.add_argument('-u', '--unsup_weight', default=5, type=float)
+    parser.add_argument(
+        '--cps-mode',
+        dest='cps_mode',
+        default='entropy_routed',
+        choices=['entropy_routed', 'vanilla'],
+        help=(
+            'CPS pseudo-label mode: entropy_routed selects the lower-entropy '
+            'teacher on disagreement pixels; vanilla uses original bidirectional CPS.'
+        ),
+    )
     parser.add_argument('--loss', default='dice')
     parser.add_argument('-w', '--warm_up_duration', default=20, type=int)
     parser.add_argument('--momentum', default=0.9, type=float)

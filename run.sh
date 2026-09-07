@@ -13,9 +13,9 @@ echo "=== 开始运行实验 ==="
 python main.py \
     --dataset_name GlaS      \
     --path_dataset datasets/GLaS \
-    --path_trained_models checkpoints/semi__10_seed \
+    --path_trained_models checkpoints/semi_10_seed_24_rgbstain_dis_piexl_entropy \
     --labeled_ratio 10 \
-    --sd 1337
+    --sd 24
 
 python main.py \
     --dataset_name GlaS      \

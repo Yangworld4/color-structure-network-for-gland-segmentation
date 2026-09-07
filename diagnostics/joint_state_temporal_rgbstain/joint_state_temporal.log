@@ -1,0 +1,178 @@
+[FOUND] epoch=10 file=/data/mission/models/Exp/DUAL/checkpoints/semi_10_seed_24_rgbstain/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image-input_mode=rgb_stain/milestones/epoch_010.pth A=appearance_state_dict B=structure_state_dict
+[FOUND] epoch=20 file=/data/mission/models/Exp/DUAL/checkpoints/semi_10_seed_24_rgbstain/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image-input_mode=rgb_stain/milestones/epoch_020.pth A=appearance_state_dict B=structure_state_dict
+[FOUND] epoch=30 file=/data/mission/models/Exp/DUAL/checkpoints/semi_10_seed_24_rgbstain/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image-input_mode=rgb_stain/milestones/epoch_030.pth A=appearance_state_dict B=structure_state_dict
+[FOUND] epoch=40 file=/data/mission/models/Exp/DUAL/checkpoints/semi_10_seed_24_rgbstain/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image-input_mode=rgb_stain/milestones/epoch_040.pth A=appearance_state_dict B=structure_state_dict
+[FOUND] epoch=50 file=/data/mission/models/Exp/DUAL/checkpoints/semi_10_seed_24_rgbstain/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image-input_mode=rgb_stain/milestones/epoch_050.pth A=appearance_state_dict B=structure_state_dict
+[FOUND] epoch=60 file=/data/mission/models/Exp/DUAL/checkpoints/semi_10_seed_24_rgbstain/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image-input_mode=rgb_stain/milestones/epoch_060.pth A=appearance_state_dict B=structure_state_dict
+[FOUND] epoch=70 file=/data/mission/models/Exp/DUAL/checkpoints/semi_10_seed_24_rgbstain/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image-input_mode=rgb_stain/milestones/epoch_070.pth A=appearance_state_dict B=structure_state_dict
+[FOUND] epoch=80 file=/data/mission/models/Exp/DUAL/checkpoints/semi_10_seed_24_rgbstain/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image-input_mode=rgb_stain/milestones/epoch_080.pth A=appearance_state_dict B=structure_state_dict
+[FOUND] epoch=90 file=/data/mission/models/Exp/DUAL/checkpoints/semi_10_seed_24_rgbstain/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image-input_mode=rgb_stain/milestones/epoch_090.pth A=appearance_state_dict B=structure_state_dict
+[FOUND] epoch=100 file=/data/mission/models/Exp/DUAL/checkpoints/semi_10_seed_24_rgbstain/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image-input_mode=rgb_stain/milestones/epoch_100.pth A=appearance_state_dict B=structure_state_dict
+[FOUND] epoch=110 file=/data/mission/models/Exp/DUAL/checkpoints/semi_10_seed_24_rgbstain/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image-input_mode=rgb_stain/milestones/epoch_110.pth A=appearance_state_dict B=structure_state_dict
+[FOUND] epoch=120 file=/data/mission/models/Exp/DUAL/checkpoints/semi_10_seed_24_rgbstain/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image-input_mode=rgb_stain/milestones/epoch_120.pth A=appearance_state_dict B=structure_state_dict
+[FOUND] epoch=130 file=/data/mission/models/Exp/DUAL/checkpoints/semi_10_seed_24_rgbstain/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image-input_mode=rgb_stain/milestones/epoch_130.pth A=appearance_state_dict B=structure_state_dict
+[FOUND] epoch=140 file=/data/mission/models/Exp/DUAL/checkpoints/semi_10_seed_24_rgbstain/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image-input_mode=rgb_stain/milestones/epoch_140.pth A=appearance_state_dict B=structure_state_dict
+[FOUND] epoch=150 file=/data/mission/models/Exp/DUAL/checkpoints/semi_10_seed_24_rgbstain/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image-input_mode=rgb_stain/milestones/epoch_150.pth A=appearance_state_dict B=structure_state_dict
+[FOUND] epoch=160 file=/data/mission/models/Exp/DUAL/checkpoints/semi_10_seed_24_rgbstain/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image-input_mode=rgb_stain/milestones/epoch_160.pth A=appearance_state_dict B=structure_state_dict
+[FOUND] epoch=170 file=/data/mission/models/Exp/DUAL/checkpoints/semi_10_seed_24_rgbstain/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image-input_mode=rgb_stain/milestones/epoch_170.pth A=appearance_state_dict B=structure_state_dict
+[FOUND] epoch=180 file=/data/mission/models/Exp/DUAL/checkpoints/semi_10_seed_24_rgbstain/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image-input_mode=rgb_stain/milestones/epoch_180.pth A=appearance_state_dict B=structure_state_dict
+[FOUND] epoch=190 file=/data/mission/models/Exp/DUAL/checkpoints/semi_10_seed_24_rgbstain/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image-input_mode=rgb_stain/milestones/epoch_190.pth A=appearance_state_dict B=structure_state_dict
+[FOUND] epoch=200 file=/data/mission/models/Exp/DUAL/checkpoints/semi_10_seed_24_rgbstain/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image-input_mode=rgb_stain/milestones/epoch_200.pth A=appearance_state_dict B=structure_state_dict
+milestone_dir=/data/mission/models/Exp/DUAL/checkpoints/semi_10_seed_24_rgbstain/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image-input_mode=rgb_stain/milestones
+dataset_root=/data/mission/models/Exp/DUAL/datasets/GLaS
+split=test
+manifest=/data/mission/models/Exp/DUAL/datasets/GLaS/manifests/paper_seed_2026/test.csv
+device=cuda
+num_images=80
+evaluation_transform=project data_transform_2d[test]: Resize(256,256)
+normalization=project data_normalize_2d(GLaS MEAN, STD)
+input_mode=rgb_rgb; both models receive the same project image tensor
+inference=model.eval() + torch.no_grad(); threshold=probability >= 0.5
+ignore_rule=project dataset converts binary mask to (mask > 0); no ignore label is exposed
+synchronized_epochs=[10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 110, 120, 130, 140, 150, 160, 170, 180, 190, 200]
+[LOAD] epoch=10
+Model A: /data/mission/models/Exp/DUAL/checkpoints/semi_10_seed_24_rgbstain/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image-input_mode=rgb_stain/milestones/epoch_010.pth
+Model B: /data/mission/models/Exp/DUAL/checkpoints/semi_10_seed_24_rgbstain/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image-input_mode=rgb_stain/milestones/epoch_010.pth
+Model A state key: appearance_state_dict
+Model B state key: structure_state_dict
+strict_load_A=True
+strict_load_B=True
+[LOAD] epoch=20
+Model A: /data/mission/models/Exp/DUAL/checkpoints/semi_10_seed_24_rgbstain/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image-input_mode=rgb_stain/milestones/epoch_020.pth
+Model B: /data/mission/models/Exp/DUAL/checkpoints/semi_10_seed_24_rgbstain/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image-input_mode=rgb_stain/milestones/epoch_020.pth
+Model A state key: appearance_state_dict
+Model B state key: structure_state_dict
+strict_load_A=True
+strict_load_B=True
+[LOAD] epoch=30
+Model A: /data/mission/models/Exp/DUAL/checkpoints/semi_10_seed_24_rgbstain/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image-input_mode=rgb_stain/milestones/epoch_030.pth
+Model B: /data/mission/models/Exp/DUAL/checkpoints/semi_10_seed_24_rgbstain/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image-input_mode=rgb_stain/milestones/epoch_030.pth
+Model A state key: appearance_state_dict
+Model B state key: structure_state_dict
+strict_load_A=True
+strict_load_B=True
+[LOAD] epoch=40
+Model A: /data/mission/models/Exp/DUAL/checkpoints/semi_10_seed_24_rgbstain/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image-input_mode=rgb_stain/milestones/epoch_040.pth
+Model B: /data/mission/models/Exp/DUAL/checkpoints/semi_10_seed_24_rgbstain/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image-input_mode=rgb_stain/milestones/epoch_040.pth
+Model A state key: appearance_state_dict
+Model B state key: structure_state_dict
+strict_load_A=True
+strict_load_B=True
+[LOAD] epoch=50
+Model A: /data/mission/models/Exp/DUAL/checkpoints/semi_10_seed_24_rgbstain/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image-input_mode=rgb_stain/milestones/epoch_050.pth
+Model B: /data/mission/models/Exp/DUAL/checkpoints/semi_10_seed_24_rgbstain/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image-input_mode=rgb_stain/milestones/epoch_050.pth
+Model A state key: appearance_state_dict
+Model B state key: structure_state_dict
+strict_load_A=True
+strict_load_B=True
+[LOAD] epoch=60
+Model A: /data/mission/models/Exp/DUAL/checkpoints/semi_10_seed_24_rgbstain/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image-input_mode=rgb_stain/milestones/epoch_060.pth
+Model B: /data/mission/models/Exp/DUAL/checkpoints/semi_10_seed_24_rgbstain/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image-input_mode=rgb_stain/milestones/epoch_060.pth
+Model A state key: appearance_state_dict
+Model B state key: structure_state_dict
+strict_load_A=True
+strict_load_B=True
+[LOAD] epoch=70
+Model A: /data/mission/models/Exp/DUAL/checkpoints/semi_10_seed_24_rgbstain/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image-input_mode=rgb_stain/milestones/epoch_070.pth
+Model B: /data/mission/models/Exp/DUAL/checkpoints/semi_10_seed_24_rgbstain/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image-input_mode=rgb_stain/milestones/epoch_070.pth
+Model A state key: appearance_state_dict
+Model B state key: structure_state_dict
+strict_load_A=True
+strict_load_B=True
+[LOAD] epoch=80
+Model A: /data/mission/models/Exp/DUAL/checkpoints/semi_10_seed_24_rgbstain/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image-input_mode=rgb_stain/milestones/epoch_080.pth
+Model B: /data/mission/models/Exp/DUAL/checkpoints/semi_10_seed_24_rgbstain/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image-input_mode=rgb_stain/milestones/epoch_080.pth
+Model A state key: appearance_state_dict
+Model B state key: structure_state_dict
+strict_load_A=True
+strict_load_B=True
+[LOAD] epoch=90
+Model A: /data/mission/models/Exp/DUAL/checkpoints/semi_10_seed_24_rgbstain/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image-input_mode=rgb_stain/milestones/epoch_090.pth
+Model B: /data/mission/models/Exp/DUAL/checkpoints/semi_10_seed_24_rgbstain/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image-input_mode=rgb_stain/milestones/epoch_090.pth
+Model A state key: appearance_state_dict
+Model B state key: structure_state_dict
+strict_load_A=True
+strict_load_B=True
+[LOAD] epoch=100
+Model A: /data/mission/models/Exp/DUAL/checkpoints/semi_10_seed_24_rgbstain/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image-input_mode=rgb_stain/milestones/epoch_100.pth
+Model B: /data/mission/models/Exp/DUAL/checkpoints/semi_10_seed_24_rgbstain/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image-input_mode=rgb_stain/milestones/epoch_100.pth
+Model A state key: appearance_state_dict
+Model B state key: structure_state_dict
+strict_load_A=True
+strict_load_B=True
+[LOAD] epoch=110
+Model A: /data/mission/models/Exp/DUAL/checkpoints/semi_10_seed_24_rgbstain/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image-input_mode=rgb_stain/milestones/epoch_110.pth
+Model B: /data/mission/models/Exp/DUAL/checkpoints/semi_10_seed_24_rgbstain/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image-input_mode=rgb_stain/milestones/epoch_110.pth
+Model A state key: appearance_state_dict
+Model B state key: structure_state_dict
+strict_load_A=True
+strict_load_B=True
+[LOAD] epoch=120
+Model A: /data/mission/models/Exp/DUAL/checkpoints/semi_10_seed_24_rgbstain/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image-input_mode=rgb_stain/milestones/epoch_120.pth
+Model B: /data/mission/models/Exp/DUAL/checkpoints/semi_10_seed_24_rgbstain/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image-input_mode=rgb_stain/milestones/epoch_120.pth
+Model A state key: appearance_state_dict
+Model B state key: structure_state_dict
+strict_load_A=True
+strict_load_B=True
+[LOAD] epoch=130
+Model A: /data/mission/models/Exp/DUAL/checkpoints/semi_10_seed_24_rgbstain/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image-input_mode=rgb_stain/milestones/epoch_130.pth
+Model B: /data/mission/models/Exp/DUAL/checkpoints/semi_10_seed_24_rgbstain/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image-input_mode=rgb_stain/milestones/epoch_130.pth
+Model A state key: appearance_state_dict
+Model B state key: structure_state_dict
+strict_load_A=True
+strict_load_B=True
+[LOAD] epoch=140
+Model A: /data/mission/models/Exp/DUAL/checkpoints/semi_10_seed_24_rgbstain/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image-input_mode=rgb_stain/milestones/epoch_140.pth
+Model B: /data/mission/models/Exp/DUAL/checkpoints/semi_10_seed_24_rgbstain/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image-input_mode=rgb_stain/milestones/epoch_140.pth
+Model A state key: appearance_state_dict
+Model B state key: structure_state_dict
+strict_load_A=True
+strict_load_B=True
+[LOAD] epoch=150
+Model A: /data/mission/models/Exp/DUAL/checkpoints/semi_10_seed_24_rgbstain/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image-input_mode=rgb_stain/milestones/epoch_150.pth
+Model B: /data/mission/models/Exp/DUAL/checkpoints/semi_10_seed_24_rgbstain/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image-input_mode=rgb_stain/milestones/epoch_150.pth
+Model A state key: appearance_state_dict
+Model B state key: structure_state_dict
+strict_load_A=True
+strict_load_B=True
+[LOAD] epoch=160
+Model A: /data/mission/models/Exp/DUAL/checkpoints/semi_10_seed_24_rgbstain/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image-input_mode=rgb_stain/milestones/epoch_160.pth
+Model B: /data/mission/models/Exp/DUAL/checkpoints/semi_10_seed_24_rgbstain/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image-input_mode=rgb_stain/milestones/epoch_160.pth
+Model A state key: appearance_state_dict
+Model B state key: structure_state_dict
+strict_load_A=True
+strict_load_B=True
+[LOAD] epoch=170
+Model A: /data/mission/models/Exp/DUAL/checkpoints/semi_10_seed_24_rgbstain/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image-input_mode=rgb_stain/milestones/epoch_170.pth
+Model B: /data/mission/models/Exp/DUAL/checkpoints/semi_10_seed_24_rgbstain/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image-input_mode=rgb_stain/milestones/epoch_170.pth
+Model A state key: appearance_state_dict
+Model B state key: structure_state_dict
+strict_load_A=True
+strict_load_B=True
+[LOAD] epoch=180
+Model A: /data/mission/models/Exp/DUAL/checkpoints/semi_10_seed_24_rgbstain/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image-input_mode=rgb_stain/milestones/epoch_180.pth
+Model B: /data/mission/models/Exp/DUAL/checkpoints/semi_10_seed_24_rgbstain/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image-input_mode=rgb_stain/milestones/epoch_180.pth
+Model A state key: appearance_state_dict
+Model B state key: structure_state_dict
+strict_load_A=True
+strict_load_B=True
+[LOAD] epoch=190
+Model A: /data/mission/models/Exp/DUAL/checkpoints/semi_10_seed_24_rgbstain/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image-input_mode=rgb_stain/milestones/epoch_190.pth
+Model B: /data/mission/models/Exp/DUAL/checkpoints/semi_10_seed_24_rgbstain/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image-input_mode=rgb_stain/milestones/epoch_190.pth
+Model A state key: appearance_state_dict
+Model B state key: structure_state_dict
+strict_load_A=True
+strict_load_B=True
+[LOAD] epoch=200
+Model A: /data/mission/models/Exp/DUAL/checkpoints/semi_10_seed_24_rgbstain/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image-input_mode=rgb_stain/milestones/epoch_200.pth
+Model B: /data/mission/models/Exp/DUAL/checkpoints/semi_10_seed_24_rgbstain/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image-input_mode=rgb_stain/milestones/epoch_200.pth
+Model A state key: appearance_state_dict
+Model B state key: structure_state_dict
+strict_load_A=True
+strict_load_B=True
+valid_synchronized_epochs=[10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 110, 120, 130, 140, 150, 160, 170, 180, 190, 200]
+correlation agreement_rate vs shared_error_fraction_of_all_error_pixels: n=20 pearson=0.915027487952198 spearman=0.9834586466165413
+correlation agreement_rate vs both_wrong_rate_total: n=20 pearson=-0.6484817266374379 spearman=-0.2781954887218045
+correlation disagreement_rate vs shared_error_fraction_of_all_error_pixels: n=20 pearson=-0.915027487952198 spearman=-0.9834586466165413
+correlation mean_jaccard vs both_wrong_rate_total: n=20 pearson=-0.8459621357289495 spearman=-0.5383458646616541
+correlation mean_jaccard vs high_conf_shared_error_rate_090: n=20 pearson=0.7014508230095027 spearman=0.8466165413533834

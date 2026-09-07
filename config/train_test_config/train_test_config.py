@@ -72,11 +72,19 @@ def print_val_loss_sup(val_loss, num_batches, print_num, print_num_minus):
     print('-' * print_num)
     return val_epoch_loss
 
-def print_val_loss(val_loss_sup_1, val_loss_sup_2, num_batches, print_num, print_num_half):
-    val_epoch_loss_sup1 = val_loss_sup_1 / num_batches['val']
-    val_epoch_loss_sup2 = val_loss_sup_2 / num_batches['val']
+def print_val_loss(
+    val_loss_sup_1,
+    val_loss_sup_2,
+    num_batches,
+    print_num,
+    print_num_half,
+    split_name='Val',
+    loader_name='val',
+):
+    val_epoch_loss_sup1 = val_loss_sup_1 / num_batches[loader_name]
+    val_epoch_loss_sup2 = val_loss_sup_2 / num_batches[loader_name]
     print('-' * print_num)
-    print('| Val Sup Loss 1: {:.4f}'.format(val_epoch_loss_sup1).ljust(print_num_half, ' '), '| Val Sup Loss 2: {:.4f}'.format(val_epoch_loss_sup2).ljust(print_num_half, ' '), '|')
+    print('| {} Sup Loss 1: {:.4f}'.format(split_name, val_epoch_loss_sup1).ljust(print_num_half, ' '), '| {} Sup Loss 2: {:.4f}'.format(split_name, val_epoch_loss_sup2).ljust(print_num_half, ' '), '|')
     print('-' * print_num)
     return val_epoch_loss_sup1, val_epoch_loss_sup2
 
@@ -149,23 +157,30 @@ def print_val_eval_sup(num_classes, score_list_val, mask_list_val, print_num):
         val_m_jc = eval_list[1]
     return eval_list, val_m_jc
 
-def print_val_eval(num_classes, score_list_val1, score_list_val2, mask_list_val, print_num):
+def print_val_eval(
+    num_classes,
+    score_list_val1,
+    score_list_val2,
+    mask_list_val,
+    print_num,
+    split_name='Val',
+):
     if num_classes == 2:
         eval_list1 = evaluate(score_list_val1, mask_list_val)
         eval_list2 = evaluate(score_list_val2, mask_list_val)
-        print('| Val Thr 1: {:.4f}'.format(eval_list1[0]).ljust(print_num, ' '), '| Val Thr 2: {:.4f}'.format(eval_list2[0]).ljust(print_num, ' '), '|')
-        print('| Val  Jc 1: {:.4f}'.format(eval_list1[1]).ljust(print_num, ' '), '| Val  Jc 2: {:.4f}'.format(eval_list2[1]).ljust(print_num, ' '), '|')
-        print('| Val  Dc 1: {:.4f}'.format(eval_list1[2]).ljust(print_num, ' '), '| Val  Dc 2: {:.4f}'.format(eval_list2[2]).ljust(print_num, ' '), '|')
+        print('| {} Thr 1: {:.4f}'.format(split_name, eval_list1[0]).ljust(print_num, ' '), '| {} Thr 2: {:.4f}'.format(split_name, eval_list2[0]).ljust(print_num, ' '), '|')
+        print('| {}  Jc 1: {:.4f}'.format(split_name, eval_list1[1]).ljust(print_num, ' '), '| {}  Jc 2: {:.4f}'.format(split_name, eval_list2[1]).ljust(print_num, ' '), '|')
+        print('| {}  Dc 1: {:.4f}'.format(split_name, eval_list1[2]).ljust(print_num, ' '), '| {}  Dc 2: {:.4f}'.format(split_name, eval_list2[2]).ljust(print_num, ' '), '|')
         val_m_jc1 = eval_list1[1]
         val_m_jc2 = eval_list2[1]
     else:
         eval_list1 = evaluate_multi(score_list_val1, mask_list_val)
         eval_list2 = evaluate_multi(score_list_val2, mask_list_val)
         np.set_printoptions(precision=4, suppress=True)
-        print('| Val  Jc 1: {}  '.format(eval_list1[0]).ljust(print_num, ' '), '| Val  Jc 2: {}'.format(eval_list2[0]).ljust(print_num, ' '), '|')
-        print('| Val  Dc 1: {}  '.format(eval_list1[2]).ljust(print_num, ' '), '| Val  Dc 2: {}'.format(eval_list2[2]).ljust(print_num, ' '), '|')
-        print('| Val mJc 1: {:.4f}'.format(eval_list1[1]).ljust(print_num, ' '), '| Val mJc 2: {:.4f}'.format(eval_list2[1]).ljust(print_num, ' '), '|')
-        print('| Val mDc 1: {:.4f}'.format(eval_list1[3]).ljust(print_num, ' '), '| Val mDc 2: {:.4f}'.format(eval_list2[3]).ljust(print_num, ' '), '|')
+        print('| {}  Jc 1: {}  '.format(split_name, eval_list1[0]).ljust(print_num, ' '), '| {}  Jc 2: {}'.format(split_name, eval_list2[0]).ljust(print_num, ' '), '|')
+        print('| {}  Dc 1: {}  '.format(split_name, eval_list1[2]).ljust(print_num, ' '), '| {}  Dc 2: {}'.format(split_name, eval_list2[2]).ljust(print_num, ' '), '|')
+        print('| {} mJc 1: {:.4f}'.format(split_name, eval_list1[1]).ljust(print_num, ' '), '| {} mJc 2: {:.4f}'.format(split_name, eval_list2[1]).ljust(print_num, ' '), '|')
+        print('| {} mDc 1: {:.4f}'.format(split_name, eval_list1[3]).ljust(print_num, ' '), '| {} mDc 2: {:.4f}'.format(split_name, eval_list2[3]).ljust(print_num, ' '), '|')
         val_m_jc1 = eval_list1[1]
         val_m_jc2 = eval_list2[1]
     return eval_list1, eval_list2, val_m_jc1, val_m_jc2
@@ -232,7 +247,7 @@ def save_val_best_2d(
     eval_list_2,
     epoch,
 ):
-    """独立更新 Result1 和 Result2 的验证集历史最佳权重快照。"""
+    """独立更新 Result1 和 Result2 的评估集历史最佳权重快照。"""
     updated_lists = list(best_lists)
     updated_states = list(best_states)
     updated_epochs = list(best_epochs)
@@ -252,6 +267,7 @@ def save_periodic_branch_bests(
     best_epochs,
     path_trained_model,
     current_epoch,
+    split_name='Val',
 ):
     """额外保存当前 epoch 为止两个分支各自的历史最佳权重。"""
     periodic_dir = os.path.join(path_trained_model, 'periodic_best')
@@ -263,8 +279,8 @@ def save_periodic_branch_bests(
     ):
         if best_state is None:
             raise RuntimeError(
-                'Branch {} has no validation checkpoint at epoch {}'.format(
-                    branch_name, current_epoch
+                'Branch {} has no {} checkpoint at epoch {}'.format(
+                    branch_name, split_name, current_epoch
                 )
             )
         checkpoint_name = 'epoch_{:04d}_best_{}_Jc_{:.4f}.pth'.format(
@@ -326,14 +342,17 @@ def print_and_save_branch_bests(
     best_epochs,
     path_trained_model,
     print_num,
+    split_name='Val',
 ):
-    """训练结束时分别保存两个分支各自的验证集历史最优权重。"""
+    """训练结束时分别保存两个分支各自的评估集历史最优权重。"""
     for index, (best_list, best_state, best_epoch) in enumerate(
         zip(best_lists, best_states, best_epochs),
         start=1,
     ):
         if best_state is None:
-            raise RuntimeError('Result{} has no validation checkpoint'.format(index))
+            raise RuntimeError(
+                'Result{} has no {} checkpoint'.format(index, split_name)
+            )
         checkpoint_name = 'best_result{}_Jc_{:.4f}.pth'.format(
             index, best_list[1]
         )
@@ -346,33 +365,33 @@ def print_and_save_branch_bests(
         )
         if num_classes == 2:
             print(
-                '| Best Result{} Val Thr: {:.4f}'.format(
-                    index, best_list[0]
+                '| Best Result{} {} Thr: {:.4f}'.format(
+                    index, split_name, best_list[0]
                 ).ljust(print_num, ' '),
                 '|',
             )
             print(
-                '| Best Result{} Val  Jc: {:.4f}'.format(
-                    index, best_list[1]
+                '| Best Result{} {}  Jc: {:.4f}'.format(
+                    index, split_name, best_list[1]
                 ).ljust(print_num, ' '),
                 '|',
             )
             print(
-                '| Best Result{} Val  Dc: {:.4f}'.format(
-                    index, best_list[2]
+                '| Best Result{} {}  Dc: {:.4f}'.format(
+                    index, split_name, best_list[2]
                 ).ljust(print_num, ' '),
                 '|',
             )
         else:
             print(
-                '| Best Result{} Val mJc: {:.4f}'.format(
-                    index, best_list[1]
+                '| Best Result{} {} mJc: {:.4f}'.format(
+                    index, split_name, best_list[1]
                 ).ljust(print_num, ' '),
                 '|',
             )
             print(
-                '| Best Result{} Val mDc: {:.4f}'.format(
-                    index, best_list[3]
+                '| Best Result{} {} mDc: {:.4f}'.format(
+                    index, split_name, best_list[3]
                 ).ljust(print_num, ' '),
                 '|',
             )

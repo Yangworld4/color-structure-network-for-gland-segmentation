@@ -1,7 +1,0 @@
-2026-07-30 19:23:20,188 | INFO | Checkpoint: checkpoints/semi_fdcl_10/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-9-76-image/best_result1_Jc_0.8294.pth
-2026-07-30 19:23:20,189 | INFO | Dataset: GlaS
-2026-07-30 19:23:20,189 | INFO | Manifest: datasets/GLaS/manifests/paper_seed_2026/labeled_10.csv
-2026-07-30 19:23:20,189 | INFO | Input view: appearance
-2026-07-30 19:23:20,189 | INFO | Device: cpu | samples=9 | evaluation_size=256x256 | threshold=0.5000 (fixed)
-2026-07-30 19:23:22,963 | INFO | Test completed | loss=0.115776 | Jaccard=0.933189 | Dice=0.965440 | Precision=0.971487 | Recall=0.959468 | Specificity=0.971572 | Accuracy=0.965491
-2026-07-30 19:23:22,963 | INFO | Results saved to: outputs/test_smoke_appearance
