@@ -39,6 +39,7 @@ from config.warmup_config.warmup import GradualWarmupScheduler
 from dataload.dataset_2d import imagefloder_itn
 from loss.loss_function import DiceLoss
 from models.getnetwork import get_network
+from models.uni import load_uni
 
 
 simplefilter(action='ignore', category=FutureWarning)
@@ -52,29 +53,21 @@ METRIC_FIELDS = [
     'pseudo_jaccard_student1', 'pseudo_jaccard_student2',
 ]
 
-E2_REFERENCE_MEMORY_DEFAULT = (
-    'diagnostics/uni_reference_e1/reference_memory.npz'
-)
-E2_UNI_WEIGHTS_DEFAULT = (
+UNI_WEIGHTS_DEFAULT = (
     '/home/yangorange/.cache/huggingface/hub/models--MahmoodLab--UNI/'
     'snapshots/b55a5ec6cade1a39edfe6534189a9b8ca7a022f0/pytorch_model.bin'
 )
-E2_UNI_CONFIG_DEFAULT = str(Path(E2_UNI_WEIGHTS_DEFAULT).with_name('config.json'))
-E2_UNI_SOURCE = '/data/mission/models/Exp/RefSSL/UniSemAlign/model/backbone/uni.py'
-E2_UNI_SIZE = (224, 224)
-E2_UNI_MEAN = (0.485, 0.456, 0.406)
-E2_UNI_STD = (0.229, 0.224, 0.225)
-E2_EVAL_SIZE = (256, 256)
-E2_CONFIDENCE_THRESHOLD = 0.90
-E2_MEMORY_ANCHOR_FG = 0.90
-E2_MEMORY_ANCHOR_BG = 0.10
-E2_MEMORY_PER_IMAGE_PER_CLASS = 64
-E2_MEMORY_SEED = 2026
+UNI_CONFIG_DEFAULT = str(Path(UNI_WEIGHTS_DEFAULT).with_name('config.json'))
+UNI_SIZE = (224, 224)
+UNI_MEAN = (0.485, 0.456, 0.406)
+UNI_STD = (0.229, 0.224, 0.225)
+REFERENCE_MEMORY_ANCHOR_FG = 0.90
+REFERENCE_MEMORY_ANCHOR_BG = 0.10
+REFERENCE_MEMORY_PER_IMAGE_PER_CLASS = 64
+REFERENCE_MEMORY_SEED = 2026
 EXPECTED_UNI_SHA256 = (
     '56ef09b44a25dc5c7eedc55551b3d47bcd17659a7a33837cf9abc9ec4e2ffb40'
 )
-W2_LOSS_EPS = 1e-8
-W2_HIGH_CONFIDENCE_THRESHOLDS = (0.90, 0.95)
 
 
 def _reference_memory_dataset_slug(dataset_name):
@@ -87,17 +80,9 @@ def _reference_memory_dataset_slug(dataset_name):
 
 
 def _default_reference_memory_path(dataset_name, labeled_ratio, seed):
-    """Resolve a dataset-isolated memory path without reusing another dataset.
-
-    The historical GLaS memory path remains a compatibility alias when it is
-    already present.  New datasets receive their own path, so building a
-    memory cannot overwrite the GLaS artifact.
-    """
-    root = Path(__file__).resolve().parent / 'diagnostics' / 'uni_reference_e1'
-    legacy = root / 'reference_memory.npz'
+    """Resolve the default dataset-isolated memory path under checkpoints."""
+    root = Path(__file__).resolve().parent / 'checkpoints'
     slug = _reference_memory_dataset_slug(dataset_name)
-    if slug == 'glas' and legacy.is_file():
-        return legacy
     return root / (
         '{}_labeled{}_seed{}'.format(slug, int(labeled_ratio), int(seed))
     ) / 'reference_memory.npz'
@@ -137,111 +122,6 @@ SC_VALIDATION_FIELDS = [
     'BG_CC_harmful_reverse_rate', 'BG_WW_helpful_mass',
     'BG_CC_harmful_mass', 'val_dice_student1', 'val_dice_student2',
     'val_jaccard_student1', 'val_jaccard_student2',
-]
-
-E2_METRIC_FIELDS = [
-    'epoch',
-    'unlabeled_pixels', 'agreement_pixels', 'disagreement_pixels',
-    'agreement_rate', 'disagreement_rate',
-    'reference_corrected_pixels', 'reference_correction_rate_total',
-    'reference_correction_rate_agreement',
-    'fg_to_bg_pixels', 'bg_to_fg_pixels',
-    'fg_to_bg_fraction', 'bg_to_fg_fraction',
-    'mean_conf_a_corrected', 'mean_conf_b_corrected',
-    'mean_joint_conf_corrected', 'both_conf_090_fraction_corrected',
-    'mean_reference_margin_corrected',
-    'mean_reference_margin_fg_to_bg',
-    'mean_reference_margin_bg_to_fg',
-    'pseudo_a_changed_pixels', 'pseudo_b_changed_pixels',
-    'cps_loss_original_target', 'cps_loss_e2_target', 'cps_loss_delta',
-]
-
-E2_ITER_METRIC_FIELDS = [
-    'epoch', 'iteration', 'global_step',
-    'agreement_pixels', 'disagreement_pixels',
-    'corrected_pixels', 'fg_to_bg_pixels', 'bg_to_fg_pixels',
-    'mean_reference_margin', 'conf_a_corrected', 'conf_b_corrected',
-    'cps_loss_original', 'cps_loss_e2',
-]
-
-E2_VALIDATION_FIELDS = [
-    'epoch',
-    'agreement_rate', 'disagreement_rate',
-    'both_wrong_rate_total', 'both_wrong_rate_in_agreement',
-    'shared_fp_pixels', 'shared_fn_pixels',
-    'high_conf_both_wrong_rate_total',
-    'reference_selected_pixels', 'reference_true_correction_pixels',
-    'reference_false_correction_pixels', 'reference_precision',
-    'correct_consensus_false_correction_rate',
-    'shared_fp_corrected', 'shared_fn_corrected',
-    'new_fp', 'new_fn', 'net_corrected_pixels',
-    'pseudo_A_jaccard_before', 'pseudo_A_jaccard_after',
-    'pseudo_B_jaccard_before', 'pseudo_B_jaccard_after',
-]
-
-W2_METRIC_FIELDS = [
-    'epoch', 'total_unlabeled_pixels',
-    'agreement_pixels', 'agreement_rate',
-    'disagreement_pixels', 'disagreement_rate',
-    'fg_consensus_pixels', 'bg_consensus_pixels',
-    'reference_conflict_pixels', 'reference_conflict_rate',
-    'reference_conflict_rate_agreement',
-    'fg_consensus_conflict_pixels', 'fg_consensus_conflict_rate',
-    'bg_consensus_conflict_pixels', 'bg_consensus_conflict_rate',
-    'mean_signed_support_agreement',
-    'mean_conflict_strength', 'mean_conflict_strength_agreement',
-    'mean_conflict_strength_fg', 'mean_conflict_strength_bg',
-    'mean_w2_weight_agreement', 'mean_w2_weight_all',
-    'min_w2_weight', 'max_w2_weight',
-    'effective_supervision_mass_agreement',
-    'effective_supervision_mass_all',
-    'original_unweighted_cps_loss', 'w2_weighted_cps_loss',
-    'cps_loss_delta', 'supervised_loss_A', 'supervised_loss_B',
-    'total_loss', 'learning_rate',
-]
-
-W2_ITER_METRIC_FIELDS = [
-    'iteration', 'global_step', 'epoch',
-    'agreement_pixels', 'agreement_rate',
-    'reference_conflict_pixels', 'reference_conflict_rate',
-    'mean_conflict', 'mean_weight',
-    'original_cps_loss', 'weighted_cps_loss', 'loss_delta',
-]
-
-W2_VALIDATION_FIELDS = [
-    'epoch', 'valid_pixels', 'CC', 'WW', 'AC', 'BC', 'D',
-    'agreement_rate', 'disagreement_rate', 'absolute_WW_rate',
-    'shared_error_fraction', 'shared_FP', 'shared_FN',
-    'high_conf_WW_090', 'high_conf_WW_090_all',
-    'high_conf_WW_090_fraction_of_WW',
-    'high_conf_WW_095', 'high_conf_WW_095_all',
-    'high_conf_WW_095_fraction_of_WW',
-    'mean_weight_CC', 'mean_weight_WW',
-    'correct_supervision_reduction', 'error_supervision_reduction',
-    'selectivity_ratio',
-    'correct_FG_pixels', 'shared_FP_mean_weight',
-    'correct_FG_mean_weight', 'FG_correct_reduction', 'FG_error_reduction',
-    'correct_BG_pixels', 'shared_FN_mean_weight',
-    'correct_BG_mean_weight', 'BG_correct_reduction', 'BG_error_reduction',
-    'contradiction_pixels', 'contradiction_CC', 'contradiction_WW',
-    'WW_rate_in_contradiction', 'WW_coverage_by_contradiction',
-    'high_conf_090_agreement', 'high_conf_090_WW_rate',
-    'high_conf_090_contradiction_pixels',
-    'high_conf_090_contradiction_WW',
-    'high_conf_090_contradiction_WW_rate',
-    'high_conf_090_contradiction_WW_enrichment',
-    'high_conf_090_WW_coverage_by_contradiction',
-    'high_conf_095_agreement', 'high_conf_095_WW_rate',
-    'high_conf_095_contradiction_pixels',
-    'high_conf_095_contradiction_WW',
-    'high_conf_095_contradiction_WW_rate',
-    'high_conf_095_contradiction_WW_enrichment',
-    'high_conf_095_WW_coverage_by_contradiction',
-    'project_val_threshold_A', 'project_val_jaccard_A',
-    'project_val_dice_A', 'project_val_threshold_B',
-    'project_val_jaccard_B', 'project_val_dice_B',
-    'fixed05_val_jaccard_A', 'fixed05_val_dice_A',
-    'fixed05_val_jaccard_B', 'fixed05_val_dice_B',
 ]
 
 def init_seeds(seed):
@@ -369,9 +249,8 @@ def compute_cps_losses(
 ) -> Dict[str, torch.Tensor]:
     """Compute the unchanged standard CPS loss.
 
-    E2 supplies corrected targets directly through ``compute_standard_cps_losses``;
-    keeping this dispatcher standard-only prevents the E2 path from silently
-    introducing entropy routing.
+    Reference-aware modes supply their targets directly; keeping this dispatcher
+    standard-only prevents them from silently introducing entropy routing.
     """
     if cps_mode != 'standard':
         raise ValueError('Unsupported standard CPS mode: {}'.format(cps_mode))
@@ -794,48 +673,16 @@ def _sha256_file(path):
     return digest.hexdigest()
 
 
-def _e2_load_uni(args):
-    weights_path = Path(args.uni_weights).expanduser().resolve()
-    config_path = Path(args.uni_config).expanduser().resolve()
-    for path in (weights_path, config_path):
-        if not path.is_file():
-            raise FileNotFoundError('E2 UNI file not found: {}'.format(path))
-    weights_sha256 = _sha256_file(weights_path)
-    if weights_sha256 != EXPECTED_UNI_SHA256:
-        raise RuntimeError(
-            'UNI SHA256 mismatch: expected={} actual={}'.format(
-                EXPECTED_UNI_SHA256, weights_sha256
-            )
-        )
-
-    with open(config_path, encoding='utf-8') as handle:
-        uni_config = json.load(handle)
-    assert uni_config.get('architecture') == 'vit_large_patch16_224', uni_config.get('architecture')
-
-    import timm
-
-    uni = timm.create_model(
-        'vit_large_patch16_224',
-        pretrained=False,
-        init_values=1e-5,
-        dynamic_img_size=True,
-        num_classes=0,
+def _load_uni(args):
+    return load_uni(
+        args.uni_weights,
+        args.uni_config,
+        expected_sha256=EXPECTED_UNI_SHA256,
     )
-    state_dict = torch.load(str(weights_path), map_location='cpu', weights_only=True)
-    uni.load_state_dict(state_dict, strict=True)
-    uni = uni.cuda().eval()
-    for parameter in uni.parameters():
-        parameter.requires_grad_(False)
-    assert all(not parameter.requires_grad for parameter in uni.parameters())
-    assert int(getattr(uni, 'embed_dim', -1)) == 1024
-    assert tuple(uni.patch_embed.patch_size) == (16, 16)
-    assert int(getattr(uni, 'num_prefix_tokens', -1)) == 1
-    assert int(getattr(uni, 'num_reg_tokens', 0)) == 0
-    return uni, weights_path, config_path
 
 
-def _e2_memory_dataset(args, cfg, manifest_dir, use_manifests):
-    """Build the E1-equivalent labeled loader with no train augmentation."""
+def _reference_memory_dataset(args, cfg, manifest_dir, use_manifests):
+    """Build the labeled loader used to create the immutable memory."""
     mean_key, std_key = _normalization_keys(args.input1)
     transforms = data_transform_2d()
     normalize = data_normalize_2d(cfg[mean_key], cfg[std_key])
@@ -862,7 +709,7 @@ def _e2_memory_dataset(args, cfg, manifest_dir, use_manifests):
     )
 
 
-def _e2_build_reference_memory(
+def _build_reference_memory(
     args,
     cfg,
     manifest_dir,
@@ -872,7 +719,7 @@ def _e2_build_reference_memory(
     logger,
 ):
     """Build an immutable memory once, before the CPS optimizer loop."""
-    dataset = _e2_memory_dataset(args, cfg, manifest_dir, use_manifests)
+    dataset = _reference_memory_dataset(args, cfg, manifest_dir, use_manifests)
     loader = DataLoader(
         dataset,
         batch_size=args.batch_size,
@@ -881,16 +728,16 @@ def _e2_build_reference_memory(
         pin_memory=True,
     )
     memory_by_class = {0: [], 1: []}
-    rng = np.random.default_rng(E2_MEMORY_SEED)
+    rng = np.random.default_rng(REFERENCE_MEMORY_SEED)
     token_grid = None
     feature_dim = None
     with torch.inference_mode():
         for batch in loader:
-            rgb = _e2_reconstruct_rgb(
+            rgb = _reconstruct_rgb(
                 batch['image_rgb'].cuda(non_blocking=True), cfg
             )
             gt = batch['mask'].cuda(non_blocking=True).float().unsqueeze(1)
-            tokens = _e2_uni_dense_features(uni, rgb)
+            tokens = _uni_dense_features(uni, rgb)
             grid = int(math.sqrt(int(tokens.shape[1])))
             token_grid = grid if token_grid is None else token_grid
             feature_dim = int(tokens.shape[-1]) if feature_dim is None else feature_dim
@@ -899,16 +746,16 @@ def _e2_build_reference_memory(
             occupancy_cpu = occupancy.detach().cpu().numpy()
             for index in range(len(batch['ID'])):
                 for cls, threshold, relation in (
-                    (1, E2_MEMORY_ANCHOR_FG, lambda value: value >= threshold),
-                    (0, E2_MEMORY_ANCHOR_BG, lambda value: value <= threshold),
+                    (1, REFERENCE_MEMORY_ANCHOR_FG, lambda value: value >= threshold),
+                    (0, REFERENCE_MEMORY_ANCHOR_BG, lambda value: value <= threshold),
                 ):
                     candidates = np.flatnonzero(relation(occupancy_cpu[index]))
                     chosen = candidates
-                    if len(candidates) > E2_MEMORY_PER_IMAGE_PER_CLASS:
+                    if len(candidates) > REFERENCE_MEMORY_PER_IMAGE_PER_CLASS:
                         chosen = np.sort(
                             rng.choice(
                                 candidates,
-                                E2_MEMORY_PER_IMAGE_PER_CLASS,
+                                REFERENCE_MEMORY_PER_IMAGE_PER_CLASS,
                                 replace=False,
                             )
                         )
@@ -940,20 +787,20 @@ def _e2_build_reference_memory(
         feature_dim=np.array(feature_dim),
         token_grid=np.array(token_grid),
         top_k=np.array(5),
-        anchor_fg=np.array(E2_MEMORY_ANCHOR_FG),
-        anchor_bg=np.array(E2_MEMORY_ANCHOR_BG),
-        memory_per_image_class=np.array(E2_MEMORY_PER_IMAGE_PER_CLASS),
+        anchor_fg=np.array(REFERENCE_MEMORY_ANCHOR_FG),
+        anchor_bg=np.array(REFERENCE_MEMORY_ANCHOR_BG),
+        memory_per_image_class=np.array(REFERENCE_MEMORY_PER_IMAGE_PER_CLASS),
         source_labeled_ratio=np.array(args.labeled_ratio),
-        seed=np.array(E2_MEMORY_SEED),
+        seed=np.array(REFERENCE_MEMORY_SEED),
         source_dataset=np.array(str(args.dataset_name)),
     )
     logger.info(
-        'E2 reference memory built before training | source=labeled_%s | fg=%d bg=%d '
+        'Reference memory built before training | source=labeled_%s | fg=%d bg=%d '
         '| cap=%d grid=%dx%d dim=%d | path=%s',
         args.labeled_ratio,
         memory_fg.shape[0],
         memory_bg.shape[0],
-        E2_MEMORY_PER_IMAGE_PER_CLASS,
+        REFERENCE_MEMORY_PER_IMAGE_PER_CLASS,
         token_grid,
         token_grid,
         feature_dim,
@@ -961,21 +808,21 @@ def _e2_build_reference_memory(
     )
 
 
-def _e2_load_reference(args, cfg, logger, manifest_dir=None, use_manifests=False):
+def _load_reference(args, cfg, logger, manifest_dir=None, use_manifests=False):
     """Load the immutable UNI model and class-balanced token memory."""
     memory_path = Path(args.uni_reference_memory).expanduser().resolve()
-    uni, weights_path, config_path = _e2_load_uni(args)
+    uni, weights_path, config_path = _load_uni(args)
     memory_built = False
     if not memory_path.is_file():
         if manifest_dir is None:
             raise RuntimeError(
-                'manifest_dir is required when building E2 reference memory'
+                'manifest_dir is required when building reference memory'
             )
         logger.info(
-            'E2 reference memory not found; building from current labeled split | path=%s',
+            'Reference memory not found; building from current labeled split | path=%s',
             memory_path,
         )
-        _e2_build_reference_memory(
+        _build_reference_memory(
             args,
             cfg,
             manifest_dir,
@@ -985,13 +832,8 @@ def _e2_load_reference(args, cfg, logger, manifest_dir=None, use_manifests=False
             logger,
         )
         memory_built = True
-    elif args.uni_build_reference_memory:
-        logger.info(
-            'E2 reference memory exists; reusing it (build flag does not overwrite) | path=%s',
-            memory_path,
-        )
     if not memory_path.is_file():
-        raise FileNotFoundError('E2 reference memory not found: {}'.format(memory_path))
+        raise FileNotFoundError('Reference memory not found: {}'.format(memory_path))
 
     with np.load(str(memory_path), allow_pickle=False) as memory:
         required = {
@@ -1000,7 +842,7 @@ def _e2_load_reference(args, cfg, logger, manifest_dir=None, use_manifests=False
         }
         missing = sorted(required.difference(memory.files))
         if missing:
-            raise RuntimeError('E1 reference memory missing keys: {}'.format(missing))
+            raise RuntimeError('Reference memory missing keys: {}'.format(missing))
         memory_fg_np = np.asarray(memory['memory_fg'], dtype=np.float32)
         memory_bg_np = np.asarray(memory['memory_bg'], dtype=np.float32)
         memory_fg_count = int(memory['memory_fg_count'])
@@ -1033,10 +875,6 @@ def _e2_load_reference(args, cfg, logger, manifest_dir=None, use_manifests=False
     assert np.allclose(np.linalg.norm(memory_fg_np, axis=1), 1.0, atol=1e-4)
     assert np.allclose(np.linalg.norm(memory_bg_np, axis=1), 1.0, atol=1e-4)
     assert args.uni_k == 5, args.uni_k
-    if args.cps_mode == 'uni_reference_e2':
-        assert abs(args.uni_tau_fp - 0.20) < 1e-12, args.uni_tau_fp
-        assert abs(args.uni_tau_fn - 0.35) < 1e-12, args.uni_tau_fn
-
     memory_fg = torch.from_numpy(memory_fg_np).cuda(non_blocking=True)
     memory_bg = torch.from_numpy(memory_bg_np).cuda(non_blocking=True)
     memory_fg_norm_error = float(
@@ -1045,11 +883,7 @@ def _e2_load_reference(args, cfg, logger, manifest_dir=None, use_manifests=False
     memory_bg_norm_error = float(
         np.max(np.abs(np.linalg.norm(memory_bg_np, axis=1) - 1.0))
     )
-    mode_label = {
-        'uni_reference_e2': 'E2',
-        'uni_reference_w2': 'W2',
-        'uni_reference_soft_correction': 'SC',
-    }.get(args.cps_mode, 'E2')
+    mode_label = 'Soft Correction'
     logger.info(
         '%s UNI/reference loaded | weights=%s | memory=%s | fg=%d bg=%d '
         '| dim=%d grid=%dx%d k=%d source=labeled_%d',
@@ -1057,25 +891,13 @@ def _e2_load_reference(args, cfg, logger, manifest_dir=None, use_manifests=False
         memory_bg.shape[0], feature_dim, token_grid, token_grid,
         args.uni_k, args.labeled_ratio,
     )
-    if args.cps_mode == 'uni_reference_e2':
-        logger.info(
-            'E2 hard thresholds | tau_fp=%.2f tau_fn=%.2f',
-            args.uni_tau_fp, args.uni_tau_fn,
-        )
-    elif args.cps_mode == 'uni_reference_w2':
-        logger.info(
-            'W2 protocol | hard_reference_threshold_used=false '
-            '| tau_fp/tau_fn ignored | student_confidence_used=false'
-        )
-    else:
-        logger.info(
-            'Soft Correction protocol | hard_reference_threshold_used=false '
-            '| tau_fp/tau_fn ignored | student_confidence_used=false '
-            '| pseudo_label_flipping_used=false'
-        )
+    logger.info(
+        'Soft Correction protocol | hard_reference_threshold_used=false '
+        '| student_confidence_used=false | pseudo_label_flipping_used=false'
+    )
     logger.info('%s UNI checkpoint sha256=%s', mode_label, _sha256_file(weights_path))
     logger.info('%s reference memory sha256=%s', mode_label, _sha256_file(memory_path))
-    logger.info('%s UNI preprocessing source=%s', mode_label, E2_UNI_SOURCE)
+    logger.info('%s UNI implementation=models/uni.py', mode_label)
     return {
         'uni': uni,
         'memory_fg': memory_fg,
@@ -1093,31 +915,20 @@ def _e2_load_reference(args, cfg, logger, manifest_dir=None, use_manifests=False
         'memory_bg_norm_error': memory_bg_norm_error,
         'memory_top_k': memory_top_k,
         'memory_built': memory_built,
-        'hard_reference_threshold_used': args.cps_mode == 'uni_reference_e2',
+        'hard_reference_threshold_used': False,
     }
 
 
-def _e2_uni_dense_features(uni, rgb_01):
-    mean = torch.tensor(E2_UNI_MEAN, device=rgb_01.device, dtype=rgb_01.dtype).view(1, 3, 1, 1)
-    std = torch.tensor(E2_UNI_STD, device=rgb_01.device, dtype=rgb_01.dtype).view(1, 3, 1, 1)
-    x = F.interpolate(rgb_01, size=E2_UNI_SIZE, mode='bilinear', align_corners=False)
+def _uni_dense_features(uni, rgb_01):
+    mean = torch.tensor(UNI_MEAN, device=rgb_01.device, dtype=rgb_01.dtype).view(1, 3, 1, 1)
+    std = torch.tensor(UNI_STD, device=rgb_01.device, dtype=rgb_01.dtype).view(1, 3, 1, 1)
+    x = F.interpolate(rgb_01, size=UNI_SIZE, mode='bilinear', align_corners=False)
     x = (x - mean) / std
-    x = uni.patch_embed(x)
-    x = uni._pos_embed(x)
-    for block in uni.blocks:
-        x = block(x)
-    x = uni.norm(x)
-    prefix = int(uni.num_prefix_tokens)
-    register_tokens = int(getattr(uni, 'num_reg_tokens', 0))
-    end = x.shape[1] - register_tokens if register_tokens else x.shape[1]
-    tokens = x[:, prefix:end, :]
+    tokens = uni.dense_patch_tokens(x)
     token_count = int(tokens.shape[1])
     token_grid = int(math.sqrt(token_count))
     if token_grid * token_grid != token_count:
         raise RuntimeError('UNI dense token count is not square: {}'.format(token_count))
-    if tuple(uni.patch_embed.patch_size) != (16, 16):
-        raise RuntimeError('Unexpected UNI patch size: {}'.format(uni.patch_embed.patch_size))
-    tokens = F.normalize(tokens, p=2, dim=-1)
     if tokens.shape[-1] != 1024 or token_grid != 14:
         raise RuntimeError(
             'Unexpected UNI dense feature shape: {}'.format(tuple(tokens.shape))
@@ -1125,237 +936,34 @@ def _e2_uni_dense_features(uni, rgb_01):
     return tokens
 
 
-def _e2_topk_scores(query, memory, k):
+def _topk_scores(query, memory, k):
     similarity = query @ memory.t()
     return similarity.topk(min(int(k), int(memory.shape[0])), dim=1, largest=True).values.mean(dim=1)
 
 
-def _e2_reference_margin(tokens, context, k):
+def _reference_margin(tokens, context, k):
     flat = tokens.reshape(-1, tokens.shape[-1])
-    score_fg = _e2_topk_scores(flat, context['memory_fg'], k)
-    score_bg = _e2_topk_scores(flat, context['memory_bg'], k)
+    score_fg = _topk_scores(flat, context['memory_fg'], k)
+    score_bg = _topk_scores(flat, context['memory_bg'], k)
     margin = score_fg - score_bg
     return margin.reshape(tokens.shape[0], tokens.shape[1])
 
 
-def _e2_reconstruct_rgb(image_rgb, cfg):
+def _reconstruct_rgb(image_rgb, cfg):
     mean = torch.tensor(cfg['MEAN'], device=image_rgb.device, dtype=image_rgb.dtype).view(1, 3, 1, 1)
     std = torch.tensor(cfg['STD'], device=image_rgb.device, dtype=image_rgb.dtype).view(1, 3, 1, 1)
     return (image_rgb * std + mean).clamp(0.0, 1.0)
-
-
-def _assert_e2_target_invariants(pseudo_a, pseudo_b, corrected_a, corrected_b, correction):
-    agreement = pseudo_a.eq(pseudo_b)
-    disagreement = ~agreement
-    assert not correction[disagreement].any().item()
-    assert torch.equal(corrected_a[disagreement], pseudo_a[disagreement])
-    assert torch.equal(corrected_b[disagreement], pseudo_b[disagreement])
-    assert torch.equal(corrected_a[correction], corrected_b[correction])
-    if correction.any().item():
-        assert torch.all(corrected_a[correction].ne(pseudo_a[correction]))
-    assert torch.equal(corrected_a[~correction], pseudo_a[~correction])
-    assert torch.equal(corrected_b[~correction], pseudo_b[~correction])
-    if not correction.any().item():
-        assert torch.equal(corrected_a, pseudo_a)
-        assert torch.equal(corrected_b, pseudo_b)
-
-
-def _e2_build_targets(logits_a, logits_b, rgb_input, context, cfg, args):
-    pseudo_a = logits_a.detach().argmax(dim=1)
-    pseudo_b = logits_b.detach().argmax(dim=1)
-    if logits_a.shape[1] != 2 or logits_b.shape[1] != 2:
-        raise RuntimeError('E2 Global UNI correction requires two-class CPS logits')
-    agreement = pseudo_a.eq(pseudo_b)
-    disagreement = ~agreement
-    prob_a = torch.softmax(logits_a.detach(), dim=1)[:, 1]
-    prob_b = torch.softmax(logits_b.detach(), dim=1)[:, 1]
-    pred_a_fg = pseudo_a.eq(1)
-    pred_b_fg = pseudo_b.eq(1)
-    conf_a = torch.where(pred_a_fg, prob_a, 1.0 - prob_a)
-    conf_b = torch.where(pred_b_fg, prob_b, 1.0 - prob_b)
-    joint_conf = torch.minimum(conf_a, conf_b)
-
-    with torch.inference_mode():
-        tokens = _e2_uni_dense_features(context['uni'], _e2_reconstruct_rgb(rgb_input, cfg))
-        actual_grid = int(math.sqrt(int(tokens.shape[1])))
-        if actual_grid != context['token_grid']:
-            raise RuntimeError('UNI token grid changed during E2 training')
-        margin_tokens = _e2_reference_margin(tokens, context, args.uni_k)
-        margin = F.interpolate(
-            margin_tokens.reshape(-1, 1, actual_grid, actual_grid),
-            size=logits_a.shape[-2:],
-            mode='bilinear',
-            align_corners=False,
-        )[:, 0]
-
-    fg_to_bg = agreement & pred_a_fg & margin.le(-args.uni_tau_fp)
-    bg_to_fg = agreement & (~pred_a_fg) & margin.ge(args.uni_tau_fn)
-    correction = fg_to_bg | bg_to_fg
-    corrected_a = pseudo_a.clone()
-    corrected_b = pseudo_b.clone()
-    corrected_a[correction] = 1 - corrected_a[correction]
-    corrected_b[correction] = 1 - corrected_b[correction]
-    _assert_e2_target_invariants(
-        pseudo_a, pseudo_b, corrected_a, corrected_b, correction
-    )
-
-    corrected_count = int(correction.sum().item())
-    agreement_count = int(agreement.sum().item())
-    return {
-        'pseudo_a': pseudo_a,
-        'pseudo_b': pseudo_b,
-        'corrected_a': corrected_a,
-        'corrected_b': corrected_b,
-        'agreement': agreement,
-        'disagreement': disagreement,
-        'correction': correction,
-        'fg_to_bg': fg_to_bg,
-        'bg_to_fg': bg_to_fg,
-        'conf_a': conf_a,
-        'conf_b': conf_b,
-        'joint_conf': joint_conf,
-        'margin': margin,
-        'unlabeled_pixels': int(pseudo_a.numel()),
-        'agreement_pixels': agreement_count,
-        'disagreement_pixels': int(disagreement.sum().item()),
-        'corrected_pixels': corrected_count,
-        'fg_to_bg_pixels': int(fg_to_bg.sum().item()),
-        'bg_to_fg_pixels': int(bg_to_fg.sum().item()),
-        'conf_a_sum': float(conf_a[correction].sum().item()) if corrected_count else 0.0,
-        'conf_b_sum': float(conf_b[correction].sum().item()) if corrected_count else 0.0,
-        'joint_conf_sum': float(joint_conf[correction].sum().item()) if corrected_count else 0.0,
-        'both_conf_090_pixels': int((joint_conf[correction] >= E2_CONFIDENCE_THRESHOLD).sum().item()) if corrected_count else 0,
-        'margin_sum': float(margin[correction].sum().item()) if corrected_count else 0.0,
-        'margin_fg_to_bg_sum': float(margin[fg_to_bg].sum().item()) if fg_to_bg.any().item() else 0.0,
-        'margin_bg_to_fg_sum': float(margin[bg_to_fg].sum().item()) if bg_to_fg.any().item() else 0.0,
-    }
-
-
-def _e2_new_epoch_totals():
-    return {
-        'unlabeled_pixels': 0,
-        'agreement_pixels': 0,
-        'disagreement_pixels': 0,
-        'corrected_pixels': 0,
-        'fg_to_bg_pixels': 0,
-        'bg_to_fg_pixels': 0,
-        'conf_a_sum': 0.0,
-        'conf_b_sum': 0.0,
-        'joint_conf_sum': 0.0,
-        'both_conf_090_pixels': 0,
-        'margin_sum': 0.0,
-        'margin_fg_to_bg_sum': 0.0,
-        'margin_bg_to_fg_sum': 0.0,
-        'pseudo_a_changed_pixels': 0,
-        'pseudo_b_changed_pixels': 0,
-        'loss_original_sum': 0.0,
-        'loss_e2_sum': 0.0,
-    }
-
-
-def _e2_update_epoch_totals(totals, stats, original_loss, e2_loss):
-    for key in (
-        'unlabeled_pixels', 'agreement_pixels', 'disagreement_pixels',
-        'corrected_pixels', 'fg_to_bg_pixels', 'bg_to_fg_pixels',
-        'both_conf_090_pixels',
-    ):
-        totals[key] += stats[key]
-    for key in (
-        'conf_a_sum', 'conf_b_sum', 'joint_conf_sum', 'margin_sum',
-        'margin_fg_to_bg_sum', 'margin_bg_to_fg_sum',
-    ):
-        totals[key] += stats[key]
-    totals['pseudo_a_changed_pixels'] += int(
-        (stats['corrected_a'] != stats['pseudo_a']).sum().item()
-    )
-    totals['pseudo_b_changed_pixels'] += int(
-        (stats['corrected_b'] != stats['pseudo_b']).sum().item()
-    )
-    totals['loss_original_sum'] += float(original_loss.item()) * stats['unlabeled_pixels']
-    totals['loss_e2_sum'] += float(e2_loss.item()) * stats['unlabeled_pixels']
 
 
 def _safe_mean(total, count):
     return float(total) / float(count) if count else float('nan')
 
 
-def _e2_epoch_row(epoch, totals):
-    pixels = totals['unlabeled_pixels']
-    agreement = totals['agreement_pixels']
-    corrected = totals['corrected_pixels']
-    return {
-        'epoch': epoch,
-        'unlabeled_pixels': pixels,
-        'agreement_pixels': agreement,
-        'disagreement_pixels': totals['disagreement_pixels'],
-        'agreement_rate': _safe_mean(agreement, pixels),
-        'disagreement_rate': _safe_mean(totals['disagreement_pixels'], pixels),
-        'reference_corrected_pixels': corrected,
-        'reference_correction_rate_total': _safe_mean(corrected, pixels),
-        'reference_correction_rate_agreement': _safe_mean(corrected, agreement),
-        'fg_to_bg_pixels': totals['fg_to_bg_pixels'],
-        'bg_to_fg_pixels': totals['bg_to_fg_pixels'],
-        'fg_to_bg_fraction': _safe_mean(totals['fg_to_bg_pixels'], corrected),
-        'bg_to_fg_fraction': _safe_mean(totals['bg_to_fg_pixels'], corrected),
-        'mean_conf_a_corrected': _safe_mean(totals['conf_a_sum'], corrected),
-        'mean_conf_b_corrected': _safe_mean(totals['conf_b_sum'], corrected),
-        'mean_joint_conf_corrected': _safe_mean(totals['joint_conf_sum'], corrected),
-        'both_conf_090_fraction_corrected': _safe_mean(totals['both_conf_090_pixels'], corrected),
-        'mean_reference_margin_corrected': _safe_mean(totals['margin_sum'], corrected),
-        'mean_reference_margin_fg_to_bg': _safe_mean(totals['margin_fg_to_bg_sum'], totals['fg_to_bg_pixels']),
-        'mean_reference_margin_bg_to_fg': _safe_mean(totals['margin_bg_to_fg_sum'], totals['bg_to_fg_pixels']),
-        'pseudo_a_changed_pixels': totals['pseudo_a_changed_pixels'],
-        'pseudo_b_changed_pixels': totals['pseudo_b_changed_pixels'],
-        'cps_loss_original_target': _safe_mean(totals['loss_original_sum'], pixels),
-        'cps_loss_e2_target': _safe_mean(totals['loss_e2_sum'], pixels),
-        'cps_loss_delta': _safe_mean(totals['loss_e2_sum'] - totals['loss_original_sum'], pixels),
-    }
-
-
-def _e2_iter_row(epoch, iteration, global_step, stats, original_loss, e2_loss):
-    return {
-        'epoch': epoch,
-        'iteration': iteration,
-        'global_step': global_step,
-        'agreement_pixels': stats['agreement_pixels'],
-        'disagreement_pixels': stats['disagreement_pixels'],
-        'corrected_pixels': stats['corrected_pixels'],
-        'fg_to_bg_pixels': stats['fg_to_bg_pixels'],
-        'bg_to_fg_pixels': stats['bg_to_fg_pixels'],
-        'mean_reference_margin': _safe_mean(stats['margin_sum'], stats['corrected_pixels']),
-        'conf_a_corrected': _safe_mean(stats['conf_a_sum'], stats['corrected_pixels']),
-        'conf_b_corrected': _safe_mean(stats['conf_b_sum'], stats['corrected_pixels']),
-        'cps_loss_original': float(original_loss.item()),
-        'cps_loss_e2': float(e2_loss.item()),
-    }
-
-
-def _run_e2_startup_checks(context, optimizers):
-    assert all(not p.requires_grad for p in context['uni'].parameters())
-    optimizer_parameter_ids = {
-        id(parameter)
-        for optimizer in optimizers
-        for group in optimizer.param_groups
-        for parameter in group['params']
-    }
-    assert not any(id(parameter) in optimizer_parameter_ids for parameter in context['uni'].parameters())
-    pseudo_a = torch.tensor([[0, 0, 1, 1]], dtype=torch.long)
-    pseudo_b = torch.tensor([[0, 1, 1, 0]], dtype=torch.long)
-    correction = torch.tensor([[False, False, True, False]])
-    corrected_a = pseudo_a.clone()
-    corrected_b = pseudo_b.clone()
-    corrected_a[correction] = 0
-    corrected_b[correction] = 0
-    _assert_e2_target_invariants(pseudo_a, pseudo_b, corrected_a, corrected_b, correction)
-    no_correction = torch.zeros_like(correction)
-    _assert_e2_target_invariants(pseudo_a, pseudo_b, pseudo_a.clone(), pseudo_b.clone(), no_correction)
-
-
-def _w2_weights_from_margin(pseudo_a, pseudo_b, margin):
-    """Apply the fixed continuous W2 formula without changing CPS targets."""
+def _reference_weights_from_margin(pseudo_a, pseudo_b, margin):
+    """Compute reference conflict strength without changing CPS targets."""
     if pseudo_a.shape != pseudo_b.shape or pseudo_a.shape != margin.shape:
         raise ValueError(
-            'W2 tensor shape mismatch: A={} B={} margin={}'.format(
+            'Reference tensor shape mismatch: A={} B={} margin={}'.format(
                 tuple(pseudo_a.shape), tuple(pseudo_b.shape), tuple(margin.shape)
             )
         )
@@ -1372,18 +980,18 @@ def _w2_weights_from_margin(pseudo_a, pseudo_b, margin):
     weight[agreement] = 1.0 - conflict[agreement]
     conflict_pixels = agreement & conflict.gt(0.0)
     if not torch.isfinite(weight).all().item():
-        raise FloatingPointError('W2 weight contains NaN/Inf')
+        raise FloatingPointError('Reference weight contains NaN/Inf')
     if not torch.all(weight[disagreement].eq(1.0)).item():
-        raise AssertionError('W2 changed a disagreement pixel weight')
+        raise AssertionError('Reference changed a disagreement pixel weight')
     if not torch.all(weight[agreement & signed_support.ge(0.0)].eq(1.0)).item():
-        raise AssertionError('W2 changed an agreement pixel with s>=0')
+        raise AssertionError('Reference changed an agreement pixel with s>=0')
     contradicted = agreement & signed_support.lt(0.0)
     if contradicted.any().item():
         contradicted_weight = weight[contradicted]
         if not torch.all(
             (contradicted_weight >= 0.0) & (contradicted_weight <= 1.0)
         ).item():
-            raise AssertionError('W2 contradicted weight escaped [0,1]')
+            raise AssertionError('Reference contradicted weight escaped [0,1]')
         # For a negative support whose magnitude is below float32 resolution,
         # the mathematically strict ``1 - r < 1`` can round back to 1.  Keep
         # the exact prescribed formula and enforce strict attenuation only
@@ -1392,7 +1000,7 @@ def _w2_weights_from_margin(pseudo_a, pseudo_b, margin):
         if representable.any().item() and not torch.all(
             contradicted_weight[representable].lt(1.0)
         ).item():
-            raise AssertionError('W2 representable contradiction was not attenuated')
+            raise AssertionError('Reference contradiction was not attenuated')
     return {
         'pseudo_a': pseudo_a,
         'pseudo_b': pseudo_b,
@@ -1409,89 +1017,46 @@ def _w2_weights_from_margin(pseudo_a, pseudo_b, margin):
     }
 
 
-def _w2_build_weights(logits_a, logits_b, rgb_input, context, cfg, args):
-    """Compute immutable UNI evidence and fixed W2 weights for one batch."""
+def _build_reference_weights(logits_a, logits_b, rgb_input, context, cfg, args):
+    """Compute immutable UNI evidence and reference conflict weights."""
     if logits_a.shape[1] != 2 or logits_b.shape[1] != 2:
-        raise RuntimeError('W2 Global UNI weighting requires two-class CPS logits')
+        raise RuntimeError('UNI reference weighting requires two-class CPS logits')
     pseudo_a = logits_a.detach().argmax(dim=1)
     pseudo_b = logits_b.detach().argmax(dim=1)
     original_pseudo_a = pseudo_a.clone()
     original_pseudo_b = pseudo_b.clone()
     with torch.inference_mode():
-        tokens = _e2_uni_dense_features(
-            context['uni'], _e2_reconstruct_rgb(rgb_input, cfg)
+        tokens = _uni_dense_features(
+            context['uni'], _reconstruct_rgb(rgb_input, cfg)
         )
         actual_grid = int(math.sqrt(int(tokens.shape[1])))
         if actual_grid != context['token_grid']:
-            raise RuntimeError('UNI token grid changed during W2 training')
-        margin_tokens = _e2_reference_margin(tokens, context, args.uni_k)
+            raise RuntimeError('UNI token grid changed during training')
+        margin_tokens = _reference_margin(tokens, context, args.uni_k)
         margin = F.interpolate(
             margin_tokens.reshape(-1, 1, actual_grid, actual_grid),
             size=logits_a.shape[-2:],
             mode='bilinear',
             align_corners=False,
         )[:, 0]
-        result = _w2_weights_from_margin(pseudo_a, pseudo_b, margin)
+        result = _reference_weights_from_margin(pseudo_a, pseudo_b, margin)
     if not torch.equal(result['pseudo_a'], original_pseudo_a):
-        raise AssertionError('W2 modified pseudo_A')
+        raise AssertionError('Reference modified pseudo_A')
     if not torch.equal(result['pseudo_b'], original_pseudo_b):
-        raise AssertionError('W2 modified pseudo_B')
+        raise AssertionError('Reference modified pseudo_B')
     result['margin'] = margin
     return result
-
-
-def compute_w2_cps_losses(ce_loss, prediction1, prediction2, targets, eps=W2_LOSS_EPS):
-    """Weighted normalized original CE CPS, preserving both 0.5 directions."""
-    pseudo1 = targets['pseudo_a']
-    pseudo2 = targets['pseudo_b']
-    weight = targets['weight'].detach()
-
-    def weighted_direction(prediction, target):
-        per_pixel = F.cross_entropy(
-            prediction,
-            target,
-            weight=ce_loss.weight,
-            ignore_index=ce_loss.ignore_index,
-            reduction='none',
-        )
-        valid = target.ne(ce_loss.ignore_index)
-        applied_weight = weight[valid]
-        numerator = (applied_weight * per_pixel[valid]).sum()
-        denominator = applied_weight.sum()
-        loss = 0.5 * numerator / (denominator + eps)
-        return loss, numerator, denominator
-
-    loss_1_to_2, numerator_1_to_2, denominator_1_to_2 = weighted_direction(
-        prediction2, pseudo1
-    )
-    loss_2_to_1, numerator_2_to_1, denominator_2_to_1 = weighted_direction(
-        prediction1, pseudo2
-    )
-    if not torch.allclose(denominator_1_to_2, denominator_2_to_1):
-        raise AssertionError('W2 bidirectional denominators differ')
-    total = loss_1_to_2 + loss_2_to_1
-    if not torch.isfinite(total).item():
-        raise FloatingPointError('W2 CPS loss contains NaN/Inf')
-    return {
-        '1_to_2': loss_1_to_2,
-        '2_to_1': loss_2_to_1,
-        'total': total,
-        'weighted_numerator_total': 0.5 * (
-            numerator_1_to_2.detach() + numerator_2_to_1.detach()
-        ),
-        'weight_denominator': denominator_1_to_2.detach(),
-    }
 
 
 def compute_soft_correction_cps_losses(ce_loss, prediction1, prediction2, targets):
     """Continuous target-mass transfer on agreement, original CPS on D.
 
-    This is deliberately *not* W2's normalized weighting.  Each direction
-    first forms one pixel loss, ``(1-r)*CE(current) + r*CE(opposite)`` on
+    Each direction first forms one pixel loss,
+    ``(1-r)*CE(current) + r*CE(opposite)`` on
     agreement and the original peer-target CE on disagreement, then applies
     the same 0.5 bidirectional mean reduction as the original CPS.
     """
-    # _w2_build_weights runs UNI/reference work under inference_mode().  Clone
+    # _build_reference_weights runs UNI/reference work under inference_mode(). Clone
     # these target-side tensors before they participate in an autograd graph;
     # inference tensors cannot be saved for backward by the composed CE loss.
     pseudo1 = targets['pseudo_a'].detach().clone()
@@ -1536,185 +1101,6 @@ def compute_soft_correction_cps_losses(ce_loss, prediction1, prediction2, target
         'current_loss_2_to_1': current_2_to_1.detach(),
         'opposite_loss_1_to_2': opposite_1_to_2.detach(),
         'opposite_loss_2_to_1': opposite_2_to_1.detach(),
-    }
-
-
-def _w2_batch_stats(targets):
-    agreement = targets['agreement']
-    fg = targets['fg_consensus']
-    bg = targets['bg_consensus']
-    conflict_mask = targets['conflict_pixels_mask']
-    fg_conflict = targets['fg_conflict_mask']
-    bg_conflict = targets['bg_conflict_mask']
-    conflict = targets['conflict']
-    weight = targets['weight']
-    signed = targets['signed_support']
-    return {
-        'unlabeled_pixels': int(weight.numel()),
-        'agreement_pixels': int(agreement.sum().item()),
-        'disagreement_pixels': int(targets['disagreement'].sum().item()),
-        'fg_consensus_pixels': int(fg.sum().item()),
-        'bg_consensus_pixels': int(bg.sum().item()),
-        'conflict_pixels': int(conflict_mask.sum().item()),
-        'fg_conflict_pixels': int(fg_conflict.sum().item()),
-        'bg_conflict_pixels': int(bg_conflict.sum().item()),
-        'signed_support_sum_agreement': float(signed[agreement].sum().item()),
-        'conflict_strength_sum': float(conflict[conflict_mask].sum().item()),
-        'conflict_strength_sum_agreement': float(conflict[agreement].sum().item()),
-        'conflict_strength_sum_fg': float(conflict[fg_conflict].sum().item()),
-        'conflict_strength_sum_bg': float(conflict[bg_conflict].sum().item()),
-        'weight_sum_agreement': float(weight[agreement].sum().item()),
-        'weight_sum_all': float(weight.sum().item()),
-        'min_weight': float(weight.min().item()),
-        'max_weight': float(weight.max().item()),
-    }
-
-
-def _w2_new_epoch_totals(learning_rate):
-    return {
-        'unlabeled_pixels': 0, 'agreement_pixels': 0,
-        'disagreement_pixels': 0, 'fg_consensus_pixels': 0,
-        'bg_consensus_pixels': 0, 'conflict_pixels': 0,
-        'fg_conflict_pixels': 0, 'bg_conflict_pixels': 0,
-        'signed_support_sum_agreement': 0.0,
-        'conflict_strength_sum': 0.0,
-        'conflict_strength_sum_agreement': 0.0,
-        'conflict_strength_sum_fg': 0.0,
-        'conflict_strength_sum_bg': 0.0,
-        'weight_sum_agreement': 0.0, 'weight_sum_all': 0.0,
-        'min_weight': 1.0, 'max_weight': 0.0,
-        'original_loss_pixel_sum': 0.0,
-        'w2_loss_weighted_numerator': 0.0,
-        'w2_loss_weight_denominator': 0.0,
-        'supervised_pixels': 0,
-        'supervised_loss_A_pixel_sum': 0.0,
-        'supervised_loss_B_pixel_sum': 0.0,
-        'total_loss_pixel_sum': 0.0,
-        'learning_rate': float(learning_rate),
-    }
-
-
-def _w2_update_epoch_totals(
-    totals, stats, original_loss, w2_losses,
-    supervised_loss1, supervised_loss2, total_loss, supervised_pixels,
-):
-    for key in (
-        'unlabeled_pixels', 'agreement_pixels', 'disagreement_pixels',
-        'fg_consensus_pixels', 'bg_consensus_pixels', 'conflict_pixels',
-        'fg_conflict_pixels', 'bg_conflict_pixels',
-    ):
-        totals[key] += stats[key]
-    for key in (
-        'signed_support_sum_agreement', 'conflict_strength_sum',
-        'conflict_strength_sum_agreement', 'conflict_strength_sum_fg',
-        'conflict_strength_sum_bg', 'weight_sum_agreement', 'weight_sum_all',
-    ):
-        totals[key] += stats[key]
-    totals['min_weight'] = min(totals['min_weight'], stats['min_weight'])
-    totals['max_weight'] = max(totals['max_weight'], stats['max_weight'])
-    totals['original_loss_pixel_sum'] += (
-        float(original_loss.item()) * stats['unlabeled_pixels']
-    )
-    totals['w2_loss_weighted_numerator'] += float(
-        w2_losses['weighted_numerator_total'].item()
-    )
-    totals['w2_loss_weight_denominator'] += float(
-        w2_losses['weight_denominator'].item()
-    )
-    totals['supervised_pixels'] += int(supervised_pixels)
-    totals['supervised_loss_A_pixel_sum'] += (
-        float(supervised_loss1.item()) * supervised_pixels
-    )
-    totals['supervised_loss_B_pixel_sum'] += (
-        float(supervised_loss2.item()) * supervised_pixels
-    )
-    totals['total_loss_pixel_sum'] += float(total_loss.item()) * supervised_pixels
-
-
-def _w2_epoch_row(epoch, totals):
-    pixels = totals['unlabeled_pixels']
-    agreement = totals['agreement_pixels']
-    conflict_pixels = totals['conflict_pixels']
-    fg = totals['fg_consensus_pixels']
-    bg = totals['bg_consensus_pixels']
-    weighted_loss = _safe_mean(
-        totals['w2_loss_weighted_numerator'],
-        totals['w2_loss_weight_denominator'],
-    )
-    original_loss = _safe_mean(totals['original_loss_pixel_sum'], pixels)
-    return {
-        'epoch': epoch, 'total_unlabeled_pixels': pixels,
-        'agreement_pixels': agreement,
-        'agreement_rate': _safe_mean(agreement, pixels),
-        'disagreement_pixels': totals['disagreement_pixels'],
-        'disagreement_rate': _safe_mean(totals['disagreement_pixels'], pixels),
-        'fg_consensus_pixels': fg, 'bg_consensus_pixels': bg,
-        'reference_conflict_pixels': conflict_pixels,
-        'reference_conflict_rate': _safe_mean(conflict_pixels, pixels),
-        'reference_conflict_rate_agreement': _safe_mean(conflict_pixels, agreement),
-        'fg_consensus_conflict_pixels': totals['fg_conflict_pixels'],
-        'fg_consensus_conflict_rate': _safe_mean(totals['fg_conflict_pixels'], fg),
-        'bg_consensus_conflict_pixels': totals['bg_conflict_pixels'],
-        'bg_consensus_conflict_rate': _safe_mean(totals['bg_conflict_pixels'], bg),
-        'mean_signed_support_agreement': _safe_mean(
-            totals['signed_support_sum_agreement'], agreement
-        ),
-        'mean_conflict_strength': _safe_mean(
-            totals['conflict_strength_sum'], conflict_pixels
-        ),
-        'mean_conflict_strength_agreement': _safe_mean(
-            totals['conflict_strength_sum_agreement'], agreement
-        ),
-        'mean_conflict_strength_fg': _safe_mean(
-            totals['conflict_strength_sum_fg'], totals['fg_conflict_pixels']
-        ),
-        'mean_conflict_strength_bg': _safe_mean(
-            totals['conflict_strength_sum_bg'], totals['bg_conflict_pixels']
-        ),
-        'mean_w2_weight_agreement': _safe_mean(
-            totals['weight_sum_agreement'], agreement
-        ),
-        'mean_w2_weight_all': _safe_mean(totals['weight_sum_all'], pixels),
-        'min_w2_weight': totals['min_weight'],
-        'max_w2_weight': totals['max_weight'],
-        'effective_supervision_mass_agreement': _safe_mean(
-            totals['weight_sum_agreement'], agreement
-        ),
-        'effective_supervision_mass_all': _safe_mean(
-            totals['weight_sum_all'], pixels
-        ),
-        'original_unweighted_cps_loss': original_loss,
-        'w2_weighted_cps_loss': weighted_loss,
-        'cps_loss_delta': weighted_loss - original_loss,
-        'supervised_loss_A': _safe_mean(
-            totals['supervised_loss_A_pixel_sum'], totals['supervised_pixels']
-        ),
-        'supervised_loss_B': _safe_mean(
-            totals['supervised_loss_B_pixel_sum'], totals['supervised_pixels']
-        ),
-        'total_loss': _safe_mean(
-            totals['total_loss_pixel_sum'], totals['supervised_pixels']
-        ),
-        'learning_rate': totals['learning_rate'],
-    }
-
-
-def _w2_iter_row(epoch, iteration, global_step, stats, original_loss, w2_loss):
-    pixels = stats['unlabeled_pixels']
-    agreement = stats['agreement_pixels']
-    conflict_pixels = stats['conflict_pixels']
-    mean_weight = _safe_mean(stats['weight_sum_all'], pixels)
-    return {
-        'iteration': iteration, 'global_step': global_step, 'epoch': epoch,
-        'agreement_pixels': agreement,
-        'agreement_rate': _safe_mean(agreement, pixels),
-        'reference_conflict_pixels': conflict_pixels,
-        'reference_conflict_rate': _safe_mean(conflict_pixels, pixels),
-        'mean_conflict': _safe_mean(stats['conflict_strength_sum'], conflict_pixels),
-        'mean_weight': mean_weight,
-        'original_cps_loss': float(original_loss.item()),
-        'weighted_cps_loss': float(w2_loss.item()),
-        'loss_delta': float(w2_loss.item() - original_loss.item()),
     }
 
 
@@ -1849,90 +1235,6 @@ def _sc_iter_row(epoch, iteration, global_step, stats, original_loss, sc_loss):
     }
 
 
-def _run_w2_startup_checks(args, cfg, context, models, optimizers, losses):
-    """Non-training W2 assertions required before the optimizer loop.
-
-    W2 is dataset-agnostic.  The checks therefore validate the frozen UNI
-    geometry and the requested training protocol, rather than requiring the
-    GLaS dataset or its particular memory counts.
-    """
-    exact = {
-        'seed': (args.sd, 24), 'batch_size': (args.batch_size, 2),
-        'num_epochs': (args.num_epochs, 200), 'network': (args.network, 'unet'),
-        'input_mode': (args.input_mode, 'rgb_stain'),
-        'step_size': (args.step_size, 50), 'lr': (args.lr, 0.5),
-        'gamma': (args.gamma, 0.5), 'unsup_weight': (args.unsup_weight, 5.0),
-        'warm_up_duration': (args.warm_up_duration, 20),
-        'milestone_interval': (args.milestone_interval, 10),
-    }
-    mismatches = [
-        '{}={} expected {}'.format(name, actual, expected)
-        for name, (actual, expected) in exact.items() if actual != expected
-    ]
-    if mismatches:
-        raise RuntimeError('W2 matched-protocol assertion failed: ' + '; '.join(mismatches))
-    if context['weights_sha256'] != EXPECTED_UNI_SHA256:
-        raise AssertionError('W2 UNI SHA256 mismatch')
-    if context['memory_fg_count'] <= 0 or context['memory_bg_count'] <= 0:
-        raise AssertionError('W2 reference memory is empty')
-    if context['feature_dim'] != 1024 or context['token_grid'] != 14:
-        raise AssertionError('W2 reference memory geometry mismatch')
-    if context['memory_top_k'] != 5 or args.uni_k != 5:
-        raise AssertionError('W2 K must be 5')
-    if max(context['memory_fg_norm_error'], context['memory_bg_norm_error']) > 1e-4:
-        raise AssertionError('W2 reference memory is not L2 normalized')
-    if context['hard_reference_threshold_used']:
-        raise AssertionError('W2 must not use hard reference thresholds')
-    context['uni'].eval()
-    if any(parameter.requires_grad for parameter in context['uni'].parameters()):
-        raise AssertionError('W2 UNI parameters are not frozen')
-    optimizer_parameter_ids = {
-        id(parameter) for optimizer in optimizers
-        for group in optimizer.param_groups for parameter in group['params']
-    }
-    if any(id(parameter) in optimizer_parameter_ids for parameter in context['uni'].parameters()):
-        raise AssertionError('W2 UNI parameters entered an optimizer')
-
-    pseudo_a = torch.tensor([[0, 0, 1, 1, 0]], dtype=torch.long, device='cuda')
-    pseudo_b = torch.tensor([[0, 1, 1, 1, 1]], dtype=torch.long, device='cuda')
-    margin = torch.tensor([[0.2, -0.3, 0.4, -0.6, 0.1]], device='cuda')
-    original_a, original_b = pseudo_a.clone(), pseudo_b.clone()
-    synthetic = _w2_weights_from_margin(pseudo_a, pseudo_b, margin)
-    expected_weight = torch.tensor([[0.8, 1.0, 1.0, 0.4, 1.0]], device='cuda')
-    if not torch.allclose(synthetic['weight'], expected_weight):
-        raise AssertionError('W2 signed-support/weight formula assertion failed')
-    if not torch.equal(pseudo_a, original_a) or not torch.equal(pseudo_b, original_b):
-        raise AssertionError('W2 changed synthetic pseudo-labels')
-
-    logits_a = torch.tensor(
-        [[[[1.0, -0.2]], [[-0.1, 0.4]]]], device='cuda', requires_grad=True
-    )
-    logits_b = torch.tensor(
-        [[[[0.1, 0.8]], [[0.6, -0.3]]]], device='cuda', requires_grad=True
-    )
-    all_one_targets = _w2_weights_from_margin(
-        logits_a.detach().argmax(1), logits_b.detach().argmax(1),
-        torch.zeros((1, 1, 2), device='cuda'),
-    )
-    all_one_targets['weight'].fill_(1.0)
-    standard = compute_standard_cps_losses(losses['ce'], logits_a, logits_b)
-    weighted = compute_w2_cps_losses(
-        losses['ce'], logits_a, logits_b, all_one_targets
-    )
-    if not torch.allclose(standard['total'], weighted['total'], atol=1e-7, rtol=1e-7):
-        raise AssertionError(
-            'All-one W2 reduction differs from standard CPS: {} vs {}'.format(
-                standard['total'].item(), weighted['total'].item()
-            )
-        )
-    if not torch.isfinite(weighted['total']).item():
-        raise AssertionError('W2 startup loss is not finite')
-    # The W2 implementation receives only unlabeled logits/targets.  The
-    # labeled branch remains the existing compute_supervised_loss path.
-    if not all(model.training for model in models):
-        raise AssertionError('Student initialization/training mode changed before W2')
-
-
 def _run_sc_startup_checks(args, cfg, context, models, optimizers, losses):
     """Static, dataset-agnostic SC protocol and algebra checks."""
     exact = {
@@ -1968,7 +1270,7 @@ def _run_sc_startup_checks(args, cfg, context, models, optimizers, losses):
     pb = torch.tensor([[[0, 1, 1, 1, 1]]], device='cuda', dtype=torch.long)
     margin = torch.tensor([[[0.2, -0.3, 0.4, -0.6, 0.1]]], device='cuda')
     original_a, original_b = pa.clone(), pb.clone()
-    targets = _w2_weights_from_margin(pa, pb, margin)
+    targets = _reference_weights_from_margin(pa, pb, margin)
     assert torch.equal(pa, original_a) and torch.equal(pb, original_b)
     r = targets['conflict']
     assert torch.all((r >= 0.0) & (r <= 1.0))
@@ -1978,7 +1280,7 @@ def _run_sc_startup_checks(args, cfg, context, models, optimizers, losses):
     logits_a = torch.tensor([[[[1.0, -0.2, 0.4, 0.1, 0.3]], [[-0.1, 0.4, 0.2, 0.6, -0.3]]]], device='cuda', requires_grad=True)
     logits_b = torch.tensor([[[[0.1, 0.8, -0.2, 0.7, 0.2]], [[0.6, -0.3, 0.5, -0.4, 0.9]]]], device='cuda', requires_grad=True)
     standard = compute_standard_cps_losses(losses['ce'], logits_a, logits_b, pa, pb)
-    zero_targets = _w2_weights_from_margin(pa, pb, torch.zeros_like(margin))
+    zero_targets = _reference_weights_from_margin(pa, pb, torch.zeros_like(margin))
     sc_zero = compute_soft_correction_cps_losses(losses['ce'], logits_a, logits_b, zero_targets)
     assert torch.allclose(standard['total'], sc_zero['total'], atol=1e-7, rtol=1e-7)
     sc = compute_soft_correction_cps_losses(losses['ce'], logits_a, logits_b, targets)
@@ -2001,11 +1303,7 @@ def train_one_epoch(
     dataloaders,
     metrics_writer,
     metrics_file,
-    e2_context=None,
-    e2_iter_writer=None,
-    e2_iter_file=None,
-    w2_iter_writer=None,
-    w2_iter_file=None,
+    reference_context=None,
     sc_iter_writer=None,
     sc_iter_file=None,
 ):
@@ -2025,19 +1323,9 @@ def train_one_epoch(
     pbar = range(num_train_batches)
     score_list1 = None
     score_list2 = None
-    e2_totals = (
-        _e2_new_epoch_totals()
-        if e2_context is not None and args.cps_mode == 'uni_reference_e2'
-        else None
-    )
-    w2_totals = (
-        _w2_new_epoch_totals(optimizer1.param_groups[0]['lr'])
-        if e2_context is not None and args.cps_mode == 'uni_reference_w2'
-        else None
-    )
     sc_totals = (
         _sc_new_epoch_totals(optimizer1.param_groups[0]['lr'])
-        if e2_context is not None and args.cps_mode == 'uni_reference_soft_correction'
+        if reference_context is not None and args.cps_mode == 'uni_reference_soft_correction'
         else None
     )
     mask_list = None
@@ -2107,60 +1395,13 @@ def train_one_epoch(
         unsup_prediction1 = model1(unsup_input1)[0]
         unsup_prediction2 = model2(unsup_input2)[0]
         
-        if args.cps_mode == 'uni_reference_e2':
-            e2_targets = _e2_build_targets(
+        if args.cps_mode == 'uni_reference_soft_correction':
+            sc_targets = _build_reference_weights(
                 unsup_prediction1,
                 unsup_prediction2,
                 unsup_input1,
-                e2_context,
-                e2_context['cfg'],
-                args,
-            )
-            with torch.no_grad():
-                original_cps_losses = compute_standard_cps_losses(
-                    losses['ce'],
-                    unsup_prediction1,
-                    unsup_prediction2,
-                    e2_targets['pseudo_a'],
-                    e2_targets['pseudo_b'],
-                )
-            cps_losses = compute_standard_cps_losses(
-                losses['ce'],
-                unsup_prediction1,
-                unsup_prediction2,
-                e2_targets['corrected_a'],
-                e2_targets['corrected_b'],
-            )
-        elif args.cps_mode == 'uni_reference_w2':
-            w2_targets = _w2_build_weights(
-                unsup_prediction1,
-                unsup_prediction2,
-                unsup_input1,
-                e2_context,
-                e2_context['cfg'],
-                args,
-            )
-            with torch.no_grad():
-                original_cps_losses = compute_standard_cps_losses(
-                    losses['ce'],
-                    unsup_prediction1,
-                    unsup_prediction2,
-                    w2_targets['pseudo_a'],
-                    w2_targets['pseudo_b'],
-                )
-            cps_losses = compute_w2_cps_losses(
-                losses['ce'],
-                unsup_prediction1,
-                unsup_prediction2,
-                w2_targets,
-            )
-        elif args.cps_mode == 'uni_reference_soft_correction':
-            sc_targets = _w2_build_weights(
-                unsup_prediction1,
-                unsup_prediction2,
-                unsup_input1,
-                e2_context,
-                e2_context['cfg'],
+                reference_context,
+                reference_context['cfg'],
                 args,
             )
             with torch.no_grad():
@@ -2203,58 +1444,7 @@ def train_one_epoch(
         optimizer2.step()
         global_step += 1
 
-        if e2_context is not None and args.cps_mode == 'uni_reference_e2':
-            _e2_update_epoch_totals(
-                e2_totals,
-                e2_targets,
-                original_cps_losses['total'],
-                cps_losses['total'],
-            )
-            if (
-                e2_iter_writer is not None
-                and args.e2_log_interval > 0
-                and global_step % args.e2_log_interval == 0
-            ):
-                e2_iter_writer.writerow(
-                    _e2_iter_row(
-                        epoch + 1,
-                        batch_index + 1,
-                        global_step,
-                        e2_targets,
-                        original_cps_losses['total'],
-                        cps_losses['total'],
-                    )
-                )
-                e2_iter_file.flush()
-        elif e2_context is not None and args.cps_mode == 'uni_reference_w2':
-            w2_stats = _w2_batch_stats(w2_targets)
-            _w2_update_epoch_totals(
-                w2_totals,
-                w2_stats,
-                original_cps_losses['total'],
-                cps_losses,
-                supervised_loss1,
-                supervised_loss2,
-                total_loss,
-                int(sup_mask.numel()),
-            )
-            if (
-                w2_iter_writer is not None
-                and args.w2_log_interval > 0
-                and global_step % args.w2_log_interval == 0
-            ):
-                w2_iter_writer.writerow(
-                    _w2_iter_row(
-                        epoch + 1,
-                        batch_index + 1,
-                        global_step,
-                        w2_stats,
-                        original_cps_losses['total'],
-                        cps_losses['total'],
-                    )
-                )
-                w2_iter_file.flush()
-        elif e2_context is not None and args.cps_mode == 'uni_reference_soft_correction':
+        if reference_context is not None and args.cps_mode == 'uni_reference_soft_correction':
             sc_stats = _sc_batch_stats(sc_targets, unsup_prediction1, unsup_prediction2)
             _sc_update_epoch_totals(
                 sc_totals,
@@ -2305,8 +1495,7 @@ def train_one_epoch(
         loss_totals['sup2'] += supervised_loss2.item()
         loss_totals['total'] += total_loss.item()
     reference_totals = (
-        sc_totals if sc_totals is not None
-        else (w2_totals if w2_totals is not None else e2_totals)
+        sc_totals
     )
     return (
         loss_totals,
@@ -2641,135 +1830,6 @@ def compute_validation_diversity(validation):
     return result
 
 
-def _e2_validation_diagnostic(validation, dataloader, context, cfg, args):
-    """Audit E2 corrections on validation GT without affecting training."""
-    totals = {
-        'pixels': 0,
-        'agreement': 0,
-        'disagreement': 0,
-        'both_wrong': 0,
-        'both_correct': 0,
-        'shared_fp': 0,
-        'shared_fn': 0,
-        'high_conf_both_wrong': 0,
-        'selected': 0,
-        'true_correction': 0,
-        'false_correction': 0,
-        'shared_fp_corrected': 0,
-        'shared_fn_corrected': 0,
-        'new_fp': 0,
-        'new_fn': 0,
-        'net_corrected': 0,
-        'a_before_tp': 0,
-        'a_before_fp': 0,
-        'a_before_fn': 0,
-        'a_after_tp': 0,
-        'a_after_fp': 0,
-        'a_after_fn': 0,
-        'b_before_tp': 0,
-        'b_before_fp': 0,
-        'b_before_fn': 0,
-        'b_after_tp': 0,
-        'b_after_fp': 0,
-        'b_after_fn': 0,
-    }
-
-    offset = 0
-    with torch.inference_mode():
-        for batch in dataloader:
-            batch_size = int(batch['mask'].shape[0])
-            logits_a = validation['scores1'][offset:offset + batch_size]
-            logits_b = validation['scores2'][offset:offset + batch_size]
-            offset += batch_size
-            rgb_input = batch['image_rgb'].cuda(non_blocking=True)
-            gt = batch['mask'].cuda(non_blocking=True).eq(1)
-            targets = _e2_build_targets(
-                logits_a,
-                logits_b,
-                rgb_input,
-                context,
-                cfg,
-                args,
-            )
-            pred_a = targets['pseudo_a'].eq(1)
-            pred_b = targets['pseudo_b'].eq(1)
-            corrected_a = targets['corrected_a'].eq(1)
-            corrected_b = targets['corrected_b'].eq(1)
-            agreement = targets['agreement']
-            disagreement = targets['disagreement']
-            correction = targets['correction']
-            both_wrong = agreement & pred_a.ne(gt)
-            both_correct = agreement & pred_a.eq(gt)
-            shared_fp = both_wrong & pred_a
-            shared_fn = both_wrong & ~pred_a
-            high_conf_both_wrong = (targets['joint_conf'] >= E2_CONFIDENCE_THRESHOLD) & both_wrong
-            true_correction = correction & pred_a.ne(gt)
-            false_correction = correction & pred_a.eq(gt)
-            new_fp = corrected_a & ~gt & ~pred_a
-            new_fn = ~corrected_a & gt & pred_a
-
-            totals['pixels'] += int(gt.numel())
-            totals['agreement'] += int(agreement.sum().item())
-            totals['disagreement'] += int(disagreement.sum().item())
-            totals['both_wrong'] += int(both_wrong.sum().item())
-            totals['both_correct'] += int(both_correct.sum().item())
-            totals['shared_fp'] += int(shared_fp.sum().item())
-            totals['shared_fn'] += int(shared_fn.sum().item())
-            totals['high_conf_both_wrong'] += int(high_conf_both_wrong.sum().item())
-            totals['selected'] += int(correction.sum().item())
-            totals['true_correction'] += int(true_correction.sum().item())
-            totals['false_correction'] += int(false_correction.sum().item())
-            totals['shared_fp_corrected'] += int((targets['fg_to_bg'] & shared_fp).sum().item())
-            totals['shared_fn_corrected'] += int((targets['bg_to_fg'] & shared_fn).sum().item())
-            totals['new_fp'] += int(new_fp.sum().item())
-            totals['new_fn'] += int(new_fn.sum().item())
-            totals['net_corrected'] += int(true_correction.sum().item()) - int(false_correction.sum().item())
-
-            for prefix, before, after in (
-                ('a', pred_a, corrected_a),
-                ('b', pred_b, corrected_b),
-            ):
-                totals[prefix + '_before_tp'] += int((before & gt).sum().item())
-                totals[prefix + '_before_fp'] += int((before & ~gt).sum().item())
-                totals[prefix + '_before_fn'] += int((~before & gt).sum().item())
-                totals[prefix + '_after_tp'] += int((after & gt).sum().item())
-                totals[prefix + '_after_fp'] += int((after & ~gt).sum().item())
-                totals[prefix + '_after_fn'] += int((~after & gt).sum().item())
-
-    assert offset == int(validation['masks'].shape[0])
-    pixels = totals['pixels']
-    agreement = totals['agreement']
-    def jaccard(prefix, stage):
-        tp = totals['{}_{}_tp'.format(prefix, stage)]
-        fp = totals['{}_{}_fp'.format(prefix, stage)]
-        fn = totals['{}_{}_fn'.format(prefix, stage)]
-        return _safe_mean(tp, tp + fp + fn)
-
-    return {
-        'agreement_rate': _safe_mean(totals['agreement'], pixels),
-        'disagreement_rate': _safe_mean(totals['disagreement'], pixels),
-        'both_wrong_rate_total': _safe_mean(totals['both_wrong'], pixels),
-        'both_wrong_rate_in_agreement': _safe_mean(totals['both_wrong'], agreement),
-        'shared_fp_pixels': totals['shared_fp'],
-        'shared_fn_pixels': totals['shared_fn'],
-        'high_conf_both_wrong_rate_total': _safe_mean(totals['high_conf_both_wrong'], pixels),
-        'reference_selected_pixels': totals['selected'],
-        'reference_true_correction_pixels': totals['true_correction'],
-        'reference_false_correction_pixels': totals['false_correction'],
-        'reference_precision': _safe_mean(totals['true_correction'], totals['selected']),
-        'correct_consensus_false_correction_rate': _safe_mean(totals['false_correction'], totals['both_correct']),
-        'shared_fp_corrected': totals['shared_fp_corrected'],
-        'shared_fn_corrected': totals['shared_fn_corrected'],
-        'new_fp': totals['new_fp'],
-        'new_fn': totals['new_fn'],
-        'net_corrected_pixels': totals['net_corrected'],
-        'pseudo_A_jaccard_before': jaccard('a', 'before'),
-        'pseudo_A_jaccard_after': jaccard('a', 'after'),
-        'pseudo_B_jaccard_before': jaccard('b', 'before'),
-        'pseudo_B_jaccard_after': jaccard('b', 'after'),
-    }
-
-
 def _fixed05_segmentation_metrics(logits, masks):
     probability = torch.softmax(logits.detach(), dim=1)[:, 1]
     prediction = probability.ge(0.5)
@@ -2782,183 +1842,6 @@ def _fixed05_segmentation_metrics(logits, masks):
         'jaccard': _safe_mean(intersection, union),
         'dice': _safe_mean(2 * intersection, pred_area + target_area),
     }
-
-
-def _w2_validation_diagnostic(
-    validation, dataloader, context, cfg, args, val_eval1, val_eval2,
-):
-    """Retrospective validation-only W2 diagnostic; never feeds training."""
-    totals = {
-        key: 0.0 for key in (
-            'pixels', 'CC', 'WW', 'AC', 'BC', 'D', 'shared_FP', 'shared_FN',
-            'correct_FG', 'correct_BG', 'weight_CC', 'weight_WW',
-            'weight_correct_FG', 'weight_shared_FP',
-            'weight_correct_BG', 'weight_shared_FN',
-            'contradiction', 'contradiction_CC', 'contradiction_WW',
-            'hc090_agreement', 'hc090_WW', 'hc090_contradiction',
-            'hc090_contradiction_WW', 'hc095_agreement', 'hc095_WW',
-            'hc095_contradiction', 'hc095_contradiction_WW',
-        )
-    }
-    offset = 0
-    with torch.inference_mode():
-        for batch in dataloader:
-            batch_size = int(batch['mask'].shape[0])
-            logits_a = validation['scores1'][offset:offset + batch_size]
-            logits_b = validation['scores2'][offset:offset + batch_size]
-            offset += batch_size
-            rgb_input = batch['image_rgb'].cuda(non_blocking=True)
-            gt_long = batch['mask'].cuda(non_blocking=True).long()
-            valid = gt_long.ne(-1)
-            gt = gt_long.eq(1)
-            targets = _w2_build_weights(
-                logits_a, logits_b, rgb_input, context, cfg, args
-            )
-            pred_a = targets['pseudo_a'].eq(1)
-            pred_b = targets['pseudo_b'].eq(1)
-            correct_a = pred_a.eq(gt) & valid
-            correct_b = pred_b.eq(gt) & valid
-            agreement = targets['agreement'] & valid
-            disagreement = targets['disagreement'] & valid
-            cc = agreement & correct_a & correct_b
-            ww = agreement & (~correct_a) & (~correct_b)
-            ac = disagreement & correct_a & (~correct_b)
-            bc = disagreement & (~correct_a) & correct_b
-            if int((ac | bc).sum().item()) != int(disagreement.sum().item()):
-                raise AssertionError('W2 validation D != AC union BC')
-            shared_fp = ww & pred_a
-            shared_fn = ww & (~pred_a)
-            correct_fg = cc & pred_a
-            correct_bg = cc & (~pred_a)
-            contradiction = agreement & targets['signed_support'].le(0.0)
-            weight = targets['weight']
-            probability_a = torch.softmax(logits_a, dim=1)[:, 1]
-            probability_b = torch.softmax(logits_b, dim=1)[:, 1]
-            confidence_a = torch.maximum(probability_a, 1.0 - probability_a)
-            confidence_b = torch.maximum(probability_b, 1.0 - probability_b)
-            joint_confidence = torch.minimum(confidence_a, confidence_b)
-
-            masks = {
-                'CC': cc, 'WW': ww, 'AC': ac, 'BC': bc, 'D': disagreement,
-                'shared_FP': shared_fp, 'shared_FN': shared_fn,
-                'correct_FG': correct_fg, 'correct_BG': correct_bg,
-            }
-            totals['pixels'] += int(valid.sum().item())
-            for key, mask in masks.items():
-                totals[key] += int(mask.sum().item())
-            for name, mask in (
-                ('weight_CC', cc), ('weight_WW', ww),
-                ('weight_correct_FG', correct_fg),
-                ('weight_shared_FP', shared_fp),
-                ('weight_correct_BG', correct_bg),
-                ('weight_shared_FN', shared_fn),
-            ):
-                totals[name] += float(weight[mask].sum().item())
-            totals['contradiction'] += int(contradiction.sum().item())
-            totals['contradiction_CC'] += int((contradiction & cc).sum().item())
-            totals['contradiction_WW'] += int((contradiction & ww).sum().item())
-            for threshold, suffix in ((0.90, '090'), (0.95, '095')):
-                high = agreement & joint_confidence.ge(threshold)
-                high_ww = high & ww
-                high_contradiction = high & contradiction
-                totals['hc{}_agreement'.format(suffix)] += int(high.sum().item())
-                totals['hc{}_WW'.format(suffix)] += int(high_ww.sum().item())
-                totals['hc{}_contradiction'.format(suffix)] += int(
-                    high_contradiction.sum().item()
-                )
-                totals['hc{}_contradiction_WW'.format(suffix)] += int(
-                    (high_contradiction & ww).sum().item()
-                )
-
-    if offset != int(validation['masks'].shape[0]):
-        raise AssertionError('W2 validation loader/logit length mismatch')
-    pixels = totals['pixels']
-    agreement = totals['CC'] + totals['WW']
-    mean_cc = _safe_mean(totals['weight_CC'], totals['CC'])
-    mean_ww = _safe_mean(totals['weight_WW'], totals['WW'])
-    fg_cc_weight = _safe_mean(totals['weight_correct_FG'], totals['correct_FG'])
-    fp_weight = _safe_mean(totals['weight_shared_FP'], totals['shared_FP'])
-    bg_cc_weight = _safe_mean(totals['weight_correct_BG'], totals['correct_BG'])
-    fn_weight = _safe_mean(totals['weight_shared_FN'], totals['shared_FN'])
-    correct_reduction = 1.0 - mean_cc
-    error_reduction = 1.0 - mean_ww
-    fixed_a = _fixed05_segmentation_metrics(
-        validation['scores1'], validation['masks']
-    )
-    fixed_b = _fixed05_segmentation_metrics(
-        validation['scores2'], validation['masks']
-    )
-    row = {
-        'valid_pixels': int(pixels), 'CC': int(totals['CC']),
-        'WW': int(totals['WW']), 'AC': int(totals['AC']),
-        'BC': int(totals['BC']), 'D': int(totals['D']),
-        'agreement_rate': _safe_mean(agreement, pixels),
-        'disagreement_rate': _safe_mean(totals['D'], pixels),
-        'absolute_WW_rate': _safe_mean(totals['WW'], pixels),
-        'shared_error_fraction': _safe_mean(totals['WW'], totals['WW'] + totals['D']),
-        'shared_FP': int(totals['shared_FP']), 'shared_FN': int(totals['shared_FN']),
-        'mean_weight_CC': mean_cc, 'mean_weight_WW': mean_ww,
-        'correct_supervision_reduction': correct_reduction,
-        'error_supervision_reduction': error_reduction,
-        'selectivity_ratio': _safe_mean(error_reduction, correct_reduction),
-        'correct_FG_pixels': int(totals['correct_FG']),
-        'shared_FP_mean_weight': fp_weight,
-        'correct_FG_mean_weight': fg_cc_weight,
-        'FG_correct_reduction': 1.0 - fg_cc_weight,
-        'FG_error_reduction': 1.0 - fp_weight,
-        'correct_BG_pixels': int(totals['correct_BG']),
-        'shared_FN_mean_weight': fn_weight,
-        'correct_BG_mean_weight': bg_cc_weight,
-        'BG_correct_reduction': 1.0 - bg_cc_weight,
-        'BG_error_reduction': 1.0 - fn_weight,
-        'contradiction_pixels': int(totals['contradiction']),
-        'contradiction_CC': int(totals['contradiction_CC']),
-        'contradiction_WW': int(totals['contradiction_WW']),
-        'WW_rate_in_contradiction': _safe_mean(
-            totals['contradiction_WW'], totals['contradiction']
-        ),
-        'WW_coverage_by_contradiction': _safe_mean(
-            totals['contradiction_WW'], totals['WW']
-        ),
-        'project_val_threshold_A': val_eval1[0],
-        'project_val_jaccard_A': val_eval1[1],
-        'project_val_dice_A': val_eval1[2],
-        'project_val_threshold_B': val_eval2[0],
-        'project_val_jaccard_B': val_eval2[1],
-        'project_val_dice_B': val_eval2[2],
-        'fixed05_val_jaccard_A': fixed_a['jaccard'],
-        'fixed05_val_dice_A': fixed_a['dice'],
-        'fixed05_val_jaccard_B': fixed_b['jaccard'],
-        'fixed05_val_dice_B': fixed_b['dice'],
-    }
-    for suffix in ('090', '095'):
-        hc_ww = totals['hc{}_WW'.format(suffix)]
-        hc_agreement = totals['hc{}_agreement'.format(suffix)]
-        hc_contradiction = totals['hc{}_contradiction'.format(suffix)]
-        hc_contradiction_ww = totals['hc{}_contradiction_WW'.format(suffix)]
-        hc_ww_rate = _safe_mean(hc_ww, hc_agreement)
-        hc_contradiction_ww_rate = _safe_mean(
-            hc_contradiction_ww, hc_contradiction
-        )
-        row.update({
-            'high_conf_WW_{}'.format(suffix): int(hc_ww),
-            'high_conf_WW_{}_all'.format(suffix): _safe_mean(hc_ww, pixels),
-            'high_conf_WW_{}_fraction_of_WW'.format(suffix): _safe_mean(
-                hc_ww, totals['WW']
-            ),
-            'high_conf_{}_agreement'.format(suffix): int(hc_agreement),
-            'high_conf_{}_WW_rate'.format(suffix): hc_ww_rate,
-            'high_conf_{}_contradiction_pixels'.format(suffix): int(hc_contradiction),
-            'high_conf_{}_contradiction_WW'.format(suffix): int(hc_contradiction_ww),
-            'high_conf_{}_contradiction_WW_rate'.format(suffix): hc_contradiction_ww_rate,
-            'high_conf_{}_contradiction_WW_enrichment'.format(suffix): _safe_mean(
-                hc_contradiction_ww_rate, hc_ww_rate
-            ),
-            'high_conf_{}_WW_coverage_by_contradiction'.format(suffix): _safe_mean(
-                hc_contradiction_ww, hc_ww
-            ),
-        })
-    return row
 
 
 def _collect_epoch_metrics(
@@ -3061,7 +1944,7 @@ def _binary_metrics_at_threshold(logits, masks, threshold, inclusive=False):
     }
 
 
-def _w2_evaluate_frozen_pair(
+def _evaluate_frozen_pair(
     models, losses, dataloaders, cfg, checkpoint_label, source_epochs,
 ):
     for model in models:
@@ -3137,7 +2020,7 @@ def _sc_validation_diagnostic(
             offset += batch_size
             rgb_input = batch['image_rgb'].cuda(non_blocking=True)
             gt = batch['mask'].cuda(non_blocking=True).eq(1)
-            targets = _w2_build_weights(logits_a, logits_b, rgb_input, context, cfg, args)
+            targets = _build_reference_weights(logits_a, logits_b, rgb_input, context, cfg, args)
             pa = targets['pseudo_a'].eq(1)
             pb = targets['pseudo_b'].eq(1)
             agreement = targets['agreement']
@@ -3250,126 +2133,11 @@ def _write_sc_protocol_audit(path, args, cfg, datasets, context, optimizers, sta
         'dataset_counts': {'labeled_unique': len(datasets['train_sup_unique']), 'unlabeled': len(datasets['train_unsup']), 'validation': len(datasets['val']), 'test': len(datasets['test'])},
         'config': {'labeled_ratio': args.labeled_ratio, 'seed': args.sd, 'batch_size': args.batch_size, 'num_epochs': args.num_epochs, 'network': args.network, 'input_mode': args.input_mode, 'cps_mode': args.cps_mode, 'lr': args.lr, 'momentum': args.momentum, 'weight_decay': 5 * 10 ** args.wd, 'step_size': args.step_size, 'gamma': args.gamma, 'unsup_weight': args.unsup_weight, 'warm_up_duration': args.warm_up_duration, 'milestone_interval': args.milestone_interval, 'best_save_interval': args.best_save_interval},
         'actual_cps_loss_criterion': 'torch.nn.CrossEntropyLoss, bidirectional hard-target CE; 0.5 each direction',
-        'soft_correction': {'margin': 'S_fg-S_bg', 'signed_support': 's=(2*y_c-1)*m', 'conflict': 'r=clamp(-s,0,1)', 'formula': '(1-r)*CE(current)+r*CE(opposite) on agreement; original CE on disagreement', 'loss_reduction': 'pixel mean after composition', 'softmax_ce_gradient_relation': 'g_SC=p_opp-r', 'hard_reference_threshold_used': False, 'tau_fp_used': False, 'tau_fn_used': False, 'student_confidence_used': False, 'pseudo_label_flipping_used': False},
+        'soft_correction': {'margin': 'S_fg-S_bg', 'signed_support': 's=(2*y_c-1)*m', 'conflict': 'r=clamp(-s,0,1)', 'formula': '(1-r)*CE(current)+r*CE(opposite) on agreement; original CE on disagreement', 'loss_reduction': 'pixel mean after composition', 'softmax_ce_gradient_relation': 'g_SC=p_opp-r', 'hard_reference_threshold_used': False, 'student_confidence_used': False, 'pseudo_label_flipping_used': False},
         'UNI': {'architecture': 'ViT-L/16', 'feature_dim': 1024, 'dense_token_grid': [14, 14], 'sha256': context['weights_sha256'], 'path': context['weights_path'], 'frozen': True, 'eval': not context['uni'].training, 'requires_grad': any(p.requires_grad for p in context['uni'].parameters()), 'in_optimizer': any(id(p) in optimizer_parameter_ids for p in context['uni'].parameters())},
         'reference_memory': {'path': context['memory_path'], 'sha256': context['memory_sha256'], 'foreground_count': context['memory_fg_count'], 'background_count': context['memory_bg_count'], 'feature_dim': context['feature_dim'], 'token_grid': context['token_grid'], 'K': context['memory_top_k'], 'built_before_optimizer': bool(context.get('memory_built', False)), 'online_updates': False, 'source': 'current labeled split GT only'},
         'test_policy': 'not evaluated during training; frozen evaluation only after epoch200',
         'code': {'main_path': str(Path(__file__).resolve()), 'main_sha256': _sha256_file(Path(__file__).resolve()), 'torch': torch.__version__, 'numpy': np.__version__, 'timestamp': time.strftime('%Y-%m-%dT%H:%M:%S%z')},
-    }
-    with open(path, 'w', encoding='utf-8') as handle:
-        json.dump(audit, handle, indent=2, ensure_ascii=False)
-
-
-def _w2_checkpoint_metadata(args, context, best_val_eval_lists, best_epochs):
-    return {
-        'dataset_name': args.dataset_name, 'labeled_ratio': args.labeled_ratio,
-        'seed': args.sd, 'input_mode': args.input_mode,
-        'network': args.network, 'cps_mode': args.cps_mode,
-        'selection_split': 'validation', 'selection_metric': 'jaccard',
-        'best_val_metrics': [list(values) for values in best_val_eval_lists],
-        'best_epochs': list(best_epochs),
-        'reference_memory_path': context['memory_path'],
-        'reference_memory_sha256': context['memory_sha256'],
-        'uni_sha256': context['weights_sha256'],
-        'uni_weights': context['weights_path'], 'uni_k': args.uni_k,
-        'margin_definition': 'S_fg - S_bg',
-        'weight_definition': (
-            'agreement: s=(2*y_c-1)*m, r=clamp(-s,0,1), w=1-r; '
-            'disagreement: w=1'
-        ),
-        'weighted_loss_normalization': (
-            'sum(w*pixel_CE)/(sum(w)+1e-8) per direction'
-        ),
-        'hard_threshold_used': False,
-        'test_evaluation_policy': 'final_frozen_only',
-    }
-
-
-def _write_w2_protocol_audit(
-    path, args, cfg, datasets, context, optimizers, startup_passed,
-):
-    optimizer_parameter_ids = {
-        id(parameter) for optimizer in optimizers
-        for group in optimizer.param_groups for parameter in group['params']
-    }
-    audit = {
-        'experiment': 'W2 Conservative Continuous Reference-Calibrated CPS',
-        'formal_training': True, 'fresh_initialization': True,
-        'resume_checkpoint': None, 'startup_assertions_passed': startup_passed,
-        'command': ' '.join(sys.argv), 'dataset_name': args.dataset_name,
-        'path_dataset': str(Path(args.path_dataset).resolve()),
-        'manifest_dir': str(Path(args.manifest_dir or os.path.join(
-            args.path_dataset, 'manifests', 'paper_seed_2026'
-        )).resolve()),
-        'dataset_counts': {
-            'labeled_unique': len(datasets['train_sup_unique']),
-            'unlabeled': len(datasets['train_unsup']),
-            'validation': len(datasets['val']), 'test': len(datasets['test']),
-        },
-        'config': {
-            'labeled_ratio': args.labeled_ratio, 'seed': args.sd,
-            'batch_size': args.batch_size, 'num_epochs': args.num_epochs,
-            'network': args.network, 'input_mode': args.input_mode,
-            'cps_mode': args.cps_mode, 'lr': args.lr,
-            'momentum': args.momentum, 'weight_decay': 5 * 10 ** args.wd,
-            'step_size': args.step_size, 'gamma': args.gamma,
-            'unsup_weight': args.unsup_weight,
-            'unsup_weight_schedule': 'unsup_weight*(epoch+1)/num_epochs',
-            'warm_up_duration': args.warm_up_duration,
-            'milestone_interval': args.milestone_interval,
-            'best_save_interval': args.best_save_interval,
-        },
-        'supervised_branch': (
-            'unchanged 0.5*(CrossEntropyLoss + DiceLoss); no UNI/W2 on labeled pixels'
-        ),
-        'original_cps': (
-            'bidirectional hard argmax targets; 0.5*CrossEntropyLoss each direction'
-        ),
-        'W2': {
-            'margin': 'm=S_fg-S_bg',
-            'signed_support': 's=(2*y_c-1)*m on agreement',
-            'conflict': 'r=clamp(-s,0,1)',
-            'weight': 'agreement w=1-r; disagreement w=1',
-            'pseudo_label_changed': False,
-            'loss_normalization': 'sum(w*pixel_CE)/(sum(w)+1e-8)',
-            'hard_reference_threshold_used': False,
-            'tau_fp_used': False, 'tau_fn_used': False,
-            'student_confidence_used': False,
-        },
-        'UNI': {
-            'architecture': 'ViT-L/16', 'feature_dim': 1024,
-            'dense_token_grid': [14, 14], 'sha256': context['weights_sha256'],
-            'path': context['weights_path'], 'frozen': True,
-            'eval': not context['uni'].training,
-            'requires_grad': any(p.requires_grad for p in context['uni'].parameters()),
-            'in_optimizer': any(
-                id(p) in optimizer_parameter_ids for p in context['uni'].parameters()
-            ),
-            'preprocessing': {
-                'source_input': 'original RGB', 'resize': [224, 224],
-                'mean': list(E2_UNI_MEAN), 'std': list(E2_UNI_STD),
-                'interpolation': 'bilinear align_corners=False',
-            },
-        },
-        'reference_memory': {
-            'path': context['memory_path'], 'sha256': context['memory_sha256'],
-            'foreground_count': context['memory_fg_count'],
-            'background_count': context['memory_bg_count'],
-            'feature_dim': context['feature_dim'],
-            'token_grid': context['token_grid'], 'K': context['memory_top_k'],
-            'max_norm_error_fg': context['memory_fg_norm_error'],
-            'max_norm_error_bg': context['memory_bg_norm_error'],
-            'rebuilt': False, 'online_updates': False,
-        },
-        'test_policy': (
-            'not evaluated during training; frozen best A/B and epoch200 only after completion'
-        ),
-        'code': {
-            'main_path': str(Path(__file__).resolve()),
-            'main_sha256': _sha256_file(Path(__file__).resolve()),
-            'torch': torch.__version__, 'numpy': np.__version__,
-            'timestamp': time.strftime('%Y-%m-%dT%H:%M:%S%z'),
-        },
     }
     with open(path, 'w', encoding='utf-8') as handle:
         json.dump(audit, handle, indent=2, ensure_ascii=False)
@@ -3390,7 +2158,7 @@ def train_model(
     trained_models_path, segmentation_results_path = build_output_paths(
         args, datasets, use_manifests
     )
-    if args.cps_mode in ('uni_reference_w2', 'uni_reference_soft_correction'):
+    if args.cps_mode == 'uni_reference_soft_correction':
         existing_training_artifacts = [
             path for path in Path(trained_models_path).rglob('*')
             if path.is_file()
@@ -3404,32 +2172,22 @@ def train_model(
     logger, metrics_path, diagnostic_logger = create_run_outputs(
         args, trained_models_path
     )
-    e2_context = None
-    e2_epoch_writer = None
-    e2_validation_writer = None
-    e2_iter_writer = None
-    e2_iter_file = None
-    w2_epoch_writer = None
-    w2_metrics_file = None
-    w2_validation_writer = None
-    w2_validation_file = None
-    w2_iter_writer = None
-    w2_iter_file = None
+    reference_context = None
     sc_epoch_writer = None
     sc_metrics_file = None
     sc_validation_writer = None
     sc_validation_file = None
     sc_iter_writer = None
     sc_iter_file = None
-    if args.cps_mode in ('uni_reference_e2', 'uni_reference_w2', 'uni_reference_soft_correction'):
-        e2_context = _e2_load_reference(
+    if args.cps_mode == 'uni_reference_soft_correction':
+        reference_context = _load_reference(
             args,
             cfg,
             logger,
             manifest_dir=manifest_dir,
             use_manifests=use_manifests,
         )
-        e2_context['cfg'] = cfg
+        reference_context['cfg'] = cfg
 
     (
         models,
@@ -3439,46 +2197,24 @@ def train_model(
     ) = build_training_components(args, cfg)
 
     model1, model2 = models
-    if e2_context is not None:
-        if args.cps_mode == 'uni_reference_e2':
-            _run_e2_startup_checks(e2_context, optimizers)
-            logger.info('E2 startup consistency checks passed')
-        elif args.cps_mode == 'uni_reference_w2':
-            _run_w2_startup_checks(
-                args, cfg, e2_context, models, optimizers, losses
-            )
-            logger.info(
-                'W2 startup consistency checks passed | '
-                'hard_reference_threshold_used=false | loss_normalization='
-                'sum(w*loss)/(sum(w)+1e-8)'
-            )
-            _write_w2_protocol_audit(
-                os.path.join(trained_models_path, 'w2_protocol_audit.json'),
-                args, cfg, datasets, e2_context, optimizers, True,
-            )
-            logger.info(
-                'W2 fresh initialization confirmed | resume_checkpoint=None '
-                '| checkpoint_root=%s | segmentation_root=%s',
-                trained_models_path, segmentation_results_path,
-            )
-        else:
-            _run_sc_startup_checks(
-                args, cfg, e2_context, models, optimizers, losses
-            )
-            logger.info(
-                'Soft Correction startup consistency checks passed | '
-                'hard_reference_threshold_used=false | student_confidence_used=false '
-                '| loss=(1-r)*CE(current)+r*CE(opposite) on agreement; original CE on disagreement'
-            )
-            _write_sc_protocol_audit(
-                os.path.join(trained_models_path, 'soft_correction_protocol_audit.json'),
-                args, cfg, datasets, e2_context, optimizers, True,
-            )
-            logger.info(
-                'Soft Correction fresh initialization confirmed | resume_checkpoint=None '
-                '| checkpoint_root=%s | segmentation_root=%s',
-                trained_models_path, segmentation_results_path,
-            )
+    if reference_context is not None:
+        _run_sc_startup_checks(
+            args, cfg, reference_context, models, optimizers, losses
+        )
+        logger.info(
+            'Soft Correction startup consistency checks passed | '
+            'hard_reference_threshold_used=false | student_confidence_used=false '
+            '| loss=(1-r)*CE(current)+r*CE(opposite) on agreement; original CE on disagreement'
+        )
+        _write_sc_protocol_audit(
+            os.path.join(trained_models_path, 'soft_correction_protocol_audit.json'),
+            args, cfg, datasets, reference_context, optimizers, True,
+        )
+        logger.info(
+            'Soft Correction fresh initialization confirmed | resume_checkpoint=None '
+            '| checkpoint_root=%s | segmentation_root=%s',
+            trained_models_path, segmentation_results_path,
+        )
     best_val_eval_lists = (
         [0 for _ in range(4)],
         [0 for _ in range(4)],
@@ -3495,71 +2231,7 @@ def train_model(
         metrics_file = stack.enter_context(
             open(metrics_path, 'w', newline='', encoding='utf-8')
         )
-        if e2_context is not None and args.cps_mode == 'uni_reference_e2':
-            e2_metrics_path = os.path.join(
-                trained_models_path, 'e2_reference_metrics.csv'
-            )
-            e2_validation_path = os.path.join(
-                trained_models_path, 'e2_reference_validation_diagnostic.csv'
-            )
-            e2_metrics_file = stack.enter_context(
-                open(e2_metrics_path, 'w', newline='', encoding='utf-8')
-            )
-            e2_validation_file = stack.enter_context(
-                open(e2_validation_path, 'w', newline='', encoding='utf-8')
-            )
-            e2_epoch_writer = csv.DictWriter(
-                e2_metrics_file, fieldnames=E2_METRIC_FIELDS
-            )
-            e2_epoch_writer.writeheader()
-            e2_validation_writer = csv.DictWriter(
-                e2_validation_file, fieldnames=E2_VALIDATION_FIELDS
-            )
-            e2_validation_writer.writeheader()
-            if args.e2_log_interval > 0:
-                e2_iter_path = os.path.join(
-                    trained_models_path, 'e2_reference_metrics_iter.csv'
-                )
-                e2_iter_file = stack.enter_context(
-                    open(e2_iter_path, 'w', newline='', encoding='utf-8')
-                )
-                e2_iter_writer = csv.DictWriter(
-                    e2_iter_file, fieldnames=E2_ITER_METRIC_FIELDS
-                )
-                e2_iter_writer.writeheader()
-        elif e2_context is not None and args.cps_mode == 'uni_reference_w2':
-            w2_metrics_path = os.path.join(
-                trained_models_path, 'w2_reference_metrics.csv'
-            )
-            w2_validation_path = os.path.join(
-                trained_models_path, 'w2_reference_validation_diagnostic.csv'
-            )
-            w2_metrics_file = stack.enter_context(
-                open(w2_metrics_path, 'w', newline='', encoding='utf-8')
-            )
-            w2_validation_file = stack.enter_context(
-                open(w2_validation_path, 'w', newline='', encoding='utf-8')
-            )
-            w2_epoch_writer = csv.DictWriter(
-                w2_metrics_file, fieldnames=W2_METRIC_FIELDS
-            )
-            w2_epoch_writer.writeheader()
-            w2_validation_writer = csv.DictWriter(
-                w2_validation_file, fieldnames=W2_VALIDATION_FIELDS
-            )
-            w2_validation_writer.writeheader()
-            if args.w2_log_interval > 0:
-                w2_iter_path = os.path.join(
-                    trained_models_path, 'w2_reference_metrics_iter.csv'
-                )
-                w2_iter_file = stack.enter_context(
-                    open(w2_iter_path, 'w', newline='', encoding='utf-8')
-                )
-                w2_iter_writer = csv.DictWriter(
-                    w2_iter_file, fieldnames=W2_ITER_METRIC_FIELDS
-                )
-                w2_iter_writer.writeheader()
-        elif e2_context is not None and args.cps_mode == 'uni_reference_soft_correction':
+        if reference_context is not None and args.cps_mode == 'uni_reference_soft_correction':
             sc_metrics_path = os.path.join(
                 trained_models_path, 'soft_correction_reference_metrics.csv'
             )
@@ -3598,7 +2270,7 @@ def train_model(
 
         for epoch in range(args.num_epochs):
             epoch_start = time.time()
-            loss_totals, train_predictions, global_step, e2_totals = train_one_epoch(
+            loss_totals, train_predictions, global_step, reference_totals = train_one_epoch(
                 args,
                 epoch,
                 global_step,
@@ -3608,11 +2280,7 @@ def train_model(
                 dataloaders,
                 metrics_writer,
                 metrics_file,
-                e2_context=e2_context,
-                e2_iter_writer=e2_iter_writer,
-                e2_iter_file=e2_iter_file,
-                w2_iter_writer=w2_iter_writer,
-                w2_iter_file=w2_iter_file,
+                reference_context=reference_context,
                 sc_iter_writer=sc_iter_writer,
                 sc_iter_file=sc_iter_file,
             )
@@ -3676,42 +2344,17 @@ def train_model(
                         validation['masks'],
                         print_num_half,
                     )
-            if e2_context is not None and args.cps_mode == 'uni_reference_e2':
-                e2_validation_row = _e2_validation_diagnostic(
-                    validation,
-                    dataloaders['val'],
-                    e2_context,
-                    cfg,
-                    args,
-                )
-                e2_validation_row['epoch'] = epoch + 1
-                e2_validation_writer.writerow(e2_validation_row)
-                e2_validation_file.flush()
-            elif e2_context is not None and args.cps_mode == 'uni_reference_w2':
-                w2_validation_row = _w2_validation_diagnostic(
-                    validation,
-                    dataloaders['val'],
-                    e2_context,
-                    cfg,
-                    args,
-                    val_eval1,
-                    val_eval2,
-                )
-                w2_validation_row['epoch'] = epoch + 1
-                w2_validation_writer.writerow(w2_validation_row)
-                w2_validation_file.flush()
-            elif e2_context is not None and args.cps_mode == 'uni_reference_soft_correction':
+            if reference_context is not None and args.cps_mode == 'uni_reference_soft_correction':
                 sc_validation_row = _sc_validation_diagnostic(
-                    validation, dataloaders['val'], e2_context, cfg, args,
+                    validation, dataloaders['val'], reference_context, cfg, args,
                     val_eval1, val_eval2,
                 )
                 sc_validation_row['epoch'] = epoch + 1
                 sc_validation_writer.writerow(sc_validation_row)
                 sc_validation_file.flush()
 
-            if args.cps_mode in ('uni_reference_w2', 'uni_reference_soft_correction'):
-                # W2 does not inspect test during training.  Frozen best/current
-                # models are evaluated once after all 200 epochs.
+            if args.cps_mode == 'uni_reference_soft_correction':
+                # Reference-aware training inspects test only after all epochs.
                 test_evaluation = None
                 test_eval1 = [float('nan')] * 4
                 test_eval2 = [float('nan')] * 4
@@ -3796,11 +2439,11 @@ def train_model(
                     'selection_split': 'validation',
                     'selection_metric': 'jaccard',
                     'current_test_metrics': (
-                        None if args.cps_mode in ('uni_reference_w2', 'uni_reference_soft_correction')
+                        None if args.cps_mode == 'uni_reference_soft_correction'
                         else [list(test_eval1), list(test_eval2)]
                     ),
                     'test_evaluation_policy': (
-                        'final_frozen_only' if args.cps_mode in ('uni_reference_w2', 'uni_reference_soft_correction')
+                        'final_frozen_only' if args.cps_mode == 'uni_reference_soft_correction'
                         else 'monitoring_only_not_used_for_selection'
                     ),
                     'current_val_metrics': [
@@ -3814,39 +2457,12 @@ def train_model(
                     'best_epochs': list(best_epochs),
                     'args': vars(args).copy(),
                 }
-                if e2_context is not None and args.cps_mode == 'uni_reference_e2':
+                if reference_context is not None and args.cps_mode == 'uni_reference_soft_correction':
                     milestone_metadata.update({
-                        'uni_checkpoint_sha256': e2_context['weights_sha256'],
-                        'reference_memory_sha256': e2_context['memory_sha256'],
-                        'uni_reference_memory': e2_context['memory_path'],
-                        'uni_weights': e2_context['weights_path'],
-                        'uni_k': args.uni_k,
-                        'uni_tau_fp': args.uni_tau_fp,
-                        'uni_tau_fn': args.uni_tau_fn,
-                    })
-                elif e2_context is not None and args.cps_mode == 'uni_reference_w2':
-                    milestone_metadata.update({
-                        'reference_memory_path': e2_context['memory_path'],
-                        'reference_memory_sha256': e2_context['memory_sha256'],
-                        'uni_sha256': e2_context['weights_sha256'],
-                        'uni_weights': e2_context['weights_path'],
-                        'uni_k': args.uni_k,
-                        'margin_definition': 'S_fg - S_bg',
-                        'weight_definition': (
-                            'agreement: s=(2*y_c-1)*m, '
-                            'r=clamp(-s,0,1), w=1-r; disagreement: w=1'
-                        ),
-                        'weighted_loss_normalization': (
-                            'sum(w*pixel_CE)/(sum(w)+1e-8) per direction'
-                        ),
-                        'hard_threshold_used': False,
-                    })
-                elif e2_context is not None and args.cps_mode == 'uni_reference_soft_correction':
-                    milestone_metadata.update({
-                        'reference_memory_path': e2_context['memory_path'],
-                        'reference_memory_sha256': e2_context['memory_sha256'],
-                        'uni_sha256': e2_context['weights_sha256'],
-                        'uni_weights': e2_context['weights_path'],
+                        'reference_memory_path': reference_context['memory_path'],
+                        'reference_memory_sha256': reference_context['memory_sha256'],
+                        'uni_sha256': reference_context['weights_sha256'],
+                        'uni_weights': reference_context['weights_path'],
                         'uni_k': args.uni_k,
                         'margin_definition': 'S_fg - S_bg',
                         'signed_support_definition': 's=(2*y_c-1)*m',
@@ -3925,68 +2541,16 @@ def train_model(
                 best_val_eval_lists,
             )
             _log_epoch(logger, args, metrics)
-            if e2_context is not None and args.cps_mode == 'uni_reference_e2':
-                e2_epoch_writer.writerow(_e2_epoch_row(epoch + 1, e2_totals))
-                e2_metrics_file.flush()
-            elif e2_context is not None and args.cps_mode == 'uni_reference_w2':
-                w2_epoch_writer.writerow(_w2_epoch_row(epoch + 1, e2_totals))
-                w2_metrics_file.flush()
-            elif e2_context is not None and args.cps_mode == 'uni_reference_soft_correction':
-                sc_epoch_writer.writerow(_sc_epoch_row(epoch + 1, e2_totals))
+            if reference_context is not None and args.cps_mode == 'uni_reference_soft_correction':
+                sc_epoch_writer.writerow(_sc_epoch_row(epoch + 1, reference_totals))
                 sc_metrics_file.flush()
-
-    w2_final_rows = None
-    w2_last_path = None
-    if args.cps_mode == 'uni_reference_w2':
-        epoch200_states = tuple(_model_state_snapshot(model) for model in models)
-        w2_metadata = _w2_checkpoint_metadata(
-            args, e2_context, best_val_eval_lists, best_epochs
-        )
-        w2_last_path = os.path.join(trained_models_path, 'last_checkpoint.pth')
-        torch.save({
-            'epoch': args.num_epochs,
-            'appearance_state_dict': epoch200_states[0],
-            'structure_state_dict': epoch200_states[1],
-            **w2_metadata,
-        }, w2_last_path)
-        w2_final_rows = _w2_evaluate_frozen_pair(
-            models, losses, dataloaders, cfg, 'epoch200',
-            (args.num_epochs, args.num_epochs),
-        )
-        model1.load_state_dict(best_model_states[0], strict=True)
-        model2.load_state_dict(best_model_states[1], strict=True)
-        w2_final_rows.extend(
-            _w2_evaluate_frozen_pair(
-                models, losses, dataloaders, cfg, 'best_validation', best_epochs,
-            )
-        )
-        model1.load_state_dict(epoch200_states[0], strict=True)
-        model2.load_state_dict(epoch200_states[1], strict=True)
-        final_path = os.path.join(
-            trained_models_path, 'w2_final_frozen_evaluation.csv'
-        )
-        with open(final_path, 'w', newline='', encoding='utf-8') as handle:
-            writer = csv.DictWriter(
-                handle,
-                fieldnames=[
-                    'checkpoint', 'branch', 'source_epoch', 'split',
-                    'threshold', 'threshold_source', 'jaccard', 'dice',
-                    'fixed05_jaccard', 'fixed05_dice',
-                ],
-            )
-            writer.writeheader()
-            writer.writerows(w2_final_rows)
-        logger.info(
-            'W2 final frozen evaluation complete | test inspected only now '
-            'after epoch 200 | path=%s', final_path,
-        )
 
     sc_final_rows = None
     sc_last_path = None
     if args.cps_mode == 'uni_reference_soft_correction':
         epoch200_states = tuple(_model_state_snapshot(model) for model in models)
         sc_metadata = _sc_checkpoint_metadata(
-            args, e2_context, best_val_eval_lists, best_epochs
+            args, reference_context, best_val_eval_lists, best_epochs
         )
         sc_last_path = os.path.join(trained_models_path, 'last_checkpoint.pth')
         torch.save({
@@ -3995,14 +2559,14 @@ def train_model(
             'structure_state_dict': epoch200_states[1],
             **sc_metadata,
         }, sc_last_path)
-        sc_final_rows = _w2_evaluate_frozen_pair(
+        sc_final_rows = _evaluate_frozen_pair(
             models, losses, dataloaders, cfg, 'epoch200',
             (args.num_epochs, args.num_epochs),
         )
         model1.load_state_dict(best_model_states[0], strict=True)
         model2.load_state_dict(best_model_states[1], strict=True)
         sc_final_rows.extend(
-            _w2_evaluate_frozen_pair(
+            _evaluate_frozen_pair(
                 models, losses, dataloaders, cfg, 'best_validation', best_epochs,
             )
         )
@@ -4057,7 +2621,7 @@ def train_model(
         best_epochs[1],
         best_val_eval_lists[1][1],
     )
-    if args.cps_mode in ('uni_reference_w2', 'uni_reference_soft_correction'):
+    if args.cps_mode == 'uni_reference_soft_correction':
         best_paths = [
             os.path.join(
                 trained_models_path,
@@ -4081,22 +2645,12 @@ def train_model(
             'epoch200_checkpoint': str(
                 Path(trained_models_path) / 'milestones' / 'epoch_200.pth'
             ),
-            'last_checkpoint': (
-                w2_last_path if args.cps_mode == 'uni_reference_w2'
-                else sc_last_path
-            ),
-            'final_frozen_evaluation': (
-                w2_final_rows if args.cps_mode == 'uni_reference_w2'
-                else sc_final_rows
-            ),
+            'last_checkpoint': sc_last_path,
+            'final_frozen_evaluation': sc_final_rows,
             'test_policy': 'final_frozen_only_after_epoch200',
             'training_elapsed_seconds_including_final_evaluation': elapsed,
         }
-        completion_name = (
-            'w2_training_complete.json'
-            if args.cps_mode == 'uni_reference_w2'
-            else 'soft_correction_training_complete.json'
-        )
+        completion_name = 'soft_correction_training_complete.json'
         with open(
             os.path.join(trained_models_path, completion_name),
             'w', encoding='utf-8'
@@ -4184,12 +2738,9 @@ def parse_args():
         '--cps_mode', '--cps-mode',
         dest='cps_mode',
         default='standard',
-        choices=['standard', 'uni_reference_e2', 'uni_reference_w2', 'uni_reference_soft_correction'],
+        choices=['standard', 'uni_reference_soft_correction'],
         help=(
             'standard uses the original bidirectional CPS; '
-            'uni_reference_e2 applies frozen E1 Global UNI correction only on agreement; '
-            'uni_reference_w2 continuously attenuates contradicted CPS supervision '
-            'without changing pseudo-labels; '
             'uni_reference_soft_correction transfers r target mass to the opposite '
             'class on agreement without hard flipping.'
         ),
@@ -4199,42 +2750,21 @@ def parse_args():
         default=None,
         help=(
             'reference_memory.npz used by UNI reference modes; when omitted, '
-            'a dataset/ratio/seed-isolated path is selected automatically'
-        ),
-    )
-    parser.add_argument(
-        '--uni_build_reference_memory',
-        action='store_true',
-        help=(
-            'legacy compatibility flag; missing memory is built automatically, '
-            'while an existing memory is always reused'
+            'checkpoints/<dataset>_labeled<ratio>_seed<seed>/reference_memory.npz '
+            'is selected automatically'
         ),
     )
     parser.add_argument(
         '--uni_weights',
-        default=E2_UNI_WEIGHTS_DEFAULT,
+        default=UNI_WEIGHTS_DEFAULT,
         help='local frozen MahmoodLab/UNI pytorch_model.bin',
     )
     parser.add_argument(
         '--uni_config',
-        default=E2_UNI_CONFIG_DEFAULT,
+        default=UNI_CONFIG_DEFAULT,
         help='UNI config.json next to the local weight file',
     )
     parser.add_argument('--uni_k', default=5, type=int)
-    parser.add_argument('--uni_tau_fp', default=0.20, type=float)
-    parser.add_argument('--uni_tau_fn', default=0.35, type=float)
-    parser.add_argument(
-        '--e2_log_interval',
-        default=50,
-        type=int,
-        help='write one E2 iteration row every N optimizer steps; 0 disables it',
-    )
-    parser.add_argument(
-        '--w2_log_interval',
-        default=50,
-        type=int,
-        help='write one W2 iteration row every N optimizer steps; 0 disables it',
-    )
     parser.add_argument(
         '--sc_log_interval',
         default=50,
@@ -4259,39 +2789,13 @@ def parse_args():
         parser.error('--milestone_interval must be non-negative')
     if args.best_save_interval < 0:
         parser.error('--best_save_interval must be non-negative')
-    if args.e2_log_interval < 0:
-        parser.error('--e2_log_interval must be non-negative')
-    if args.w2_log_interval < 0:
-        parser.error('--w2_log_interval must be non-negative')
     if args.sc_log_interval < 0:
         parser.error('--sc_log_interval must be non-negative')
-    if args.cps_mode == 'uni_reference_e2':
-        if args.uni_k != 5:
-            parser.error('--uni_k must remain 5 for the validated E1 memory')
-        if abs(args.uni_tau_fp - 0.20) > 1e-12:
-            parser.error('--uni_tau_fp must remain 0.20 for E2')
-        if abs(args.uni_tau_fn - 0.35) > 1e-12:
-            parser.error('--uni_tau_fn must remain 0.35 for E2')
-    if args.cps_mode == 'uni_reference_w2':
-        if args.uni_k != 5:
-            parser.error('--uni_k must remain 5 for W2')
     if args.cps_mode == 'uni_reference_soft_correction':
         if args.uni_k != 5:
             parser.error('--uni_k must remain 5 for Soft Correction')
     if args.path_trained_models is None:
-        if args.cps_mode == 'uni_reference_e2':
-            args.path_trained_models = (
-                'checkpoints/semi_{}_seed_{}_rgbstain_uni_reference_e2'.format(
-                    args.labeled_ratio, args.sd
-                )
-            )
-        elif args.cps_mode == 'uni_reference_w2':
-            args.path_trained_models = (
-                'checkpoints/semi_{}_seed_{}_rgbstain_uni_reference_w2'.format(
-                    args.labeled_ratio, args.sd
-                )
-            )
-        elif args.cps_mode == 'uni_reference_soft_correction':
+        if args.cps_mode == 'uni_reference_soft_correction':
             args.path_trained_models = (
                 'checkpoints/semi_{}_seed_{}_rgbstain_uni_reference_soft_correction'.format(
                     args.labeled_ratio, args.sd
@@ -4302,13 +2806,7 @@ def parse_args():
                 args.labeled_ratio
             )
     if args.path_seg_results is None:
-        if args.cps_mode == 'uni_reference_w2':
-            args.path_seg_results = (
-                'seg_pred/semi_{}_seed_{}_rgbstain_uni_reference_w2'.format(
-                    args.labeled_ratio, args.sd
-                )
-            )
-        elif args.cps_mode == 'uni_reference_soft_correction':
+        if args.cps_mode == 'uni_reference_soft_correction':
             args.path_seg_results = (
                 'seg_pred/semi_{}_seed_{}_rgbstain_uni_reference_soft_correction'.format(
                     args.labeled_ratio, args.sd

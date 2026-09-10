@@ -41,35 +41,6 @@ python main.py \
 echo "=== 所有实验已全部完成！ ==="
 
 
-python main.py \
-    --dataset_name GlaS      \
-    --path_dataset datasets/GLaS \
-    --path_trained_models checkpoints/semi_10_seed_24_rgbstain_uni_e2 \
-    --labeled_ratio 10 \
-    --sd 24 \
-    --e2-uni-reference \
-    --e2-num-workers 8
-
-
-
-python main.py \
-    --dataset_name CRAG \
-    --path_dataset datasets/CRAG \
-    --input_mode rgb_stain \
-    --path_trained_models checkpoints/semi_10_seed_24_rgbstain_uni_reference_w2 \
-    --path_seg_results seg_pred/semi_10_seed_24_rgbstain_uni_reference_w2 \
-    --input_mode rgb_stain \
-    --labeled_ratio 10 \
-    --sd 24 \
-    --batch_size 2 \
-    --num_epochs 200 \
-    --cps_mode uni_reference_w2 \
-    --uni_build_reference_memory \
-    --uni_k 5 \
-    --w2_log_interval 50
-
-
-
 python -u main.py \
     --dataset_name GlaS \
     --path_dataset datasets/GLaS \
@@ -87,7 +58,6 @@ python -u main.py \
     --unsup_weight 5.0 \
     --momentum 0.9 \
     --cps_mode uni_reference_soft_correction \
-    --uni_build_reference_memory \
     --uni_k 5 
 
 
@@ -108,5 +78,4 @@ python -u main.py \
     --unsup_weight 5.0 \
     --momentum 0.9 \
     --cps_mode uni_reference_soft_correction \
-    --uni_build_reference_memory \
-    --uni_k 5 
+    --uni_k 5
