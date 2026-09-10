@@ -76,6 +76,32 @@ EXPECTED_UNI_SHA256 = (
 W2_LOSS_EPS = 1e-8
 W2_HIGH_CONFIDENCE_THRESHOLDS = (0.90, 0.95)
 
+
+def _reference_memory_dataset_slug(dataset_name):
+    """Return a filesystem-safe, stable dataset identifier."""
+    slug = ''.join(
+        character if character.isalnum() else '_'
+        for character in str(dataset_name).strip().lower()
+    ).strip('_')
+    return slug or 'dataset'
+
+
+def _default_reference_memory_path(dataset_name, labeled_ratio, seed):
+    """Resolve a dataset-isolated memory path without reusing another dataset.
+
+    The historical GLaS memory path remains a compatibility alias when it is
+    already present.  New datasets receive their own path, so building a
+    memory cannot overwrite the GLaS artifact.
+    """
+    root = Path(__file__).resolve().parent / 'diagnostics' / 'uni_reference_e1'
+    legacy = root / 'reference_memory.npz'
+    slug = _reference_memory_dataset_slug(dataset_name)
+    if slug == 'glas' and legacy.is_file():
+        return legacy
+    return root / (
+        '{}_labeled{}_seed{}'.format(slug, int(labeled_ratio), int(seed))
+    ) / 'reference_memory.npz'
+
 SC_METRIC_FIELDS = [
     'epoch', 'total_unlabeled_pixels', 'agreement_pixels', 'agreement_rate',
     'disagreement_pixels', 'disagreement_rate', 'fg_consensus_pixels',
@@ -919,6 +945,7 @@ def _e2_build_reference_memory(
         memory_per_image_class=np.array(E2_MEMORY_PER_IMAGE_PER_CLASS),
         source_labeled_ratio=np.array(args.labeled_ratio),
         seed=np.array(E2_MEMORY_SEED),
+        source_dataset=np.array(str(args.dataset_name)),
     )
     logger.info(
         'E2 reference memory built before training | source=labeled_%s | fg=%d bg=%d '
@@ -938,11 +965,16 @@ def _e2_load_reference(args, cfg, logger, manifest_dir=None, use_manifests=False
     """Load the immutable UNI model and class-balanced token memory."""
     memory_path = Path(args.uni_reference_memory).expanduser().resolve()
     uni, weights_path, config_path = _e2_load_uni(args)
-    if args.uni_build_reference_memory:
+    memory_built = False
+    if not memory_path.is_file():
         if manifest_dir is None:
             raise RuntimeError(
                 'manifest_dir is required when building E2 reference memory'
             )
+        logger.info(
+            'E2 reference memory not found; building from current labeled split | path=%s',
+            memory_path,
+        )
         _e2_build_reference_memory(
             args,
             cfg,
@@ -951,6 +983,12 @@ def _e2_load_reference(args, cfg, logger, manifest_dir=None, use_manifests=False
             uni,
             memory_path,
             logger,
+        )
+        memory_built = True
+    elif args.uni_build_reference_memory:
+        logger.info(
+            'E2 reference memory exists; reusing it (build flag does not overwrite) | path=%s',
+            memory_path,
         )
     if not memory_path.is_file():
         raise FileNotFoundError('E2 reference memory not found: {}'.format(memory_path))
@@ -973,7 +1011,7 @@ def _e2_load_reference(args, cfg, logger, manifest_dir=None, use_manifests=False
 
     assert memory_fg_count == memory_fg_np.shape[0], memory_fg_count
     assert memory_bg_count == memory_bg_np.shape[0], memory_bg_count
-    if args.labeled_ratio == 10:
+    if str(args.dataset_name).strip().lower() == 'glas' and args.labeled_ratio == 10:
         assert memory_fg_count == 391, memory_fg_count
         assert memory_bg_count == 294, memory_bg_count
     assert memory_fg_np.shape[1] == 1024, memory_fg_np.shape
@@ -983,7 +1021,15 @@ def _e2_load_reference(args, cfg, logger, manifest_dir=None, use_manifests=False
     assert memory_top_k == 5, memory_top_k
     with np.load(str(memory_path), allow_pickle=False) as memory:
         source_ratio = int(memory['source_labeled_ratio']) if 'source_labeled_ratio' in memory.files else 10
+        source_dataset = (
+            str(memory['source_dataset'].item())
+            if 'source_dataset' in memory.files else None
+        )
     assert source_ratio == args.labeled_ratio, (source_ratio, args.labeled_ratio)
+    if source_dataset is not None:
+        assert source_dataset.strip().lower() == str(args.dataset_name).strip().lower(), (
+            source_dataset, args.dataset_name
+        )
     assert np.allclose(np.linalg.norm(memory_fg_np, axis=1), 1.0, atol=1e-4)
     assert np.allclose(np.linalg.norm(memory_bg_np, axis=1), 1.0, atol=1e-4)
     assert args.uni_k == 5, args.uni_k
@@ -1046,6 +1092,7 @@ def _e2_load_reference(args, cfg, logger, manifest_dir=None, use_manifests=False
         'memory_fg_norm_error': memory_fg_norm_error,
         'memory_bg_norm_error': memory_bg_norm_error,
         'memory_top_k': memory_top_k,
+        'memory_built': memory_built,
         'hard_reference_threshold_used': args.cps_mode == 'uni_reference_e2',
     }
 
@@ -1803,13 +1850,13 @@ def _sc_iter_row(epoch, iteration, global_step, stats, original_loss, sc_loss):
 
 
 def _run_w2_startup_checks(args, cfg, context, models, optimizers, losses):
-    """Non-training W2 assertions required before the optimizer loop."""
-    expected_dataset = (Path(__file__).resolve().parent / 'datasets/GLaS').resolve()
-    actual_dataset = Path(args.path_dataset).expanduser().resolve()
+    """Non-training W2 assertions required before the optimizer loop.
+
+    W2 is dataset-agnostic.  The checks therefore validate the frozen UNI
+    geometry and the requested training protocol, rather than requiring the
+    GLaS dataset or its particular memory counts.
+    """
     exact = {
-        'dataset_name': (args.dataset_name, 'GlaS'),
-        'path_dataset': (actual_dataset, expected_dataset),
-        'labeled_ratio': (args.labeled_ratio, 10),
         'seed': (args.sd, 24), 'batch_size': (args.batch_size, 2),
         'num_epochs': (args.num_epochs, 200), 'network': (args.network, 'unet'),
         'input_mode': (args.input_mode, 'rgb_stain'),
@@ -1826,8 +1873,8 @@ def _run_w2_startup_checks(args, cfg, context, models, optimizers, losses):
         raise RuntimeError('W2 matched-protocol assertion failed: ' + '; '.join(mismatches))
     if context['weights_sha256'] != EXPECTED_UNI_SHA256:
         raise AssertionError('W2 UNI SHA256 mismatch')
-    if (context['memory_fg_count'], context['memory_bg_count']) != (391, 294):
-        raise AssertionError('W2 reference memory count mismatch')
+    if context['memory_fg_count'] <= 0 or context['memory_bg_count'] <= 0:
+        raise AssertionError('W2 reference memory is empty')
     if context['feature_dim'] != 1024 or context['token_grid'] != 14:
         raise AssertionError('W2 reference memory geometry mismatch')
     if context['memory_top_k'] != 5 or args.uni_k != 5:
@@ -1887,12 +1934,9 @@ def _run_w2_startup_checks(args, cfg, context, models, optimizers, losses):
 
 
 def _run_sc_startup_checks(args, cfg, context, models, optimizers, losses):
-    """Static SC protocol and algebra checks before the optimizer loop."""
-    expected_dataset = (Path(__file__).resolve().parent / 'datasets/GLaS').resolve()
+    """Static, dataset-agnostic SC protocol and algebra checks."""
     exact = {
-        'dataset_name': (args.dataset_name, 'GlaS'),
-        'path_dataset': (Path(args.path_dataset).expanduser().resolve(), expected_dataset),
-        'labeled_ratio': (args.labeled_ratio, 10), 'seed': (args.sd, 24),
+        'seed': (args.sd, 24),
         'batch_size': (args.batch_size, 2), 'num_epochs': (args.num_epochs, 200),
         'network': (args.network, 'unet'), 'input_mode': (args.input_mode, 'rgb_stain'),
         'step_size': (args.step_size, 50), 'lr': (args.lr, 0.5),
@@ -1903,12 +1947,10 @@ def _run_sc_startup_checks(args, cfg, context, models, optimizers, losses):
     mismatch = ['{}={} expected {}'.format(k, a, b) for k, (a, b) in exact.items() if a != b]
     if mismatch:
         raise RuntimeError('SC matched-protocol assertion failed: ' + '; '.join(mismatch))
-    if not args.uni_build_reference_memory:
-        raise AssertionError('SC requires --uni_build_reference_memory')
     if context['weights_sha256'] != EXPECTED_UNI_SHA256:
         raise AssertionError('SC UNI SHA256 mismatch')
-    if (context['memory_fg_count'], context['memory_bg_count']) != (391, 294):
-        raise AssertionError('SC reference memory count mismatch')
+    if context['memory_fg_count'] <= 0 or context['memory_bg_count'] <= 0:
+        raise AssertionError('SC reference memory is empty')
     if (context['feature_dim'], context['token_grid'], context['memory_top_k'], args.uni_k) != (1024, 14, 5, 5):
         raise AssertionError('SC reference geometry/K mismatch')
     if max(context['memory_fg_norm_error'], context['memory_bg_norm_error']) > 1e-4:
@@ -3210,7 +3252,7 @@ def _write_sc_protocol_audit(path, args, cfg, datasets, context, optimizers, sta
         'actual_cps_loss_criterion': 'torch.nn.CrossEntropyLoss, bidirectional hard-target CE; 0.5 each direction',
         'soft_correction': {'margin': 'S_fg-S_bg', 'signed_support': 's=(2*y_c-1)*m', 'conflict': 'r=clamp(-s,0,1)', 'formula': '(1-r)*CE(current)+r*CE(opposite) on agreement; original CE on disagreement', 'loss_reduction': 'pixel mean after composition', 'softmax_ce_gradient_relation': 'g_SC=p_opp-r', 'hard_reference_threshold_used': False, 'tau_fp_used': False, 'tau_fn_used': False, 'student_confidence_used': False, 'pseudo_label_flipping_used': False},
         'UNI': {'architecture': 'ViT-L/16', 'feature_dim': 1024, 'dense_token_grid': [14, 14], 'sha256': context['weights_sha256'], 'path': context['weights_path'], 'frozen': True, 'eval': not context['uni'].training, 'requires_grad': any(p.requires_grad for p in context['uni'].parameters()), 'in_optimizer': any(id(p) in optimizer_parameter_ids for p in context['uni'].parameters())},
-        'reference_memory': {'path': context['memory_path'], 'sha256': context['memory_sha256'], 'foreground_count': context['memory_fg_count'], 'background_count': context['memory_bg_count'], 'feature_dim': context['feature_dim'], 'token_grid': context['token_grid'], 'K': context['memory_top_k'], 'built_before_optimizer': bool(args.uni_build_reference_memory), 'online_updates': False, 'source': 'labeled_10 GT only'},
+        'reference_memory': {'path': context['memory_path'], 'sha256': context['memory_sha256'], 'foreground_count': context['memory_fg_count'], 'background_count': context['memory_bg_count'], 'feature_dim': context['feature_dim'], 'token_grid': context['token_grid'], 'K': context['memory_top_k'], 'built_before_optimizer': bool(context.get('memory_built', False)), 'online_updates': False, 'source': 'current labeled split GT only'},
         'test_policy': 'not evaluated during training; frozen evaluation only after epoch200',
         'code': {'main_path': str(Path(__file__).resolve()), 'main_sha256': _sha256_file(Path(__file__).resolve()), 'torch': torch.__version__, 'numpy': np.__version__, 'timestamp': time.strftime('%Y-%m-%dT%H:%M:%S%z')},
     }
@@ -4154,15 +4196,18 @@ def parse_args():
     )
     parser.add_argument(
         '--uni_reference_memory',
-        default=E2_REFERENCE_MEMORY_DEFAULT,
-        help='prebuilt E1 reference_memory.npz used by UNI reference modes',
+        default=None,
+        help=(
+            'reference_memory.npz used by UNI reference modes; when omitted, '
+            'a dataset/ratio/seed-isolated path is selected automatically'
+        ),
     )
     parser.add_argument(
         '--uni_build_reference_memory',
         action='store_true',
         help=(
-            'build the frozen E2 reference memory from the current labeled split '
-            'before the optimizer loop; an existing target is rebuilt explicitly'
+            'legacy compatibility flag; missing memory is built automatically, '
+            'while an existing memory is always reused'
         ),
     )
     parser.add_argument(
@@ -4204,6 +4249,12 @@ def parse_args():
     parser.add_argument('-n', '--network', default='unet')
 
     args = parser.parse_args()
+    if args.uni_reference_memory is None:
+        args.uni_reference_memory = str(
+            _default_reference_memory_path(
+                args.dataset_name, args.labeled_ratio, args.sd
+            )
+        )
     if args.milestone_interval < 0:
         parser.error('--milestone_interval must be non-negative')
     if args.best_save_interval < 0:
@@ -4215,15 +4266,6 @@ def parse_args():
     if args.sc_log_interval < 0:
         parser.error('--sc_log_interval must be non-negative')
     if args.cps_mode == 'uni_reference_e2':
-        if (
-            args.labeled_ratio != 10
-            and args.uni_reference_memory == E2_REFERENCE_MEMORY_DEFAULT
-        ):
-            args.uni_reference_memory = (
-                'diagnostics/uni_reference_e1_labeled{}/reference_memory.npz'.format(
-                    args.labeled_ratio
-                )
-            )
         if args.uni_k != 5:
             parser.error('--uni_k must remain 5 for the validated E1 memory')
         if abs(args.uni_tau_fp - 0.20) > 1e-12:
@@ -4236,8 +4278,6 @@ def parse_args():
     if args.cps_mode == 'uni_reference_soft_correction':
         if args.uni_k != 5:
             parser.error('--uni_k must remain 5 for Soft Correction')
-        if not args.uni_build_reference_memory:
-            parser.error('Soft Correction requires --uni_build_reference_memory')
     if args.path_trained_models is None:
         if args.cps_mode == 'uni_reference_e2':
             args.path_trained_models = (
