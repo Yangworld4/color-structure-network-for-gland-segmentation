@@ -1,0 +1,11 @@
+*.pth
+*.pt
+*.ckpt
+checkpoints/
+seg_pred/
+datasets/
+test_results/
+plots/
+fourier_visualization/
+diagnostics/
+tools/

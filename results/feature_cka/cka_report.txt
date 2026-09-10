@@ -1,0 +1,76 @@
+Representation Similarity Diagnostic (offline, Linear CKA)
+
+Sanity tests:
+  identical=1.000000000000
+  shuffled=0.056249429583
+  orthogonal_rotation=1.000000000000
+
+Hooked layers:
+  E1 -> Conv1
+  E2 -> Conv2
+  E3 -> Conv3
+  E4 -> Conv4
+  Bottleneck -> Conv5
+  DecoderLate -> Up_conv2
+
+Checkpoints actually used:
+  requested=20 actual=A:19|S:12 kind=periodic_best path=A=/data/mission/models/Exp/DUAL/checkpoints/w-o-confidence-threshold/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image-routing=weak_structure_strong/periodic_best/epoch_0020_best_A_Jc_0.6057.pth; S=/data/mission/models/Exp/DUAL/checkpoints/w-o-confidence-threshold/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image-routing=weak_structure_strong/periodic_best/epoch_0020_best_S_Jc_0.6696.pth
+  requested=50 actual=A:40|S:50 kind=periodic_best path=A=/data/mission/models/Exp/DUAL/checkpoints/w-o-confidence-threshold/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image-routing=weak_structure_strong/periodic_best/epoch_0050_best_A_Jc_0.7176.pth; S=/data/mission/models/Exp/DUAL/checkpoints/w-o-confidence-threshold/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image-routing=weak_structure_strong/periodic_best/epoch_0050_best_S_Jc_0.7210.pth
+  requested=100 actual=A:96|S:87 kind=periodic_best path=A=/data/mission/models/Exp/DUAL/checkpoints/w-o-confidence-threshold/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image-routing=weak_structure_strong/periodic_best/epoch_0100_best_A_Jc_0.7590.pth; S=/data/mission/models/Exp/DUAL/checkpoints/w-o-confidence-threshold/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image-routing=weak_structure_strong/periodic_best/epoch_0100_best_S_Jc_0.7582.pth
+  requested=150 actual=A:131|S:145 kind=periodic_best path=A=/data/mission/models/Exp/DUAL/checkpoints/w-o-confidence-threshold/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image-routing=weak_structure_strong/periodic_best/epoch_0150_best_A_Jc_0.7622.pth; S=/data/mission/models/Exp/DUAL/checkpoints/w-o-confidence-threshold/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image-routing=weak_structure_strong/periodic_best/epoch_0150_best_S_Jc_0.7719.pth
+  requested=200 actual=A:197|S:170 kind=periodic_best path=A=/data/mission/models/Exp/DUAL/checkpoints/w-o-confidence-threshold/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image-routing=weak_structure_strong/periodic_best/epoch_0200_best_A_Jc_0.7753.pth; S=/data/mission/models/Exp/DUAL/checkpoints/w-o-confidence-threshold/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image-routing=weak_structure_strong/periodic_best/epoch_0200_best_S_Jc_0.7764.pth
+
+Dataset-level CKA:
+Epoch 20 (actual A:19|S:12):
+  E1 0.737345
+  E2 0.799450
+  E3 0.764953
+  E4 0.614462
+  Bottleneck 0.475634
+  DecoderLate 0.335995
+Epoch 50 (actual A:40|S:50):
+  E1 0.832922
+  E2 0.873796
+  E3 0.833746
+  E4 0.791750
+  Bottleneck 0.751589
+  DecoderLate 0.667493
+Epoch 100 (actual A:96|S:87):
+  E1 0.857870
+  E2 0.887613
+  E3 0.854799
+  E4 0.829467
+  Bottleneck 0.812669
+  DecoderLate 0.911893
+Epoch 150 (actual A:131|S:145):
+  E1 0.840783
+  E2 0.875853
+  E3 0.872240
+  E4 0.858255
+  Bottleneck 0.901612
+  DecoderLate 0.937983
+Epoch 200 (actual A:197|S:170):
+  E1 0.833283
+  E2 0.884284
+  E3 0.852457
+  E4 0.869547
+  Bottleneck 0.876958
+  DecoderLate 0.928303
+
+Deep feature CKA trend:
+  20:0.475634 -> 50:0.751589 -> 100:0.812669 -> 150:0.901612 -> 200:0.876958
+Error-overlap trend:
+  20:0.373670 -> 50:0.560922 -> 100:0.717347 -> 150:0.788691 -> 200:0.768448
+Rescue trend:
+  20:0.450194 -> 50:0.281219 -> 100:0.164363 -> 150:0.117471 -> 200:0.130932
+
+Exploratory Spearman correlations (n=5, no significance/causal claim):
+  Corr(deep CKA, ErrorOverlap)=1.000000
+  Corr(deep CKA, Rescue)=-1.000000
+
+Neutral interpretation:
+  Evidence is consistent with progressive representation homogenization accompanying complementarity decay.
+
+Caveat: periodic_best entries are historical branch-best snapshots and may pair
+different actual epochs. Requested-stage curves are not true epoch trajectories when
+kind=periodic_best; consult actual_checkpoint_epoch before scientific interpretation.
