@@ -269,7 +269,7 @@ def parse_args():
         help='rgb_rgb evaluates RGB input; rgb_stain provides stain RGB for student2; rgb_hed provides HED for student2',
     )
     parser.add_argument('--output_dir', default=None)
-    parser.add_argument('--network', default='xnet_sb')
+    parser.add_argument('--network', default='unet')
     parser.add_argument('--batch_size', default=2, type=int)
     parser.add_argument('--num_workers', default=4, type=int)
     parser.add_argument('--threshold', default='0.5',

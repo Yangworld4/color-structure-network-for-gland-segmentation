@@ -44,9 +44,9 @@ echo "=== 所有实验已全部完成！ ==="
 python -u main.py \
     --dataset_name GlaS \
     --path_dataset datasets/GLaS \
-    --path_trained_models checkpoints/semi_10_seed_24_rgbstain_uni_reference_soft_correction \
-    --path_seg_results seg_pred/semi_10_seed_24_rgbstain_uni_reference_soft_correction \
-    --labeled_ratio 10 \
+    --path_trained_models checkpoints/semi_20_seed_24_rgbstain_uni_reference_soft_correction \
+    --path_seg_results seg_pred/semi_20_seed_24_rgbstain_uni_reference_soft_correction \
+    --labeled_ratio 20 \
     --sd 24 \
     --batch_size 2 \
     --num_epochs 200 \
@@ -64,9 +64,9 @@ python -u main.py \
 python -u main.py \
     --dataset_name CRAG \
     --path_dataset datasets/CRAG \
-    --path_trained_models checkpoints/semi_10_seed_24_rgbstain_uni_reference_soft_correction \
-    --path_seg_results seg_pred/semi_10_seed_24_rgbstain_uni_reference_soft_correction \
-    --labeled_ratio 10 \
+    --path_trained_models checkpoints/semi_20_seed_24_rgbstain_uni_reference_soft_correction \
+    --path_seg_results seg_pred/semi_20_seed_24_rgbstain_uni_reference_soft_correction \
+    --labeled_ratio 20 \
     --sd 24 \
     --batch_size 2 \
     --num_epochs 200 \
