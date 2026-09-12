@@ -44,9 +44,9 @@ echo "=== 所有实验已全部完成！ ==="
 python -u main.py \
     --dataset_name GlaS \
     --path_dataset datasets/GLaS \
-    --path_trained_models checkpoints/semi_20_seed_24_rgbstain_uni_reference_soft_correction \
-    --path_seg_results seg_pred/semi_20_seed_24_rgbstain_uni_reference_soft_correction \
-    --labeled_ratio 20 \
+    --path_trained_models checkpoints/semi_10_seed_24_rgbstain_uni_reference_state_aware \
+    --path_seg_results seg_pred/semi_10_seed_24_rgbstain_uni_reference_state_aware \
+    --labeled_ratio 10 \
     --sd 24 \
     --batch_size 2 \
     --num_epochs 200 \
@@ -57,15 +57,16 @@ python -u main.py \
     --gamma 0.5 \
     --unsup_weight 5.0 \
     --momentum 0.9 \
-    --cps_mode uni_reference_soft_correction \
+    --uni_build_reference_memory \
+    --cps_mode uni_reference_state_aware \
     --uni_k 5 
 
 
 python -u main.py \
     --dataset_name CRAG \
     --path_dataset datasets/CRAG \
-    --path_trained_models checkpoints/semi_20_seed_24_rgbstain_uni_reference_soft_correction \
-    --path_seg_results seg_pred/semi_20_seed_24_rgbstain_uni_reference_soft_correction \
+    --path_trained_models checkpoints/semi_20_seed_24_rgbstain_uni_reference_state_aware \
+    --path_seg_results seg_pred/semi_20_seed_24_rgbstain_uni_reference_state_aware \
     --labeled_ratio 20 \
     --sd 24 \
     --batch_size 2 \
@@ -77,5 +78,8 @@ python -u main.py \
     --gamma 0.5 \
     --unsup_weight 5.0 \
     --momentum 0.9 \
-    --cps_mode uni_reference_soft_correction \
+    --uni_build_reference_memory \
+    --cps_mode uni_reference_state_aware \
     --uni_k 5
+
+

@@ -1,6 +1,7 @@
 import argparse
 import csv
 from contextlib import ExitStack, redirect_stdout
+from collections import defaultdict
 import hashlib
 import io
 import json
@@ -124,6 +125,58 @@ SC_VALIDATION_FIELDS = [
     'val_jaccard_student1', 'val_jaccard_student2',
 ]
 
+STATE_METRIC_FIELDS = [
+    'epoch', 'total_unlabeled_pixels', 'agreement_pixels', 'agreement_rate',
+    'disagreement_pixels', 'disagreement_rate', 'agreement_conflict_pixels',
+    'agreement_conflict_rate', 'mean_r_agreement', 'mean_r_agreement_conflict',
+    'fg_consensus_pixels', 'bg_consensus_pixels', 'fg_consensus_mean_r',
+    'bg_consensus_mean_r', 'agreement_target_mass_shift_sum',
+    'agreement_target_mass_shift_mean', 'potential_reverse_A_rate',
+    'potential_reverse_B_rate', 'potential_reverse_any_rate',
+    'potential_reverse_both_rate', 'disagreement_A_supported_pixels',
+    'disagreement_B_supported_pixels', 'mean_s_A_disagreement',
+    'mean_s_B_disagreement', 'mean_w_A_disagreement', 'mean_w_B_disagreement',
+    'mean_min_teacher_weight', 'mean_max_teacher_weight',
+    'mean_suppressed_direction_weight', 'directional_attenuation_sum',
+    'directional_attenuation_mean', 'routing_tie_pixels', 'routing_tie_rate',
+    'original_cps_loss_counterfactual', 'agreement_soft_correction_cps_component',
+    'disagreement_original_cps_component', 'disagreement_routed_cps_component',
+    'state_aware_cps_loss', 'cps_loss_delta_vs_original', 'supervised_loss_A',
+    'supervised_loss_B', 'total_loss', 'learning_rate',
+]
+
+STATE_ITER_METRIC_FIELDS = [
+    'iteration', 'global_step', 'epoch', 'agreement_rate', 'agreement_mean_r',
+    'disagreement_rate', 'mean_w_A', 'mean_w_B', 'mean_suppressed_weight',
+    'original_cps_loss', 'state_aware_cps_loss', 'loss_delta',
+]
+
+STATE_VALIDATION_FIELDS = [
+    'epoch', 'valid_pixels', 'CC', 'WW', 'AC', 'BC', 'D',
+    'absolute_WW_rate', 'HC90_WW_all', 'HC95_WW_all', 'mean_r_CC',
+    'mean_r_WW', 'WW_reverse_A', 'WW_reverse_B', 'WW_any_reverse',
+    'WW_both_reverse', 'CC_harm_A', 'CC_harm_B', 'CC_any_harm',
+    'CC_both_harm', 'shared_FP', 'shared_FN', 'A_correct_B_wrong',
+    'B_correct_A_wrong', 'routing_correct', 'routing_wrong', 'routing_tie',
+    'routing_accuracy_non_tie', 'mean_w_correct_teacher',
+    'mean_w_wrong_teacher', 'helpful_retention', 'harmful_reduction',
+    'routing_weight_gap', 'GT_FG_routing_accuracy', 'GT_BG_routing_accuracy',
+    'A_correct_routing_accuracy', 'B_correct_routing_accuracy',
+    'HC90_routing_accuracy', 'HC95_routing_accuracy', 'helpful_gradient_mass',
+    'harmful_gradient_mass', 'routed_helpful_gradient_mass',
+    'routed_harmful_gradient_mass', 'net_gradient_selective_gain',
+    'val_dice_student1', 'val_dice_student2', 'val_jaccard_student1',
+    'val_jaccard_student2',
+]
+
+REFERENCE_CPS_MODES = (
+    'uni_reference_soft_correction', 'uni_reference_state_aware',
+)
+
+
+def _is_reference_mode(cps_mode):
+    return cps_mode in REFERENCE_CPS_MODES
+
 def init_seeds(seed):
     torch.manual_seed(seed)
     torch.cuda.manual_seed(seed)
@@ -133,6 +186,24 @@ def init_seeds(seed):
     os.environ['PYTHONHASHSEED'] = str(seed)
     torch.backends.cudnn.benchmark = False
     torch.backends.cudnn.deterministic = True
+
+
+def _snapshot_rng_state():
+    """Capture every RNG stream that reference construction could touch."""
+    return {
+        'python': random.getstate(),
+        'numpy': np.random.get_state(),
+        'torch_cpu': torch.get_rng_state(),
+        'torch_cuda': torch.cuda.get_rng_state_all() if torch.cuda.is_available() else None,
+    }
+
+
+def _restore_rng_state(state):
+    random.setstate(state['python'])
+    np.random.set_state(state['numpy'])
+    torch.set_rng_state(state['torch_cpu'])
+    if state['torch_cuda'] is not None:
+        torch.cuda.set_rng_state_all(state['torch_cuda'])
 
 
 def get_training_views(
@@ -654,6 +725,8 @@ def build_training_components(args, cfg):
         'ce': CrossEntropyLoss().cuda(),
         'dice': DiceLoss().cuda(),
     }
+    if args.cps_mode == 'uni_reference_state_aware':
+        losses['ce_none'] = CrossEntropyLoss(reduction='none').cuda()
 
     optimizer1, scheduler1 = _build_optimizer_and_scheduler(model1, args)
     optimizer2, scheduler2 = _build_optimizer_and_scheduler(model2, args)
@@ -814,6 +887,11 @@ def _load_reference(args, cfg, logger, manifest_dir=None, use_manifests=False):
     uni, weights_path, config_path = _load_uni(args)
     memory_built = False
     if not memory_path.is_file():
+        if args.cps_mode == 'uni_reference_state_aware' and not args.uni_build_reference_memory:
+            raise RuntimeError(
+                'State-aware mode requires --uni_build_reference_memory when '
+                'reference memory is absent: {}'.format(memory_path)
+            )
         if manifest_dir is None:
             raise RuntimeError(
                 'manifest_dir is required when building reference memory'
@@ -883,7 +961,11 @@ def _load_reference(args, cfg, logger, manifest_dir=None, use_manifests=False):
     memory_bg_norm_error = float(
         np.max(np.abs(np.linalg.norm(memory_bg_np, axis=1) - 1.0))
     )
-    mode_label = 'Soft Correction'
+    mode_label = (
+        'State-Aware Reference-Guided CPS'
+        if args.cps_mode == 'uni_reference_state_aware'
+        else 'Soft Correction'
+    )
     logger.info(
         '%s UNI/reference loaded | weights=%s | memory=%s | fg=%d bg=%d '
         '| dim=%d grid=%dx%d k=%d source=labeled_%d',
@@ -892,11 +974,20 @@ def _load_reference(args, cfg, logger, manifest_dir=None, use_manifests=False):
         args.uni_k, args.labeled_ratio,
     )
     logger.info(
-        'Soft Correction protocol | hard_reference_threshold_used=false '
-        '| student_confidence_used=false | pseudo_label_flipping_used=false'
+        '%s protocol | hard_reference_threshold_used=false '
+        '| hard_routing_used=false | student_confidence_used=false '
+        '| pseudo_label_flipping_used=false | online_memory_update=false',
+        mode_label,
     )
     logger.info('%s UNI checkpoint sha256=%s', mode_label, _sha256_file(weights_path))
     logger.info('%s reference memory sha256=%s', mode_label, _sha256_file(memory_path))
+    logger.info(
+        '%s reference memory build control | flag=%s | built_this_run=%s '
+        '| source=labeled_10 GT only',
+        mode_label,
+        bool(getattr(args, 'uni_build_reference_memory', False)),
+        memory_built,
+    )
     logger.info('%s UNI implementation=models/uni.py', mode_label)
     return {
         'uni': uni,
@@ -915,6 +1006,8 @@ def _load_reference(args, cfg, logger, manifest_dir=None, use_manifests=False):
         'memory_bg_norm_error': memory_bg_norm_error,
         'memory_top_k': memory_top_k,
         'memory_built': memory_built,
+        'memory_build_requested': bool(getattr(args, 'uni_build_reference_memory', False)),
+        'memory_build_source': 'labeled_10 GT only',
         'hard_reference_threshold_used': False,
     }
 
@@ -1104,6 +1197,104 @@ def compute_soft_correction_cps_losses(ce_loss, prediction1, prediction2, target
     }
 
 
+def _build_state_aware_reference_targets(
+    logits_a, logits_b, rgb_input, context, cfg, args,
+):
+    """Extend the existing reference targets with D-only directional weights."""
+    targets = _build_reference_weights(
+        logits_a, logits_b, rgb_input, context, cfg, args,
+    )
+    pseudo_a = targets['pseudo_a']
+    pseudo_b = targets['pseudo_b']
+    disagreement = targets['disagreement']
+    signed_a = (2.0 * pseudo_a.float() - 1.0) * targets['margin']
+    signed_b = (2.0 * pseudo_b.float() - 1.0) * targets['margin']
+    if disagreement.any().item() and not torch.allclose(
+        (signed_a + signed_b)[disagreement],
+        torch.zeros_like((signed_a + signed_b)[disagreement]),
+        atol=1e-5, rtol=1e-5,
+    ):
+        raise AssertionError('State-aware disagreement support is not antisymmetric')
+    r_a = torch.clamp(-signed_a, min=0.0, max=1.0)
+    r_b = torch.clamp(-signed_b, min=0.0, max=1.0)
+    w_a = 1.0 - r_a
+    w_b = 1.0 - r_b
+    for name, value in (('r_A', r_a), ('r_B', r_b), ('w_A', w_a), ('w_B', w_b)):
+        if not torch.isfinite(value).all().item() or not torch.all(
+            (value >= 0.0) & (value <= 1.0)
+        ).item():
+            raise AssertionError('{} escaped [0,1]'.format(name))
+    supported_weight = torch.where(signed_a > signed_b, w_a, w_b)
+    non_tie = disagreement & ((signed_a - signed_b).abs() > 1e-8)
+    if non_tie.any().item() and not torch.allclose(
+        supported_weight[non_tie], torch.ones_like(supported_weight[non_tie]),
+        atol=1e-6, rtol=0.0,
+    ):
+        raise AssertionError('Reference-supported teacher was not retained at weight 1')
+    targets.update({
+        'signed_support_a': signed_a, 'signed_support_b': signed_b,
+        'r_a': r_a, 'r_b': r_b, 'w_a': w_a, 'w_b': w_b,
+        'routing_tie': disagreement & ((signed_a - signed_b).abs() <= 1e-8),
+    })
+    return targets
+
+
+def compute_state_aware_cps_losses(ce_loss, prediction1, prediction2, targets):
+    """Soft Correction on agreement plus continuous attenuation on D.
+
+    Agreement-WW needs the existing opposite-target soft correction because no
+    correct candidate is present.  On disagreement, the correct candidate is
+    already one of the two teacher predictions, so this function only
+    attenuates the reference-opposed direction and never constructs an
+    opposite target.
+    """
+    if getattr(ce_loss, 'reduction', None) != 'none':
+        raise AssertionError('State-aware CPS requires CrossEntropyLoss(reduction=none)')
+    pseudo_a = targets['pseudo_a'].detach().clone()
+    pseudo_b = targets['pseudo_b'].detach().clone()
+    agreement = targets['agreement'].detach().clone()
+    disagreement = targets['disagreement'].detach().clone()
+    r_agreement = targets['conflict'].detach().clone()
+    w_a = targets['w_a'].detach().clone()
+    w_b = targets['w_b'].detach().clone()
+
+    current_a_to_b = ce_loss(prediction2, pseudo_a)
+    current_b_to_a = ce_loss(prediction1, pseudo_b)
+    # The opposite target is defined only on agreement.  On disagreement the
+    # target remains the original peer pseudo-label; no opposite target mass
+    # or Soft-Correction composition is applied to either direction.
+    opposite_target_a = pseudo_a.clone()
+    opposite_target_b = pseudo_b.clone()
+    opposite_target_a[agreement] = 1 - pseudo_a[agreement]
+    opposite_target_b[agreement] = 1 - pseudo_b[agreement]
+    opposite_a_to_b = ce_loss(prediction2, opposite_target_a)
+    opposite_b_to_a = ce_loss(prediction1, opposite_target_b)
+    agreement_a_to_b = (1.0 - r_agreement) * current_a_to_b + r_agreement * opposite_a_to_b
+    agreement_b_to_a = (1.0 - r_agreement) * current_b_to_a + r_agreement * opposite_b_to_a
+    pixel_a_to_b = torch.where(agreement, agreement_a_to_b, w_a * current_a_to_b)
+    pixel_b_to_a = torch.where(agreement, agreement_b_to_a, w_b * current_b_to_a)
+    valid = pseudo_a.ne(ce_loss.ignore_index)
+    if not valid.any().item():
+        raise AssertionError('State-aware CPS received no valid pixels')
+    loss_a_to_b = 0.5 * pixel_a_to_b[valid].mean()
+    loss_b_to_a = 0.5 * pixel_b_to_a[valid].mean()
+    total = loss_a_to_b + loss_b_to_a
+    if not torch.isfinite(total).item():
+        raise FloatingPointError('State-aware CPS loss contains NaN/Inf')
+    return {
+        '1_to_2': loss_a_to_b, '2_to_1': loss_b_to_a, 'total': total,
+        'pixel_loss_1_to_2': pixel_a_to_b.detach(),
+        'pixel_loss_2_to_1': pixel_b_to_a.detach(),
+        'current_loss_1_to_2': current_a_to_b.detach(),
+        'current_loss_2_to_1': current_b_to_a.detach(),
+        'agreement_loss_1_to_2': agreement_a_to_b.detach(),
+        'agreement_loss_2_to_1': agreement_b_to_a.detach(),
+        'disagreement_loss_1_to_2': (w_a * current_a_to_b).detach(),
+        'disagreement_loss_2_to_1': (w_b * current_b_to_a).detach(),
+        'valid_mask': valid.detach(), 'disagreement_mask': disagreement,
+    }
+
+
 def _sc_batch_stats(targets, logits_a, logits_b):
     """Training-only SC aggregates; no GT-dependent terminology is used."""
     agreement = targets['agreement']
@@ -1235,6 +1426,161 @@ def _sc_iter_row(epoch, iteration, global_step, stats, original_loss, sc_loss):
     }
 
 
+def _state_batch_stats(
+    targets, logits_a, logits_b, original_losses, state_losses,
+    supervised_loss1, supervised_loss2, total_loss, supervised_pixels,
+):
+    valid = targets['pseudo_a'].ne(-1)
+    agreement = targets['agreement'] & valid
+    disagreement = targets['disagreement'] & valid
+    conflict = targets['conflict']
+    tie = targets['routing_tie'] & disagreement
+    s_a, s_b = targets['signed_support_a'], targets['signed_support_b']
+    w_a, w_b = targets['w_a'], targets['w_b']
+    stats = {
+        'unlabeled_pixels': int(valid.sum().item()),
+        'agreement_pixels': int(agreement.sum().item()),
+        'disagreement_pixels': int(disagreement.sum().item()),
+        'agreement_conflict_pixels': int((agreement & conflict.gt(0.0)).sum().item()),
+        'fg_consensus_pixels': int((agreement & targets['fg_consensus']).sum().item()),
+        'bg_consensus_pixels': int((agreement & targets['bg_consensus']).sum().item()),
+        'disagreement_A_supported_pixels': int((disagreement & s_a.gt(0.0)).sum().item()),
+        'disagreement_B_supported_pixels': int((disagreement & s_b.gt(0.0)).sum().item()),
+        'routing_tie_pixels': int(tie.sum().item()),
+        'sum_r_agreement': float(conflict[agreement].sum().item()),
+        'sum_r_agreement_conflict': float(conflict[agreement & conflict.gt(0.0)].sum().item()),
+        'sum_r_fg': float(conflict[agreement & targets['fg_consensus']].sum().item()),
+        'sum_r_bg': float(conflict[agreement & targets['bg_consensus']].sum().item()),
+        'sum_s_a_disagreement': float(s_a[disagreement].sum().item()),
+        'sum_s_b_disagreement': float(s_b[disagreement].sum().item()),
+        'sum_w_a_disagreement': float(w_a[disagreement].sum().item()),
+        'sum_w_b_disagreement': float(w_b[disagreement].sum().item()),
+        'sum_min_teacher_weight': float(torch.minimum(w_a, w_b)[disagreement].sum().item()),
+        'sum_max_teacher_weight': float(torch.maximum(w_a, w_b)[disagreement].sum().item()),
+        'sum_suppressed_direction_weight': float(torch.minimum(w_a, w_b)[disagreement].sum().item()),
+        'directional_attenuation_sum': float((2.0 - w_a - w_b)[disagreement].sum().item()),
+        'potential_reverse_A': 0, 'potential_reverse_B': 0,
+        'potential_reverse_any': 0, 'potential_reverse_both': 0,
+        'original_loss_pixel_sum': float(original_losses['total'].item()) * int(valid.sum().item()),
+        'state_loss_pixel_sum': float(state_losses['total'].item()) * int(valid.sum().item()),
+        'agreement_soft_pixel_sum': float((0.5 * (state_losses['agreement_loss_1_to_2'][agreement].sum() + state_losses['agreement_loss_2_to_1'][agreement].sum())).item()),
+        'disagreement_original_pixel_sum': float((0.5 * (state_losses['current_loss_1_to_2'][disagreement].sum() + state_losses['current_loss_2_to_1'][disagreement].sum())).item()),
+        'disagreement_routed_pixel_sum': float((0.5 * (state_losses['disagreement_loss_1_to_2'][disagreement].sum() + state_losses['disagreement_loss_2_to_1'][disagreement].sum())).item()),
+        'supervised_pixels': int(supervised_pixels),
+        'supervised_loss_A_pixel_sum': float(supervised_loss1.item()) * supervised_pixels,
+        'supervised_loss_B_pixel_sum': float(supervised_loss2.item()) * supervised_pixels,
+        'total_loss_pixel_sum': float(total_loss.item()) * supervised_pixels,
+        'learning_rate': 0.0,
+    }
+    # Reuse the existing agreement-only potential-reversal definition, without
+    # introducing any GT or student-confidence signal into training.
+    prob_a = torch.softmax(logits_a.detach(), dim=1)[:, 1]
+    prob_b = torch.softmax(logits_b.detach(), dim=1)[:, 1]
+    pseudo = targets['pseudo_a']
+    p_opp_a = torch.where(pseudo.eq(1), 1.0 - prob_a, prob_a)
+    p_opp_b = torch.where(pseudo.eq(1), 1.0 - prob_b, prob_b)
+    potential_a = agreement & (conflict > p_opp_a)
+    potential_b = agreement & (conflict > p_opp_b)
+    stats.update({
+        'potential_reverse_A': int(potential_a.sum().item()),
+        'potential_reverse_B': int(potential_b.sum().item()),
+        'potential_reverse_any': int((potential_a | potential_b).sum().item()),
+        'potential_reverse_both': int((potential_a & potential_b).sum().item()),
+    })
+    return stats
+
+
+def _state_new_epoch_totals(learning_rate):
+    totals = {field: 0.0 for field in (
+        'unlabeled_pixels', 'agreement_pixels', 'disagreement_pixels',
+        'agreement_conflict_pixels', 'fg_consensus_pixels', 'bg_consensus_pixels',
+        'disagreement_A_supported_pixels', 'disagreement_B_supported_pixels',
+        'routing_tie_pixels', 'potential_reverse_A', 'potential_reverse_B',
+        'potential_reverse_any', 'potential_reverse_both',
+        'sum_r_agreement', 'sum_r_agreement_conflict', 'sum_r_fg', 'sum_r_bg',
+        'sum_s_a_disagreement', 'sum_s_b_disagreement', 'sum_w_a_disagreement',
+        'sum_w_b_disagreement', 'sum_min_teacher_weight', 'sum_max_teacher_weight',
+        'sum_suppressed_direction_weight', 'directional_attenuation_sum',
+        'original_loss_pixel_sum', 'state_loss_pixel_sum', 'agreement_soft_pixel_sum',
+        'disagreement_original_pixel_sum', 'disagreement_routed_pixel_sum',
+        'supervised_pixels', 'supervised_loss_A_pixel_sum',
+        'supervised_loss_B_pixel_sum', 'total_loss_pixel_sum',
+    )}
+    totals['learning_rate'] = float(learning_rate)
+    return totals
+
+
+def _state_update_epoch_totals(totals, stats):
+    for key, value in stats.items():
+        if key in totals and key != 'learning_rate':
+            totals[key] += value
+
+
+def _state_epoch_row(epoch, totals):
+    pixels = totals['unlabeled_pixels']
+    agreement = totals['agreement_pixels']
+    disagreement = totals['disagreement_pixels']
+    conflict = totals['agreement_conflict_pixels']
+    row = {
+        'epoch': epoch, 'total_unlabeled_pixels': int(pixels),
+        'agreement_pixels': int(agreement), 'agreement_rate': _safe_mean(agreement, pixels),
+        'disagreement_pixels': int(disagreement), 'disagreement_rate': _safe_mean(disagreement, pixels),
+        'agreement_conflict_pixels': int(conflict), 'agreement_conflict_rate': _safe_mean(conflict, agreement),
+        'mean_r_agreement': _safe_mean(totals['sum_r_agreement'], agreement),
+        'mean_r_agreement_conflict': _safe_mean(totals['sum_r_agreement_conflict'], conflict),
+        'fg_consensus_pixels': int(totals['fg_consensus_pixels']),
+        'bg_consensus_pixels': int(totals['bg_consensus_pixels']),
+        'fg_consensus_mean_r': _safe_mean(totals['sum_r_fg'], totals['fg_consensus_pixels']),
+        'bg_consensus_mean_r': _safe_mean(totals['sum_r_bg'], totals['bg_consensus_pixels']),
+        'agreement_target_mass_shift_sum': totals['sum_r_agreement'],
+        'agreement_target_mass_shift_mean': _safe_mean(totals['sum_r_agreement'], agreement),
+        'potential_reverse_A_rate': _safe_mean(totals['potential_reverse_A'], agreement),
+        'potential_reverse_B_rate': _safe_mean(totals['potential_reverse_B'], agreement),
+        'potential_reverse_any_rate': _safe_mean(totals['potential_reverse_any'], agreement),
+        'potential_reverse_both_rate': _safe_mean(totals['potential_reverse_both'], agreement),
+        'disagreement_A_supported_pixels': int(totals['disagreement_A_supported_pixels']),
+        'disagreement_B_supported_pixels': int(totals['disagreement_B_supported_pixels']),
+        'mean_s_A_disagreement': _safe_mean(totals['sum_s_a_disagreement'], disagreement),
+        'mean_s_B_disagreement': _safe_mean(totals['sum_s_b_disagreement'], disagreement),
+        'mean_w_A_disagreement': _safe_mean(totals['sum_w_a_disagreement'], disagreement),
+        'mean_w_B_disagreement': _safe_mean(totals['sum_w_b_disagreement'], disagreement),
+        'mean_min_teacher_weight': _safe_mean(totals['sum_min_teacher_weight'], disagreement),
+        'mean_max_teacher_weight': _safe_mean(totals['sum_max_teacher_weight'], disagreement),
+        'mean_suppressed_direction_weight': _safe_mean(totals['sum_suppressed_direction_weight'], disagreement),
+        'directional_attenuation_sum': totals['directional_attenuation_sum'],
+        'directional_attenuation_mean': _safe_mean(totals['directional_attenuation_sum'], disagreement),
+        'routing_tie_pixels': int(totals['routing_tie_pixels']),
+        'routing_tie_rate': _safe_mean(totals['routing_tie_pixels'], disagreement),
+        'original_cps_loss_counterfactual': _safe_mean(totals['original_loss_pixel_sum'], pixels),
+        'agreement_soft_correction_cps_component': _safe_mean(totals['agreement_soft_pixel_sum'], pixels),
+        'disagreement_original_cps_component': _safe_mean(totals['disagreement_original_pixel_sum'], pixels),
+        'disagreement_routed_cps_component': _safe_mean(totals['disagreement_routed_pixel_sum'], pixels),
+        'state_aware_cps_loss': _safe_mean(totals['state_loss_pixel_sum'], pixels),
+        'cps_loss_delta_vs_original': _safe_mean(totals['state_loss_pixel_sum'], pixels) - _safe_mean(totals['original_loss_pixel_sum'], pixels),
+        'supervised_loss_A': _safe_mean(totals['supervised_loss_A_pixel_sum'], totals['supervised_pixels']),
+        'supervised_loss_B': _safe_mean(totals['supervised_loss_B_pixel_sum'], totals['supervised_pixels']),
+        'total_loss': _safe_mean(totals['total_loss_pixel_sum'], totals['supervised_pixels']),
+        'learning_rate': totals['learning_rate'],
+    }
+    return row
+
+
+def _state_iter_row(epoch, iteration, global_step, stats, original_loss, state_loss):
+    d = stats['disagreement_pixels']
+    return {
+        'iteration': iteration, 'global_step': global_step, 'epoch': epoch,
+        'agreement_rate': _safe_mean(stats['agreement_pixels'], stats['unlabeled_pixels']),
+        'agreement_mean_r': _safe_mean(stats['sum_r_agreement'], stats['agreement_pixels']),
+        'disagreement_rate': _safe_mean(d, stats['unlabeled_pixels']),
+        'mean_w_A': _safe_mean(stats['sum_w_a_disagreement'], d),
+        'mean_w_B': _safe_mean(stats['sum_w_b_disagreement'], d),
+        'mean_suppressed_weight': _safe_mean(stats['sum_suppressed_direction_weight'], d),
+        'original_cps_loss': float(original_loss.item()),
+        'state_aware_cps_loss': float(state_loss.item()),
+        'loss_delta': float(state_loss.item() - original_loss.item()),
+    }
+
+
 def _run_sc_startup_checks(args, cfg, context, models, optimizers, losses):
     """Static, dataset-agnostic SC protocol and algebra checks."""
     exact = {
@@ -1271,6 +1617,7 @@ def _run_sc_startup_checks(args, cfg, context, models, optimizers, losses):
     margin = torch.tensor([[[0.2, -0.3, 0.4, -0.6, 0.1]]], device='cuda')
     original_a, original_b = pa.clone(), pb.clone()
     targets = _reference_weights_from_margin(pa, pb, margin)
+    assert torch.equal(targets['disagreement'], pa.ne(pb))
     assert torch.equal(pa, original_a) and torch.equal(pb, original_b)
     r = targets['conflict']
     assert torch.all((r >= 0.0) & (r <= 1.0))
@@ -1293,6 +1640,59 @@ def _run_sc_startup_checks(args, cfg, context, models, optimizers, losses):
         raise AssertionError('Student mode changed before SC training')
 
 
+def _run_state_aware_startup_checks(args, cfg, context, models, optimizers, losses):
+    """Static algebra and protocol assertions for the new CPS state."""
+    _run_sc_startup_checks(args, cfg, context, models, optimizers, losses)
+    if args.cps_mode != 'uni_reference_state_aware':
+        raise AssertionError('State-aware startup check called for another mode')
+    if not context.get('reference_build_rng_isolated', False):
+        raise AssertionError('Reference build RNG isolation was not recorded')
+
+    pa = torch.tensor([[[0, 0, 1, 1, 0]]], device='cuda', dtype=torch.long)
+    pb = torch.tensor([[[0, 1, 1, 0, 1]]], device='cuda', dtype=torch.long)
+    margin = torch.tensor([[[0.2, -0.3, 0.4, -0.6, 0.1]]], device='cuda')
+    targets = _reference_weights_from_margin(pa, pb, margin)
+    assert torch.equal(targets['disagreement'], pa.ne(pb))
+    signed_a = (2.0 * pa.float() - 1.0) * margin
+    signed_b = (2.0 * pb.float() - 1.0) * margin
+    assert torch.allclose((signed_a + signed_b)[targets['disagreement']], torch.zeros_like((signed_a + signed_b)[targets['disagreement']]))
+    r_a, r_b = torch.clamp(-signed_a, 0.0, 1.0), torch.clamp(-signed_b, 0.0, 1.0)
+    w_a, w_b = 1.0 - r_a, 1.0 - r_b
+    targets.update({
+        'signed_support_a': signed_a, 'signed_support_b': signed_b,
+        'r_a': r_a, 'r_b': r_b, 'w_a': w_a, 'w_b': w_b,
+        'routing_tie': targets['disagreement'] & ((signed_a - signed_b).abs() <= 1e-8),
+    })
+    assert torch.all((r_a >= 0.0) & (r_a <= 1.0) & (r_b >= 0.0) & (r_b <= 1.0))
+    assert torch.all((w_a >= 0.0) & (w_a <= 1.0) & (w_b >= 0.0) & (w_b <= 1.0))
+    non_tie = targets['disagreement'] & ~targets['routing_tie']
+    supported = torch.where(signed_a > signed_b, w_a, w_b)
+    assert torch.allclose(supported[non_tie], torch.ones_like(supported[non_tie]), atol=1e-6, rtol=0.0)
+
+    logits_a = torch.tensor([[[[1.0, -0.2, 0.4, 0.1, 0.3]], [[-0.1, 0.4, 0.2, 0.6, -0.3]]]], device='cuda', requires_grad=True)
+    logits_b = torch.tensor([[[[0.1, 0.8, -0.2, 0.7, 0.2]], [[0.6, -0.3, 0.5, -0.4, 0.9]]]], device='cuda', requires_grad=True)
+    state = compute_state_aware_cps_losses(losses['ce_none'], logits_a, logits_b, targets)
+    standard = compute_standard_cps_losses(losses['ce'], logits_a, logits_b, pa, pb)
+    soft = compute_soft_correction_cps_losses(losses['ce'], logits_a, logits_b, targets)
+    assert torch.allclose(
+        state['pixel_loss_1_to_2'][targets['agreement']],
+        soft['pixel_loss_1_to_2'][targets['agreement']],
+        atol=1e-7, rtol=1e-7,
+    )
+    assert torch.allclose(
+        state['pixel_loss_2_to_1'][targets['agreement']],
+        soft['pixel_loss_2_to_1'][targets['agreement']],
+        atol=1e-7, rtol=1e-7,
+    )
+    zero_targets = dict(targets)
+    zero_targets.update({'conflict': torch.zeros_like(margin), 'w_a': torch.ones_like(margin), 'w_b': torch.ones_like(margin)})
+    zero_state = compute_state_aware_cps_losses(losses['ce_none'], logits_a, logits_b, zero_targets)
+    assert torch.allclose(zero_state['total'], standard['total'], atol=1e-7, rtol=1e-7)
+    assert torch.isfinite(state['total']).item()
+    assert torch.equal(state['disagreement_loss_1_to_2'][targets['disagreement']], state['current_loss_1_to_2'][targets['disagreement']] * w_a[targets['disagreement']])
+    assert torch.equal(state['disagreement_loss_2_to_1'][targets['disagreement']], state['current_loss_2_to_1'][targets['disagreement']] * w_b[targets['disagreement']])
+
+
 def train_one_epoch(
     args,
     epoch,
@@ -1306,6 +1706,8 @@ def train_one_epoch(
     reference_context=None,
     sc_iter_writer=None,
     sc_iter_file=None,
+    state_iter_writer=None,
+    state_iter_file=None,
 ):
     model1, model2 = models
     optimizer1, optimizer2 = optimizers
@@ -1326,6 +1728,11 @@ def train_one_epoch(
     sc_totals = (
         _sc_new_epoch_totals(optimizer1.param_groups[0]['lr'])
         if reference_context is not None and args.cps_mode == 'uni_reference_soft_correction'
+        else None
+    )
+    state_totals = (
+        _state_new_epoch_totals(optimizer1.param_groups[0]['lr'])
+        if reference_context is not None and args.cps_mode == 'uni_reference_state_aware'
         else None
     )
     mask_list = None
@@ -1395,29 +1802,33 @@ def train_one_epoch(
         unsup_prediction1 = model1(unsup_input1)[0]
         unsup_prediction2 = model2(unsup_input2)[0]
         
-        if args.cps_mode == 'uni_reference_soft_correction':
-            sc_targets = _build_reference_weights(
-                unsup_prediction1,
-                unsup_prediction2,
-                unsup_input1,
-                reference_context,
-                reference_context['cfg'],
-                args,
+        if args.cps_mode in REFERENCE_CPS_MODES:
+            reference_targets = (
+                _build_state_aware_reference_targets(
+                    unsup_prediction1, unsup_prediction2, unsup_input1,
+                    reference_context, reference_context['cfg'], args,
+                )
+                if args.cps_mode == 'uni_reference_state_aware'
+                else _build_reference_weights(
+                    unsup_prediction1, unsup_prediction2, unsup_input1,
+                    reference_context, reference_context['cfg'], args,
+                )
             )
             with torch.no_grad():
                 original_cps_losses = compute_standard_cps_losses(
-                    losses['ce'],
-                    unsup_prediction1,
-                    unsup_prediction2,
-                    sc_targets['pseudo_a'],
-                    sc_targets['pseudo_b'],
+                    losses['ce'], unsup_prediction1, unsup_prediction2,
+                    reference_targets['pseudo_a'], reference_targets['pseudo_b'],
                 )
-            cps_losses = compute_soft_correction_cps_losses(
-                losses['ce'],
-                unsup_prediction1,
-                unsup_prediction2,
-                sc_targets,
-            )
+            if args.cps_mode == 'uni_reference_state_aware':
+                cps_losses = compute_state_aware_cps_losses(
+                    losses['ce_none'], unsup_prediction1, unsup_prediction2,
+                    reference_targets,
+                )
+            else:
+                cps_losses = compute_soft_correction_cps_losses(
+                    losses['ce'], unsup_prediction1, unsup_prediction2,
+                    reference_targets,
+                )
         else:
             cps_losses = compute_cps_losses(
                 losses['ce'],
@@ -1445,7 +1856,7 @@ def train_one_epoch(
         global_step += 1
 
         if reference_context is not None and args.cps_mode == 'uni_reference_soft_correction':
-            sc_stats = _sc_batch_stats(sc_targets, unsup_prediction1, unsup_prediction2)
+            sc_stats = _sc_batch_stats(reference_targets, unsup_prediction1, unsup_prediction2)
             _sc_update_epoch_totals(
                 sc_totals,
                 sc_stats,
@@ -1472,6 +1883,23 @@ def train_one_epoch(
                     )
                 )
                 sc_iter_file.flush()
+        elif reference_context is not None and args.cps_mode == 'uni_reference_state_aware':
+            state_stats = _state_batch_stats(
+                reference_targets, unsup_prediction1, unsup_prediction2,
+                original_cps_losses, cps_losses, supervised_loss1,
+                supervised_loss2, total_loss, int(sup_mask.numel()),
+            )
+            _state_update_epoch_totals(state_totals, state_stats)
+            if (
+                state_iter_writer is not None
+                and args.state_aware_log_interval > 0
+                and global_step % args.state_aware_log_interval == 0
+            ):
+                state_iter_writer.writerow(_state_iter_row(
+                    epoch + 1, batch_index + 1, global_step, state_stats,
+                    original_cps_losses['total'], cps_losses['total'],
+                ))
+                state_iter_file.flush()
 
         metrics_writer.writerow(
             build_iteration_metrics(
@@ -1494,9 +1922,7 @@ def train_one_epoch(
         loss_totals['sup1'] += supervised_loss1.item()
         loss_totals['sup2'] += supervised_loss2.item()
         loss_totals['total'] += total_loss.item()
-    reference_totals = (
-        sc_totals
-    )
+    reference_totals = state_totals if state_totals is not None else sc_totals
     return (
         loss_totals,
         (score_list1, score_list2, mask_list),
@@ -2103,6 +2529,136 @@ def _sc_validation_diagnostic(
     }
 
 
+def _state_validation_diagnostic(
+    validation, dataloader, context, cfg, args, val_eval1, val_eval2,
+):
+    """GT-only retrospective diagnostics; none of these values enters loss."""
+    totals = defaultdict(float)
+    offset = 0
+    with torch.inference_mode():
+        for batch in dataloader:
+            batch_size = int(batch['mask'].shape[0])
+            logits_a = validation['scores1'][offset:offset + batch_size]
+            logits_b = validation['scores2'][offset:offset + batch_size]
+            offset += batch_size
+            gt = batch['mask'].cuda(non_blocking=True)
+            valid = gt.ne(-1)
+            targets = _build_state_aware_reference_targets(
+                logits_a, logits_b, batch['image_rgb'].cuda(non_blocking=True),
+                context, cfg, args,
+            )
+            pa, pb = targets['pseudo_a'], targets['pseudo_b']
+            agreement = targets['agreement'] & valid
+            disagreement = targets['disagreement'] & valid
+            gt_fg = gt.eq(1)
+            a_correct = pa.eq(gt)
+            b_correct = pb.eq(gt)
+            cc = agreement & a_correct
+            ww = agreement & ~a_correct
+            ac = disagreement & a_correct & ~b_correct
+            bc = disagreement & ~a_correct & b_correct
+            if int((ac | bc).sum().item()) != int(disagreement.sum().item()):
+                raise AssertionError('State-aware validation D != AC union BC')
+            s_a, s_b = targets['signed_support_a'], targets['signed_support_b']
+            r = targets['conflict']
+            w_a, w_b = targets['w_a'], targets['w_b']
+            tie = targets['routing_tie']
+            non_tie = disagreement & ~tie
+            supported_a, supported_b = s_a > s_b, s_b > s_a
+            route_correct = non_tie & ((supported_a & ac) | (supported_b & bc))
+            route_wrong = non_tie & ((supported_a & bc) | (supported_b & ac))
+            prob_a = torch.softmax(logits_a, dim=1)[:, 1]
+            prob_b = torch.softmax(logits_b, dim=1)[:, 1]
+            p_opp_a = torch.where(pa.eq(1), 1.0 - prob_a, prob_a)
+            p_opp_b = torch.where(pb.eq(1), 1.0 - prob_b, prob_b)
+            rev_a = agreement & (r > p_opp_a)
+            rev_b = agreement & (r > p_opp_b)
+            conf = torch.minimum(
+                torch.maximum(prob_a, 1.0 - prob_a),
+                torch.maximum(prob_b, 1.0 - prob_b),
+            )
+            g_a_to_b = 1.0 - torch.where(pa.eq(1), prob_b, 1.0 - prob_b)
+            g_b_to_a = 1.0 - torch.where(pb.eq(1), prob_a, 1.0 - prob_a)
+            helpful_g = torch.where(ac, g_a_to_b, g_b_to_a)
+            harmful_g = torch.where(ac, g_b_to_a, g_a_to_b)
+            routed_helpful_g = torch.where(ac, w_a * g_a_to_b, w_b * g_b_to_a)
+            routed_harmful_g = torch.where(ac, w_b * g_b_to_a, w_a * g_a_to_b)
+            for key, value in (
+                ('valid_pixels', valid.sum()), ('CC', cc.sum()), ('WW', ww.sum()),
+                ('AC', ac.sum()), ('BC', bc.sum()), ('D', disagreement.sum()),
+                ('HC90_WW_all', (ww & conf.ge(0.90)).sum()),
+                ('HC95_WW_all', (ww & conf.ge(0.95)).sum()),
+                ('sum_r_CC', r[cc].sum()), ('sum_r_WW', r[ww].sum()),
+                ('WW_reverse_A', (ww & rev_a).sum()), ('WW_reverse_B', (ww & rev_b).sum()),
+                ('WW_any_reverse', (ww & (rev_a | rev_b)).sum()),
+                ('WW_both_reverse', (ww & rev_a & rev_b).sum()),
+                ('CC_harm_A', (cc & rev_a).sum()), ('CC_harm_B', (cc & rev_b).sum()),
+                ('CC_any_harm', (cc & (rev_a | rev_b)).sum()),
+                ('CC_both_harm', (cc & rev_a & rev_b).sum()),
+                ('shared_FP', (ww & pa.eq(1)).sum()),
+                ('shared_FN', (ww & pa.eq(0)).sum()),
+                ('A_correct_B_wrong', ac.sum()), ('B_correct_A_wrong', bc.sum()),
+                ('routing_correct', route_correct.sum()), ('routing_wrong', route_wrong.sum()),
+                ('routing_tie', (disagreement & tie).sum()),
+                ('sum_w_correct', torch.where(ac, w_a, w_b)[disagreement].sum()),
+                ('sum_w_wrong', torch.where(ac, w_b, w_a)[disagreement].sum()),
+                ('sum_helpful_g', helpful_g[disagreement].sum()),
+                ('sum_harmful_g', harmful_g[disagreement].sum()),
+                ('sum_routed_helpful_g', routed_helpful_g[disagreement].sum()),
+                ('sum_routed_harmful_g', routed_harmful_g[disagreement].sum()),
+                ('fg_d_non_tie', (non_tie & gt_fg).sum()),
+                ('fg_route_correct', (route_correct & gt_fg).sum()),
+                ('bg_d_non_tie', (non_tie & ~gt_fg).sum()),
+                ('bg_route_correct', (route_correct & ~gt_fg).sum()),
+                ('ac_non_tie', (non_tie & ac).sum()),
+                ('ac_route_correct', (route_correct & ac).sum()),
+                ('bc_non_tie', (non_tie & bc).sum()),
+                ('bc_route_correct', (route_correct & bc).sum()),
+                ('hc90_non_tie', (non_tie & conf.ge(0.90)).sum()),
+                ('hc90_route_correct', (route_correct & conf.ge(0.90)).sum()),
+                ('hc95_non_tie', (non_tie & conf.ge(0.95)).sum()),
+                ('hc95_route_correct', (route_correct & conf.ge(0.95)).sum()),
+            ):
+                totals[key] += float(value.item())
+    if offset != int(validation['masks'].shape[0]):
+        raise AssertionError('State-aware validation loader/logit length mismatch')
+    valid = totals['valid_pixels']; d = totals['D']; non_tie = totals['routing_correct'] + totals['routing_wrong']
+    cc, ww = totals['CC'], totals['WW']
+    return {
+        'valid_pixels': int(valid), 'CC': int(cc), 'WW': int(ww),
+        'AC': int(totals['AC']), 'BC': int(totals['BC']), 'D': int(d),
+        'absolute_WW_rate': _safe_mean(ww, valid),
+        'HC90_WW_all': int(totals['HC90_WW_all']), 'HC95_WW_all': int(totals['HC95_WW_all']),
+        'mean_r_CC': _safe_mean(totals['sum_r_CC'], cc), 'mean_r_WW': _safe_mean(totals['sum_r_WW'], ww),
+        'WW_reverse_A': int(totals['WW_reverse_A']), 'WW_reverse_B': int(totals['WW_reverse_B']),
+        'WW_any_reverse': int(totals['WW_any_reverse']), 'WW_both_reverse': int(totals['WW_both_reverse']),
+        'CC_harm_A': int(totals['CC_harm_A']), 'CC_harm_B': int(totals['CC_harm_B']),
+        'CC_any_harm': int(totals['CC_any_harm']), 'CC_both_harm': int(totals['CC_both_harm']),
+        'shared_FP': int(totals['shared_FP']), 'shared_FN': int(totals['shared_FN']),
+        'A_correct_B_wrong': int(totals['A_correct_B_wrong']), 'B_correct_A_wrong': int(totals['B_correct_A_wrong']),
+        'routing_correct': int(totals['routing_correct']), 'routing_wrong': int(totals['routing_wrong']),
+        'routing_tie': int(totals['routing_tie']),
+        'routing_accuracy_non_tie': _safe_mean(totals['routing_correct'], non_tie),
+        'mean_w_correct_teacher': _safe_mean(totals['sum_w_correct'], d),
+        'mean_w_wrong_teacher': _safe_mean(totals['sum_w_wrong'], d),
+        'helpful_retention': _safe_mean(totals['sum_w_correct'], d),
+        'harmful_reduction': 1.0 - _safe_mean(totals['sum_w_wrong'], d) if d else float('nan'),
+        'routing_weight_gap': _safe_mean(totals['sum_w_correct'], d) - _safe_mean(totals['sum_w_wrong'], d),
+        'GT_FG_routing_accuracy': _safe_mean(totals['fg_route_correct'], totals['fg_d_non_tie']),
+        'GT_BG_routing_accuracy': _safe_mean(totals['bg_route_correct'], totals['bg_d_non_tie']),
+        'A_correct_routing_accuracy': _safe_mean(totals['ac_route_correct'], totals['ac_non_tie']),
+        'B_correct_routing_accuracy': _safe_mean(totals['bc_route_correct'], totals['bc_non_tie']),
+        'HC90_routing_accuracy': _safe_mean(totals['hc90_route_correct'], totals['hc90_non_tie']),
+        'HC95_routing_accuracy': _safe_mean(totals['hc95_route_correct'], totals['hc95_non_tie']),
+        'helpful_gradient_mass': totals['sum_helpful_g'], 'harmful_gradient_mass': totals['sum_harmful_g'],
+        'routed_helpful_gradient_mass': totals['sum_routed_helpful_g'],
+        'routed_harmful_gradient_mass': totals['sum_routed_harmful_g'],
+        'net_gradient_selective_gain': (totals['sum_harmful_g'] - totals['sum_routed_harmful_g']) - (totals['sum_helpful_g'] - totals['sum_routed_helpful_g']),
+        'val_dice_student1': float(val_eval1[2]), 'val_dice_student2': float(val_eval2[2]),
+        'val_jaccard_student1': float(val_eval1[1]), 'val_jaccard_student2': float(val_eval2[1]),
+    }
+
+
 def _sc_checkpoint_metadata(args, context, best_val_eval_lists, best_epochs):
     return {
         'dataset_name': args.dataset_name, 'labeled_ratio': args.labeled_ratio,
@@ -2143,6 +2699,150 @@ def _write_sc_protocol_audit(path, args, cfg, datasets, context, optimizers, sta
         json.dump(audit, handle, indent=2, ensure_ascii=False)
 
 
+def _state_aware_checkpoint_metadata(args, context, best_val_eval_lists, best_epochs):
+    """Metadata contract for every state-aware current/best checkpoint."""
+    return {
+        'dataset_name': args.dataset_name, 'labeled_ratio': args.labeled_ratio,
+        'seed': args.sd, 'input_mode': args.input_mode, 'network': args.network,
+        'cps_mode': 'uni_reference_state_aware', 'selection_split': 'validation',
+        'selection_metric': 'jaccard',
+        'best_val_metrics': [list(v) for v in best_val_eval_lists],
+        'best_epochs': list(best_epochs),
+        'reference_memory_path': context['memory_path'],
+        'reference_memory_sha256': context['memory_sha256'],
+        'reference_memory_source': 'labeled_10 GT only',
+        'uni_sha256': context['weights_sha256'],
+        'uni_weights': context['weights_path'], 'uni_k': args.uni_k,
+        'margin_definition': 'm=S_fg-S_bg',
+        'agreement_signed_support_definition': 's=(2*y_c-1)*m',
+        'agreement_conflict_definition': 'r=clamp(-s,0,1)',
+        'agreement_soft_correction_definition': (
+            '(1-r)*CE(current)+r*CE(opposite) on agreement; '
+            'opposite target is never used on disagreement'
+        ),
+        'disagreement_support_A_definition': 's_A=(2*pseudo_A-1)*m',
+        'disagreement_support_B_definition': 's_B=(2*pseudo_B-1)*m',
+        'disagreement_routing_weight_definition': (
+            'r_A/B=clamp(-s_A/B,0,1); w_A/B=1-r_A/B; '
+            'A->B uses w_A and B->A uses w_B'
+        ),
+        'loss_reduction': (
+            '0.5*mean(pixel_loss_A_to_B)+0.5*mean(pixel_loss_B_to_A) '
+            'over valid pixels; no sum(wL)/sum(w)'
+        ),
+        'hard_reference_threshold_used': False,
+        'hard_routing_used': False,
+        'student_confidence_used': False,
+        'pseudo_label_flipping_used': False,
+        'direction_specific_scaling_used': False,
+        'reference_build_rng_isolated': True,
+        'test_evaluation_policy': 'final_frozen_only',
+    }
+
+
+def _write_state_aware_protocol_audit(
+    path, args, cfg, datasets, context, optimizers, startup_passed,
+):
+    """Persist the state-aware protocol and all frozen-reference checks."""
+    optimizer_parameter_ids = {
+        id(parameter)
+        for optimizer in optimizers
+        for group in optimizer.param_groups
+        for parameter in group['params']
+    }
+    audit = {
+        'experiment': 'State-Aware Reference-Guided CPS',
+        'formal_training': True, 'fresh_initialization': True,
+        'resume_checkpoint': None, 'startup_assertions_passed': startup_passed,
+        'command': ' '.join(sys.argv),
+        'dataset_name': args.dataset_name,
+        'path_dataset': str(Path(args.path_dataset).resolve()),
+        'dataset_counts': {
+            'labeled_unique': len(datasets['train_sup_unique']),
+            'unlabeled': len(datasets['train_unsup']),
+            'validation': len(datasets['val']),
+            'test': len(datasets['test']),
+        },
+        'config': {
+            'labeled_ratio': args.labeled_ratio, 'seed': args.sd,
+            'batch_size': args.batch_size, 'num_epochs': args.num_epochs,
+            'network': args.network, 'input_mode': args.input_mode,
+            'cps_mode': args.cps_mode, 'lr': args.lr,
+            'momentum': args.momentum, 'weight_decay': 5 * 10 ** args.wd,
+            'step_size': args.step_size, 'gamma': args.gamma,
+            'unsup_weight': args.unsup_weight,
+            'warm_up_duration': args.warm_up_duration,
+            'milestone_interval': args.milestone_interval,
+            'best_save_interval': args.best_save_interval,
+        },
+        'actual_cps_loss_criterion': (
+            'torch.nn.CrossEntropyLoss(reduction=none), hard-target CE; '
+            '0.5 mean per direction'
+        ),
+        'agreement': {
+            'margin': 'm=S_fg-S_bg',
+            'signed_support': 's=(2*y_c-1)*m',
+            'conflict': 'r=clamp(-s,0,1)',
+            'formula': '(1-r)*CE(current)+r*CE(opposite)',
+            'scope': 'agreement only',
+        },
+        'disagreement': {
+            'state': 'pseudo_A != pseudo_B',
+            'support_A': 's_A=(2*pseudo_A-1)*m',
+            'support_B': 's_B=(2*pseudo_B-1)*m',
+            'routing': 'r=clamp(-s,0,1); w=1-r',
+            'A_to_B': 'w_A*CE(logits_B,pseudo_A)',
+            'B_to_A': 'w_B*CE(logits_A,pseudo_B)',
+            'opposite_target_used': False,
+            'sum_weight_normalization': False,
+        },
+        'UNI': {
+            'architecture': 'ViT-L/16', 'feature_dim': 1024,
+            'dense_token_grid': [14, 14],
+            'sha256': context['weights_sha256'], 'path': context['weights_path'],
+            'frozen': True, 'eval': not context['uni'].training,
+            'requires_grad': any(
+                parameter.requires_grad for parameter in context['uni'].parameters()
+            ),
+            'in_optimizer': any(
+                id(parameter) in optimizer_parameter_ids
+                for parameter in context['uni'].parameters()
+            ),
+        },
+        'reference_memory': {
+            'path': context['memory_path'],
+            'sha256': context['memory_sha256'],
+            'foreground_count': context['memory_fg_count'],
+            'background_count': context['memory_bg_count'],
+            'feature_dim': context['feature_dim'],
+            'token_grid': context['token_grid'], 'K': context['memory_top_k'],
+            'built_before_optimizer': True,
+            'build_requested': bool(context.get('memory_build_requested', False)),
+            'build_performed_this_run': bool(context.get('memory_built', False)),
+            'source': context.get('memory_build_source', 'labeled_10 GT only'),
+            'online_updates': False,
+            'frozen_after_build': True,
+        },
+        'forbidden_mechanisms': {
+            'hard_reference_threshold_used': False,
+            'hard_routing_used': False, 'student_confidence_used': False,
+            'tau_or_threshold_used': False, 'lambda_routing_used': False,
+            'class_or_branch_specific_scaling_used': False,
+            'stage_schedule_used': False, 'w2_normalization_used': False,
+        },
+        'reference_build_rng_isolated': True,
+        'test_policy': 'not evaluated during training; final frozen evaluation only',
+        'code': {
+            'main_path': str(Path(__file__).resolve()),
+            'main_sha256': _sha256_file(Path(__file__).resolve()),
+            'torch': torch.__version__, 'numpy': np.__version__,
+            'timestamp': time.strftime('%Y-%m-%dT%H:%M:%S%z'),
+        },
+    }
+    with open(path, 'w', encoding='utf-8') as handle:
+        json.dump(audit, handle, indent=2, ensure_ascii=False)
+
+
 def train_model(
     args,
     cfg,
@@ -2158,7 +2858,7 @@ def train_model(
     trained_models_path, segmentation_results_path = build_output_paths(
         args, datasets, use_manifests
     )
-    if args.cps_mode == 'uni_reference_soft_correction':
+    if _is_reference_mode(args.cps_mode):
         existing_training_artifacts = [
             path for path in Path(trained_models_path).rglob('*')
             if path.is_file()
@@ -2179,7 +2879,17 @@ def train_model(
     sc_validation_file = None
     sc_iter_writer = None
     sc_iter_file = None
-    if args.cps_mode == 'uni_reference_soft_correction':
+    state_epoch_writer = None
+    state_metrics_file = None
+    state_validation_writer = None
+    state_validation_file = None
+    state_iter_writer = None
+    state_iter_file = None
+    if _is_reference_mode(args.cps_mode):
+        rng_state = (
+            _snapshot_rng_state()
+            if args.cps_mode == 'uni_reference_state_aware' else None
+        )
         reference_context = _load_reference(
             args,
             cfg,
@@ -2187,6 +2897,15 @@ def train_model(
             manifest_dir=manifest_dir,
             use_manifests=use_manifests,
         )
+        if rng_state is not None:
+            _restore_rng_state(rng_state)
+            reference_context['reference_build_rng_isolated'] = True
+            logger.info(
+                'Reference build RNG isolation complete | '
+                'reference_build_rng_isolated=true'
+            )
+        else:
+            reference_context['reference_build_rng_isolated'] = False
         reference_context['cfg'] = cfg
 
     (
@@ -2198,23 +2917,47 @@ def train_model(
 
     model1, model2 = models
     if reference_context is not None:
-        _run_sc_startup_checks(
-            args, cfg, reference_context, models, optimizers, losses
-        )
-        logger.info(
-            'Soft Correction startup consistency checks passed | '
-            'hard_reference_threshold_used=false | student_confidence_used=false '
-            '| loss=(1-r)*CE(current)+r*CE(opposite) on agreement; original CE on disagreement'
-        )
-        _write_sc_protocol_audit(
-            os.path.join(trained_models_path, 'soft_correction_protocol_audit.json'),
-            args, cfg, datasets, reference_context, optimizers, True,
-        )
-        logger.info(
-            'Soft Correction fresh initialization confirmed | resume_checkpoint=None '
-            '| checkpoint_root=%s | segmentation_root=%s',
-            trained_models_path, segmentation_results_path,
-        )
+        if args.cps_mode == 'uni_reference_state_aware':
+            _run_state_aware_startup_checks(
+                args, cfg, reference_context, models, optimizers, losses
+            )
+            logger.info(
+                'State-aware startup consistency checks passed | '
+                'hard_routing_used=false | student_confidence_used=false '
+                '| tau_or_threshold_used=false | w2_normalization_used=false '
+                '| agreement=(1-r)*CE(current)+r*CE(opposite); '
+                'disagreement=w*CE(peer,pseudo)'
+            )
+            _write_state_aware_protocol_audit(
+                os.path.join(
+                    trained_models_path,
+                    'state_aware_reference_protocol_audit.json',
+                ),
+                args, cfg, datasets, reference_context, optimizers, True,
+            )
+            logger.info(
+                'State-aware fresh initialization confirmed | resume_checkpoint=None '
+                '| checkpoint_root=%s | segmentation_root=%s',
+                trained_models_path, segmentation_results_path,
+            )
+        else:
+            _run_sc_startup_checks(
+                args, cfg, reference_context, models, optimizers, losses
+            )
+            logger.info(
+                'Soft Correction startup consistency checks passed | '
+                'hard_reference_threshold_used=false | student_confidence_used=false '
+                '| loss=(1-r)*CE(current)+r*CE(opposite) on agreement; original CE on disagreement'
+            )
+            _write_sc_protocol_audit(
+                os.path.join(trained_models_path, 'soft_correction_protocol_audit.json'),
+                args, cfg, datasets, reference_context, optimizers, True,
+            )
+            logger.info(
+                'Soft Correction fresh initialization confirmed | resume_checkpoint=None '
+                '| checkpoint_root=%s | segmentation_root=%s',
+                trained_models_path, segmentation_results_path,
+            )
     best_val_eval_lists = (
         [0 for _ in range(4)],
         [0 for _ in range(4)],
@@ -2263,6 +3006,39 @@ def train_model(
                     sc_iter_file, fieldnames=SC_ITER_METRIC_FIELDS
                 )
                 sc_iter_writer.writeheader()
+        elif reference_context is not None and args.cps_mode == 'uni_reference_state_aware':
+            state_metrics_path = os.path.join(
+                trained_models_path, 'state_aware_reference_metrics.csv'
+            )
+            state_validation_path = os.path.join(
+                trained_models_path, 'state_aware_validation_diagnostic.csv'
+            )
+            state_metrics_file = stack.enter_context(
+                open(state_metrics_path, 'w', newline='', encoding='utf-8')
+            )
+            state_validation_file = stack.enter_context(
+                open(state_validation_path, 'w', newline='', encoding='utf-8')
+            )
+            state_epoch_writer = csv.DictWriter(
+                state_metrics_file, fieldnames=STATE_METRIC_FIELDS
+            )
+            state_epoch_writer.writeheader()
+            state_validation_writer = csv.DictWriter(
+                state_validation_file, fieldnames=STATE_VALIDATION_FIELDS
+            )
+            state_validation_writer.writeheader()
+            if args.state_aware_log_interval > 0:
+                state_iter_path = os.path.join(
+                    trained_models_path,
+                    'state_aware_reference_metrics_iter.csv',
+                )
+                state_iter_file = stack.enter_context(
+                    open(state_iter_path, 'w', newline='', encoding='utf-8')
+                )
+                state_iter_writer = csv.DictWriter(
+                    state_iter_file, fieldnames=STATE_ITER_METRIC_FIELDS
+                )
+                state_iter_writer.writeheader()
         metrics_writer = csv.DictWriter(
             metrics_file, fieldnames=METRIC_FIELDS
         )
@@ -2283,6 +3059,8 @@ def train_model(
                 reference_context=reference_context,
                 sc_iter_writer=sc_iter_writer,
                 sc_iter_file=sc_iter_file,
+                state_iter_writer=state_iter_writer,
+                state_iter_file=state_iter_file,
             )
             schedulers[0].step()
             schedulers[1].step()
@@ -2352,8 +3130,16 @@ def train_model(
                 sc_validation_row['epoch'] = epoch + 1
                 sc_validation_writer.writerow(sc_validation_row)
                 sc_validation_file.flush()
+            elif reference_context is not None and args.cps_mode == 'uni_reference_state_aware':
+                state_validation_row = _state_validation_diagnostic(
+                    validation, dataloaders['val'], reference_context, cfg, args,
+                    val_eval1, val_eval2,
+                )
+                state_validation_row['epoch'] = epoch + 1
+                state_validation_writer.writerow(state_validation_row)
+                state_validation_file.flush()
 
-            if args.cps_mode == 'uni_reference_soft_correction':
+            if _is_reference_mode(args.cps_mode):
                 # Reference-aware training inspects test only after all epochs.
                 test_evaluation = None
                 test_eval1 = [float('nan')] * 4
@@ -2439,11 +3225,11 @@ def train_model(
                     'selection_split': 'validation',
                     'selection_metric': 'jaccard',
                     'current_test_metrics': (
-                        None if args.cps_mode == 'uni_reference_soft_correction'
+                        None if _is_reference_mode(args.cps_mode)
                         else [list(test_eval1), list(test_eval2)]
                     ),
                     'test_evaluation_policy': (
-                        'final_frozen_only' if args.cps_mode == 'uni_reference_soft_correction'
+                        'final_frozen_only' if _is_reference_mode(args.cps_mode)
                         else 'monitoring_only_not_used_for_selection'
                     ),
                     'current_val_metrics': [
@@ -2473,6 +3259,20 @@ def train_model(
                         'hard_reference_threshold_used': False,
                         'student_confidence_used': False,
                         'pseudo_label_flipping_used': False,
+                    })
+                elif reference_context is not None and args.cps_mode == 'uni_reference_state_aware':
+                    milestone_metadata.update({
+                        key: value
+                        for key, value in _state_aware_checkpoint_metadata(
+                            args, reference_context, best_val_eval_lists,
+                            best_epochs,
+                        ).items()
+                        if key not in {
+                            'dataset_name', 'labeled_ratio', 'seed',
+                            'input_mode', 'network', 'cps_mode',
+                            'selection_split', 'selection_metric',
+                            'best_val_metrics', 'best_epochs',
+                        }
                     })
                 milestone_path = save_training_milestone(
                     model1,
@@ -2544,6 +3344,9 @@ def train_model(
             if reference_context is not None and args.cps_mode == 'uni_reference_soft_correction':
                 sc_epoch_writer.writerow(_sc_epoch_row(epoch + 1, reference_totals))
                 sc_metrics_file.flush()
+            elif reference_context is not None and args.cps_mode == 'uni_reference_state_aware':
+                state_epoch_writer.writerow(_state_epoch_row(epoch + 1, reference_totals))
+                state_metrics_file.flush()
 
     sc_final_rows = None
     sc_last_path = None
@@ -2590,6 +3393,49 @@ def train_model(
             'Soft Correction final frozen evaluation complete | test inspected '
             'only now after epoch 200 | path=%s', final_path,
         )
+    elif args.cps_mode == 'uni_reference_state_aware':
+        epoch200_states = tuple(_model_state_snapshot(model) for model in models)
+        state_metadata = _state_aware_checkpoint_metadata(
+            args, reference_context, best_val_eval_lists, best_epochs
+        )
+        state_last_path = os.path.join(trained_models_path, 'last_checkpoint.pth')
+        torch.save({
+            'epoch': args.num_epochs,
+            'appearance_state_dict': epoch200_states[0],
+            'structure_state_dict': epoch200_states[1],
+            **state_metadata,
+        }, state_last_path)
+        state_final_rows = _evaluate_frozen_pair(
+            models, losses, dataloaders, cfg, 'epoch200',
+            (args.num_epochs, args.num_epochs),
+        )
+        model1.load_state_dict(best_model_states[0], strict=True)
+        model2.load_state_dict(best_model_states[1], strict=True)
+        state_final_rows.extend(
+            _evaluate_frozen_pair(
+                models, losses, dataloaders, cfg, 'best_validation', best_epochs,
+            )
+        )
+        model1.load_state_dict(epoch200_states[0], strict=True)
+        model2.load_state_dict(epoch200_states[1], strict=True)
+        final_path = os.path.join(
+            trained_models_path, 'state_aware_final_frozen_evaluation.csv'
+        )
+        with open(final_path, 'w', newline='', encoding='utf-8') as handle:
+            writer = csv.DictWriter(
+                handle,
+                fieldnames=[
+                    'checkpoint', 'branch', 'source_epoch', 'split',
+                    'threshold', 'threshold_source', 'jaccard', 'dice',
+                    'fixed05_jaccard', 'fixed05_dice',
+                ],
+            )
+            writer.writeheader()
+            writer.writerows(state_final_rows)
+        logger.info(
+            'State-aware final frozen evaluation complete | test inspected '
+            'only now after epoch 200 | path=%s', final_path,
+        )
 
     elapsed = time.time() - training_start
     minutes, seconds = divmod(elapsed, 60)
@@ -2621,7 +3467,7 @@ def train_model(
         best_epochs[1],
         best_val_eval_lists[1][1],
     )
-    if args.cps_mode == 'uni_reference_soft_correction':
+    if _is_reference_mode(args.cps_mode):
         best_paths = [
             os.path.join(
                 trained_models_path,
@@ -2645,12 +3491,22 @@ def train_model(
             'epoch200_checkpoint': str(
                 Path(trained_models_path) / 'milestones' / 'epoch_200.pth'
             ),
-            'last_checkpoint': sc_last_path,
-            'final_frozen_evaluation': sc_final_rows,
+            'last_checkpoint': (
+                sc_last_path if args.cps_mode == 'uni_reference_soft_correction'
+                else state_last_path
+            ),
+            'final_frozen_evaluation': (
+                sc_final_rows if args.cps_mode == 'uni_reference_soft_correction'
+                else state_final_rows
+            ),
             'test_policy': 'final_frozen_only_after_epoch200',
             'training_elapsed_seconds_including_final_evaluation': elapsed,
         }
-        completion_name = 'soft_correction_training_complete.json'
+        completion_name = (
+            'soft_correction_training_complete.json'
+            if args.cps_mode == 'uni_reference_soft_correction'
+            else 'state_aware_training_complete.json'
+        )
         with open(
             os.path.join(trained_models_path, completion_name),
             'w', encoding='utf-8'
@@ -2738,11 +3594,15 @@ def parse_args():
         '--cps_mode', '--cps-mode',
         dest='cps_mode',
         default='standard',
-        choices=['standard', 'uni_reference_soft_correction'],
+        choices=[
+            'standard', 'uni_reference_soft_correction',
+            'uni_reference_state_aware',
+        ],
         help=(
             'standard uses the original bidirectional CPS; '
             'uni_reference_soft_correction transfers r target mass to the opposite '
-            'class on agreement without hard flipping.'
+            'class on agreement without hard flipping; '
+            'uni_reference_state_aware adds continuous D-only directional attenuation.'
         ),
     )
     parser.add_argument(
@@ -2752,6 +3612,14 @@ def parse_args():
             'reference_memory.npz used by UNI reference modes; when omitted, '
             'checkpoints/<dataset>_labeled<ratio>_seed<seed>/reference_memory.npz '
             'is selected automatically'
+        ),
+    )
+    parser.add_argument(
+        '--uni_build_reference_memory',
+        action='store_true',
+        help=(
+            'build the missing reference memory from the current labeled GT split; '
+            'state-aware mode requires this flag when the memory is absent'
         ),
     )
     parser.add_argument(
@@ -2770,6 +3638,12 @@ def parse_args():
         default=50,
         type=int,
         help='write one Soft Correction iteration row every N optimizer steps; 0 disables it',
+    )
+    parser.add_argument(
+        '--state_aware_log_interval',
+        default=50,
+        type=int,
+        help='write one state-aware iteration row every N optimizer steps; 0 disables it',
     )
     parser.add_argument('--loss', default='dice')
     parser.add_argument('-w', '--warm_up_duration', default=20, type=int)
@@ -2791,13 +3665,21 @@ def parse_args():
         parser.error('--best_save_interval must be non-negative')
     if args.sc_log_interval < 0:
         parser.error('--sc_log_interval must be non-negative')
-    if args.cps_mode == 'uni_reference_soft_correction':
+    if args.state_aware_log_interval < 0:
+        parser.error('--state_aware_log_interval must be non-negative')
+    if _is_reference_mode(args.cps_mode):
         if args.uni_k != 5:
-            parser.error('--uni_k must remain 5 for Soft Correction')
+            parser.error('--uni_k must remain 5 for UNI reference modes')
     if args.path_trained_models is None:
         if args.cps_mode == 'uni_reference_soft_correction':
             args.path_trained_models = (
                 'checkpoints/semi_{}_seed_{}_rgbstain_uni_reference_soft_correction'.format(
+                    args.labeled_ratio, args.sd
+                )
+            )
+        elif args.cps_mode == 'uni_reference_state_aware':
+            args.path_trained_models = (
+                'checkpoints/semi_{}_seed_{}_rgbstain_uni_reference_state_aware'.format(
                     args.labeled_ratio, args.sd
                 )
             )
@@ -2809,6 +3691,12 @@ def parse_args():
         if args.cps_mode == 'uni_reference_soft_correction':
             args.path_seg_results = (
                 'seg_pred/semi_{}_seed_{}_rgbstain_uni_reference_soft_correction'.format(
+                    args.labeled_ratio, args.sd
+                )
+            )
+        elif args.cps_mode == 'uni_reference_state_aware':
+            args.path_seg_results = (
+                'seg_pred/semi_{}_seed_{}_rgbstain_uni_reference_state_aware'.format(
                     args.labeled_ratio, args.sd
                 )
             )
