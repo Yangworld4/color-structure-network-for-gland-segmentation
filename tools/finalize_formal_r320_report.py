@@ -29,11 +29,12 @@ def boot(delta,reps=2000):
     g=np.random.default_rng(1337); y=x[g.integers(0,len(x),size=(reps,len(x)))].mean(1); return float(x.mean()),float(np.percentile(y,2.5)),float(np.percentile(y,97.5))
 def main():
     ap=argparse.ArgumentParser();ap.add_argument('--analysis-dir',default=str(ROOT/'diagnostics/formal_r320_multidataset'));a=ap.parse_args();out=Path(a.analysis_dir)
-    static=read(out/'reference_static_all_resolutions.csv'); r320=read(out/'07_r320_final_test_summary.csv'); r224=read(out/'r224_final_test_summary.csv'); rows=[]; b_rows=[]; four=[]
+    static=read(out/'reference_static_all_resolutions.csv'); r320=read(out/'07_r320_final_test_summary.csv'); r224=read(out/'r224_final_test_summary.csv'); r224_replay=json.loads((out/'r224_mechanism_epoch200.json').read_text()) if (out/'r224_mechanism_epoch200.json').exists() else {}; rows=[]; b_rows=[]; four=[]
     for dataset,ratio,label in SETTINGS:
         s0=next(x for x in static if x['dataset']==dataset and int(x['labeled_ratio'])==ratio and int(x['resolution'])==224); s1=next(x for x in static if x['dataset']==dataset and int(x['labeled_ratio'])==ratio and int(x['resolution'])==320)
         d0=odir(dataset,ratio);d1=rdir(dataset,ratio); old=read(d0/'state_aware_validation_diagnostic.csv')[-1]; new=read(d1/'state_aware_validation_diagnostic.csv')[-1]
         def oldm(k):
+            if label in r224_replay and k in r224_replay[label]: return f(r224_replay[label][k])
             if k=='WW_ref_correct': return float('nan')
             if k=='CC_harmful': return f(old['CC_any_harm'])/f(old['CC'])
             if k=='WW/all':return f(old['WW'])/f(old['valid_pixels'])
