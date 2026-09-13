@@ -1,0 +1,2 @@
+Failure analysis of Original RGB-RGB CPS on the unlabeled training subset.
+Ground-truth masks of the unlabeled training subset are used only for retrospective diagnostic analysis and are never exposed to the training procedure. (a) Agreement between the two students across synchronized checkpoints. (b) Fraction of all pixels for which both students make the same incorrect prediction. (c) Fraction of both-wrong pixels whose joint confidence exceeds 0.90.

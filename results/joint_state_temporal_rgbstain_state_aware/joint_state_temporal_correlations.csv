@@ -1,0 +1,6 @@
+metric_x,metric_y,num_epochs,pearson,spearman
+agreement_rate,shared_error_fraction_of_all_error_pixels,20,0.812783204001766,0.7624060150375939
+agreement_rate,both_wrong_rate_total,20,-0.5408434168115668,-0.6345864661654135
+disagreement_rate,shared_error_fraction_of_all_error_pixels,20,-0.8127832040017661,-0.7624060150375939
+mean_jaccard,both_wrong_rate_total,20,-0.9088895385786384,-0.7669172932330827
+mean_jaccard,high_conf_shared_error_rate_090,20,0.5902250759074985,0.8225563909774435

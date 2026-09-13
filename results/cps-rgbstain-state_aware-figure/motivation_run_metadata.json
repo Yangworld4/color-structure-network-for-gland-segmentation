@@ -1,0 +1,172 @@
+{
+  "script": "/data/mission/models/Exp/DUAL/tools/build_cps_motivation_figure.py",
+  "timestamp": "2026-09-12T19:13:23.682517+08:00",
+  "git_commit": "044c0d31b1fc0d3ed9232ca5607b9cdc37096797",
+  "analysis_type": "retrospective_unlabeled_training_failure_analysis",
+  "dataset": "GlaS",
+  "dataset_root": "/data/mission/models/Exp/DUAL/datasets/GLaS",
+  "split": "train_unlabeled",
+  "cps_mode": "uni_reference_state_aware",
+  "unlabeled_manifest": "/data/mission/models/Exp/DUAL/datasets/GLaS/manifests/paper_seed_2026/unlabeled_10_with_mask.csv",
+  "retrospective_gt_manifest": "/data/mission/models/Exp/DUAL/datasets/GLaS/manifests/paper_seed_2026/unlabeled_10_with_mask.csv",
+  "gt_manifest_requirement": "For an image-only unlabeled manifest, provide a separate image+mask manifest through --unlabeled-gt-manifest.",
+  "checkpoint_dir": "/data/mission/models/Exp/DUAL/checkpoints/semi_20_seed_24_rgbstain_uni_reference_state_aware/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5.0-w=20-14-54-image-input_mode=rgb_stain-cps_mode=uni_reference_state_aware/milestones",
+  "checkpoint_files": [
+    {
+      "epoch": 10,
+      "filename": "/data/mission/models/Exp/DUAL/checkpoints/semi_20_seed_24_rgbstain_uni_reference_state_aware/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5.0-w=20-14-54-image-input_mode=rgb_stain-cps_mode=uni_reference_state_aware/milestones/epoch_010.pth"
+    },
+    {
+      "epoch": 20,
+      "filename": "/data/mission/models/Exp/DUAL/checkpoints/semi_20_seed_24_rgbstain_uni_reference_state_aware/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5.0-w=20-14-54-image-input_mode=rgb_stain-cps_mode=uni_reference_state_aware/milestones/epoch_020.pth"
+    },
+    {
+      "epoch": 30,
+      "filename": "/data/mission/models/Exp/DUAL/checkpoints/semi_20_seed_24_rgbstain_uni_reference_state_aware/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5.0-w=20-14-54-image-input_mode=rgb_stain-cps_mode=uni_reference_state_aware/milestones/epoch_030.pth"
+    },
+    {
+      "epoch": 40,
+      "filename": "/data/mission/models/Exp/DUAL/checkpoints/semi_20_seed_24_rgbstain_uni_reference_state_aware/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5.0-w=20-14-54-image-input_mode=rgb_stain-cps_mode=uni_reference_state_aware/milestones/epoch_040.pth"
+    },
+    {
+      "epoch": 50,
+      "filename": "/data/mission/models/Exp/DUAL/checkpoints/semi_20_seed_24_rgbstain_uni_reference_state_aware/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5.0-w=20-14-54-image-input_mode=rgb_stain-cps_mode=uni_reference_state_aware/milestones/epoch_050.pth"
+    },
+    {
+      "epoch": 60,
+      "filename": "/data/mission/models/Exp/DUAL/checkpoints/semi_20_seed_24_rgbstain_uni_reference_state_aware/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5.0-w=20-14-54-image-input_mode=rgb_stain-cps_mode=uni_reference_state_aware/milestones/epoch_060.pth"
+    },
+    {
+      "epoch": 70,
+      "filename": "/data/mission/models/Exp/DUAL/checkpoints/semi_20_seed_24_rgbstain_uni_reference_state_aware/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5.0-w=20-14-54-image-input_mode=rgb_stain-cps_mode=uni_reference_state_aware/milestones/epoch_070.pth"
+    },
+    {
+      "epoch": 80,
+      "filename": "/data/mission/models/Exp/DUAL/checkpoints/semi_20_seed_24_rgbstain_uni_reference_state_aware/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5.0-w=20-14-54-image-input_mode=rgb_stain-cps_mode=uni_reference_state_aware/milestones/epoch_080.pth"
+    },
+    {
+      "epoch": 90,
+      "filename": "/data/mission/models/Exp/DUAL/checkpoints/semi_20_seed_24_rgbstain_uni_reference_state_aware/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5.0-w=20-14-54-image-input_mode=rgb_stain-cps_mode=uni_reference_state_aware/milestones/epoch_090.pth"
+    },
+    {
+      "epoch": 100,
+      "filename": "/data/mission/models/Exp/DUAL/checkpoints/semi_20_seed_24_rgbstain_uni_reference_state_aware/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5.0-w=20-14-54-image-input_mode=rgb_stain-cps_mode=uni_reference_state_aware/milestones/epoch_100.pth"
+    },
+    {
+      "epoch": 110,
+      "filename": "/data/mission/models/Exp/DUAL/checkpoints/semi_20_seed_24_rgbstain_uni_reference_state_aware/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5.0-w=20-14-54-image-input_mode=rgb_stain-cps_mode=uni_reference_state_aware/milestones/epoch_110.pth"
+    },
+    {
+      "epoch": 120,
+      "filename": "/data/mission/models/Exp/DUAL/checkpoints/semi_20_seed_24_rgbstain_uni_reference_state_aware/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5.0-w=20-14-54-image-input_mode=rgb_stain-cps_mode=uni_reference_state_aware/milestones/epoch_120.pth"
+    },
+    {
+      "epoch": 130,
+      "filename": "/data/mission/models/Exp/DUAL/checkpoints/semi_20_seed_24_rgbstain_uni_reference_state_aware/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5.0-w=20-14-54-image-input_mode=rgb_stain-cps_mode=uni_reference_state_aware/milestones/epoch_130.pth"
+    },
+    {
+      "epoch": 140,
+      "filename": "/data/mission/models/Exp/DUAL/checkpoints/semi_20_seed_24_rgbstain_uni_reference_state_aware/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5.0-w=20-14-54-image-input_mode=rgb_stain-cps_mode=uni_reference_state_aware/milestones/epoch_140.pth"
+    },
+    {
+      "epoch": 150,
+      "filename": "/data/mission/models/Exp/DUAL/checkpoints/semi_20_seed_24_rgbstain_uni_reference_state_aware/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5.0-w=20-14-54-image-input_mode=rgb_stain-cps_mode=uni_reference_state_aware/milestones/epoch_150.pth"
+    },
+    {
+      "epoch": 160,
+      "filename": "/data/mission/models/Exp/DUAL/checkpoints/semi_20_seed_24_rgbstain_uni_reference_state_aware/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5.0-w=20-14-54-image-input_mode=rgb_stain-cps_mode=uni_reference_state_aware/milestones/epoch_160.pth"
+    },
+    {
+      "epoch": 170,
+      "filename": "/data/mission/models/Exp/DUAL/checkpoints/semi_20_seed_24_rgbstain_uni_reference_state_aware/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5.0-w=20-14-54-image-input_mode=rgb_stain-cps_mode=uni_reference_state_aware/milestones/epoch_170.pth"
+    },
+    {
+      "epoch": 180,
+      "filename": "/data/mission/models/Exp/DUAL/checkpoints/semi_20_seed_24_rgbstain_uni_reference_state_aware/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5.0-w=20-14-54-image-input_mode=rgb_stain-cps_mode=uni_reference_state_aware/milestones/epoch_180.pth"
+    },
+    {
+      "epoch": 190,
+      "filename": "/data/mission/models/Exp/DUAL/checkpoints/semi_20_seed_24_rgbstain_uni_reference_state_aware/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5.0-w=20-14-54-image-input_mode=rgb_stain-cps_mode=uni_reference_state_aware/milestones/epoch_190.pth"
+    },
+    {
+      "epoch": 200,
+      "filename": "/data/mission/models/Exp/DUAL/checkpoints/semi_20_seed_24_rgbstain_uni_reference_state_aware/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5.0-w=20-14-54-image-input_mode=rgb_stain-cps_mode=uni_reference_state_aware/milestones/epoch_200.pth"
+    }
+  ],
+  "epochs": [
+    10,
+    20,
+    30,
+    40,
+    50,
+    60,
+    70,
+    80,
+    90,
+    100,
+    110,
+    120,
+    130,
+    140,
+    150,
+    160,
+    170,
+    180,
+    190,
+    200
+  ],
+  "network": [
+    "unet"
+  ],
+  "input_mode": "rgb_stain",
+  "branch_A": "RGB",
+  "student_A_view": "RGB",
+  "student_B_view": "deterministic_stain_RGB",
+  "branch_B": "deterministic Stain RGB",
+  "state_threshold": 0.5,
+  "threshold_search_used": false,
+  "high_confidence_threshold": 0.9,
+  "bootstrap": 2000,
+  "bootstrap_iterations": 2000,
+  "bootstrap_seed": 1337,
+  "bootstrap_sampling_unit": "train-unlabeled image, independently within each epoch",
+  "num_images": 61,
+  "image_size": [
+    [
+      256,
+      256
+    ]
+  ],
+  "normalization": {
+    "implementation": "data_normalize_2d",
+    "mean": [
+      0.787803,
+      0.512017,
+      0.784938
+    ],
+    "std": [
+      0.428206,
+      0.507778,
+      0.426366
+    ]
+  },
+  "evaluation_transform": "data_transform_2d()['val']",
+  "confidence_definition": {
+    "branch": "conf=max(p_fg,1-p_fg)",
+    "high_confidence": "joint_high_confidence_mask: conf_A>=h and conf_B>=h; equivalent to min(conf_A,conf_B)>=h",
+    "mean_joint_confidence": "joint_mean_confidence=(conf_A+conf_B)/2, matching the existing joint_state_temporal diagnostic"
+  },
+  "checkpoint_state_key_A": "appearance_state_dict",
+  "checkpoint_state_key_B": "structure_state_dict",
+  "strict_load_A": true,
+  "strict_load_B": true,
+  "inference": "model.eval() + torch.inference_mode()",
+  "gt_usage": "Ground-truth masks of the unlabeled training subset are used only for retrospective diagnostic analysis and are never exposed to the training procedure.",
+  "GT_usage": "Ground-truth masks of the unlabeled training subset are used only for retrospective diagnostic analysis and are never exposed to the training procedure.",
+  "gt_used_for_training": false,
+  "gt_used_for_checkpoint_selection": false,
+  "gt_used_for_threshold_selection": false,
+  "gt_used_for_reference_memory": false,
+  "gt_used_for_model_input": false,
+  "training_used": false
+}
