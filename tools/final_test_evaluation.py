@@ -148,6 +148,7 @@ def main():
         directory = directories[label]
         val_loader, test_loader = loaders(dataset, ratio)
         cfg = dataset_cfg(dataset)
+        run_summary = []
         for checkpoint_type, branch, path, source_epoch in state_sources(directory):
             payload = torch.load(path, map_location='cpu')
             model = get_network('unet', 3, 2)
@@ -162,10 +163,12 @@ def main():
             def mean(rows, key): return float(np.mean([r[key] for r in rows])) if rows else float('nan')
             row = {'dataset': dataset, 'labeled_ratio': ratio, 'setting': label, 'checkpoint_type': checkpoint_type, 'branch': branch, 'validation_selected_epoch': source_epoch, 'threshold_mode': 'validation_frozen', 'threshold': threshold, 'Jaccard': mean(per_image, 'jaccard'), 'Dice': mean(per_image, 'dice'), 'fixed_05_Jaccard': mean(fixed, 'jaccard'), 'fixed_05_Dice': mean(fixed, 'dice'), 'validation_frozen_validation_Jaccard': mean(val_image, 'jaccard'), 'validation_frozen_validation_Dice': mean(val_image, 'dice')}
             summary.append(row)
+            run_summary.append(row)
             write_csv(directory / ('final_test_metrics.csv' if checkpoint_type == 'epoch200' and branch == 'A' else f'final_test_metrics_{checkpoint_type}_{branch}.csv'), [row])
             write_csv(directory / f'final_test_per_image_{checkpoint_type}_{branch}.csv', per_image)
             del model
             if device.type == 'cuda': torch.cuda.empty_cache()
+        write_csv(directory / 'final_test_metrics.csv', run_summary)
     write_csv(analysis / '07_r320_final_test_summary.csv', summary)
     (analysis / 'test_evaluation_audit.json').write_text(json.dumps({'test_loaded_during_training': False, 'test_sample_accessed_during_training': False, 'test_metric_computed_during_training': False, 'final_test_stage_completed_after_all_formal_runs': True, 'settings': list(directories)}, indent=2), encoding='utf-8')
     print(json.dumps({'status': 'PASS', 'rows': len(summary), 'analysis_dir': str(analysis)}, indent=2))
