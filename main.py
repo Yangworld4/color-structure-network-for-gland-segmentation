@@ -59,7 +59,10 @@ UNI_WEIGHTS_DEFAULT = (
     'snapshots/b55a5ec6cade1a39edfe6534189a9b8ca7a022f0/pytorch_model.bin'
 )
 UNI_CONFIG_DEFAULT = str(Path(UNI_WEIGHTS_DEFAULT).with_name('config.json'))
-UNI_SIZE = (224, 224)
+UNI_PATCH_SIZE = 16
+DEFAULT_REFERENCE_RESOLUTION = 224
+SUPPORTED_REFERENCE_RESOLUTIONS = (224, 320)
+UNI_SIZE = (DEFAULT_REFERENCE_RESOLUTION, DEFAULT_REFERENCE_RESOLUTION)
 UNI_MEAN = (0.485, 0.456, 0.406)
 UNI_STD = (0.229, 0.224, 0.225)
 REFERENCE_MEMORY_ANCHOR_FG = 0.90
@@ -87,6 +90,25 @@ def _default_reference_memory_path(dataset_name, labeled_ratio, seed):
     return root / (
         '{}_labeled{}_seed{}'.format(slug, int(labeled_ratio), int(seed))
     ) / 'reference_memory.npz'
+
+
+def _reference_grid(reference_resolution):
+    resolution = int(reference_resolution)
+    if resolution not in SUPPORTED_REFERENCE_RESOLUTIONS:
+        raise ValueError(
+            'reference_resolution must be one of {}'.format(
+                SUPPORTED_REFERENCE_RESOLUTIONS
+            )
+        )
+    if resolution % UNI_PATCH_SIZE:
+        raise ValueError('reference_resolution must be divisible by patch size')
+    return resolution // UNI_PATCH_SIZE
+
+
+def _reference_size(reference_resolution):
+    resolution = int(reference_resolution)
+    _reference_grid(resolution)
+    return (resolution, resolution)
 
 STATE_METRIC_FIELDS = [
     'epoch', 'total_unlabeled_pixels', 'agreement_pixels', 'agreement_rate',
@@ -130,6 +152,30 @@ STATE_VALIDATION_FIELDS = [
     'routed_harmful_gradient_mass', 'net_gradient_selective_gain',
     'val_dice_student1', 'val_dice_student2', 'val_jaccard_student1',
     'val_jaccard_student2',
+    'agreement_rate', 'cc_all_rate', 'ww_all_rate', 'd_all_rate',
+    'ww_over_agreement', 'HC90_WW_over_WW', 'HC95_WW_over_WW',
+    'WW_reference_direction_correct', 'CC_reference_harmful_direction',
+    'WW_potential_reverse_A', 'WW_potential_reverse_B',
+    'WW_potential_reverse_any', 'WW_potential_reverse_both',
+    'WW_correct_but_insufficient', 'HC90_ref_correct', 'HC95_ref_correct',
+    'D_routing_accuracy', 'A_correct_given_D', 'B_correct_given_D',
+    'best_fixed_branch_accuracy', 'routing_gain_over_best_fixed',
+    'strong_wrong_routing_005', 'strong_wrong_routing_010',
+    'strong_wrong_routing_020', 'mean_reference_abs_margin',
+]
+
+TRAINING_EPOCH_FIELDS = [
+    'epoch', 'learning_rate', 'unsup_weight', 'train_sup_loss_A',
+    'train_sup_loss_B', 'train_unsup_A_to_B', 'train_unsup_B_to_A',
+    'train_total_A', 'train_total_B', 'train_total', 'Agreement_rate_train',
+    'Disagreement_rate_train', 'mean_r_agreement_train', 'mean_w_A_train',
+    'mean_w_B_train', 'mean_reference_abs_margin_train',
+    'epoch_time_seconds', 'peak_cuda_memory_MiB', 'peak_cuda_reserved_MiB',
+]
+
+VALIDATION_EPOCH_FIELDS = [
+    'epoch', 'Jaccard_A', 'Jaccard_B', 'Dice_A', 'Dice_B',
+    'mean_Jaccard', 'mean_Dice', 'threshold_A', 'threshold_B',
 ]
 
 REFERENCE_CPS_MODES = (
@@ -433,13 +479,24 @@ def build_datasets(args, cfg):
         sup=True,
         training=False,
     )
-    test = imagefloder_itn(
-        **test_source,
-        **common,
-        data_transform_1=transforms['test'],
-        sup=True,
-        training=False,
-    )
+    # Formal State-Aware training must not instantiate or touch the test
+    # dataset.  Final test evaluation is a separate post-training stage.
+    if args.cps_mode == 'state_aware':
+        test = None
+        if use_manifests:
+            with open(test_source['manifest_path'], newline='', encoding='utf-8') as handle:
+                test_count = max(0, sum(1 for _ in csv.DictReader(handle)))
+        else:
+            test_count = None
+    else:
+        test = imagefloder_itn(
+            **test_source,
+            **common,
+            data_transform_1=transforms['test'],
+            sup=True,
+            training=False,
+        )
+        test_count = len(test)
 
     datasets = {
         'train_sup': train_sup,
@@ -447,6 +504,7 @@ def build_datasets(args, cfg):
         'train_unsup': train_unsup,
         'val': validation,
         'test': test,
+        'test_count': test_count,
     }
     return datasets, manifest_dir, use_manifests
 
@@ -455,7 +513,7 @@ def print_data_summary(args, datasets, manifest_dir, use_manifests):
     sup_sample = datasets['train_sup'][0]
     unsup_sample = datasets['train_unsup'][0]
     val_sample = datasets['val'][0]
-    test_sample = datasets['test'][0]
+    test_sample = datasets['test'][0] if datasets['test'] is not None else None
 
     print('Data source:', manifest_dir if use_manifests else args.path_dataset)
     print('Input mode:', args.input_mode)
@@ -464,7 +522,7 @@ def print_data_summary(args, datasets, manifest_dir, use_manifests):
             len(datasets['train_sup_unique']),
             len(datasets['train_unsup']),
             len(datasets['val']),
-            len(datasets['test']),
+            datasets['test_count'],
         )
     )
     print(
@@ -540,11 +598,12 @@ def print_data_summary(args, datasets, manifest_dir, use_manifests):
         tuple(val_sample['image'].shape),
         tuple(val_sample['mask'].shape),
     )
-    print(
-        'Test image/mask:',
-        tuple(test_sample['image'].shape),
-        tuple(test_sample['mask'].shape),
-    )
+    if test_sample is not None:
+        print(
+            'Test image/mask:',
+            tuple(test_sample['image'].shape),
+            tuple(test_sample['mask'].shape),
+        )
 
 
 def build_dataloaders(datasets, batch_size):
@@ -553,7 +612,7 @@ def build_dataloaders(datasets, batch_size):
         'pin_memory': True,
         'num_workers': 8,
     }
-    return {
+    loaders = {
         'train_sup': DataLoader(
             datasets['train_sup'], shuffle=True, **loader_options
         ),
@@ -561,8 +620,10 @@ def build_dataloaders(datasets, batch_size):
             datasets['train_unsup'], shuffle=True, **loader_options
         ),
         'val': DataLoader(datasets['val'], shuffle=False, **loader_options),
-        'test': DataLoader(datasets['test'], shuffle=False, **loader_options),
     }
+    if datasets.get('test') is not None:
+        loaders['test'] = DataLoader(datasets['test'], shuffle=False, **loader_options)
+    return loaders
 
 
 def _experiment_name(args, split_sup_mark, split_unsup_mark):
@@ -753,8 +814,12 @@ def _build_reference_memory(
     uni,
     memory_path,
     logger,
+    reference_resolution=None,
 ):
     """Build an immutable memory once, before the CPS optimizer loop."""
+    if reference_resolution is None:
+        reference_resolution = getattr(args, 'reference_resolution', DEFAULT_REFERENCE_RESOLUTION)
+    expected_grid = _reference_grid(reference_resolution)
     dataset = _reference_memory_dataset(args, cfg, manifest_dir, use_manifests)
     loader = DataLoader(
         dataset,
@@ -773,7 +838,7 @@ def _build_reference_memory(
                 batch['image_rgb'].cuda(non_blocking=True), cfg
             )
             gt = batch['mask'].cuda(non_blocking=True).float().unsqueeze(1)
-            tokens = _uni_dense_features(uni, rgb)
+            tokens = _uni_dense_features(uni, rgb, reference_resolution)
             grid = int(math.sqrt(int(tokens.shape[1])))
             token_grid = grid if token_grid is None else token_grid
             feature_dim = int(tokens.shape[-1]) if feature_dim is None else feature_dim
@@ -798,7 +863,7 @@ def _build_reference_memory(
                     for token_index in chosen:
                         memory_by_class[cls].append(token_cpu[index, token_index])
 
-    if token_grid != 14 or feature_dim != 1024:
+    if token_grid != expected_grid or feature_dim != 1024:
         raise RuntimeError(
             'Unexpected generated memory feature shape: grid={} dim={}'.format(
                 token_grid, feature_dim
@@ -829,14 +894,16 @@ def _build_reference_memory(
         source_labeled_ratio=np.array(args.labeled_ratio),
         seed=np.array(REFERENCE_MEMORY_SEED),
         source_dataset=np.array(str(args.dataset_name)),
+        reference_resolution=np.array(int(reference_resolution)),
     )
     logger.info(
         'Reference memory built before training | source=labeled_%s | fg=%d bg=%d '
-        '| cap=%d grid=%dx%d dim=%d | path=%s',
+        '| cap=%d resolution=%d grid=%dx%d dim=%d | path=%s',
         args.labeled_ratio,
         memory_fg.shape[0],
         memory_bg.shape[0],
         REFERENCE_MEMORY_PER_IMAGE_PER_CLASS,
+        int(reference_resolution),
         token_grid,
         token_grid,
         feature_dim,
@@ -846,6 +913,8 @@ def _build_reference_memory(
 
 def _load_reference(args, cfg, logger, manifest_dir=None, use_manifests=False):
     """Load the immutable UNI model and class-balanced token memory."""
+    reference_resolution = int(getattr(args, 'reference_resolution', DEFAULT_REFERENCE_RESOLUTION))
+    expected_grid = _reference_grid(reference_resolution)
     memory_path = Path(args.uni_reference_memory).expanduser().resolve()
     uni, weights_path, config_path = _load_uni(args)
     memory_built = False
@@ -871,6 +940,7 @@ def _load_reference(args, cfg, logger, manifest_dir=None, use_manifests=False):
             uni,
             memory_path,
             logger,
+            reference_resolution=reference_resolution,
         )
         memory_built = True
     if not memory_path.is_file():
@@ -894,13 +964,16 @@ def _load_reference(args, cfg, logger, manifest_dir=None, use_manifests=False):
 
     assert memory_fg_count == memory_fg_np.shape[0], memory_fg_count
     assert memory_bg_count == memory_bg_np.shape[0], memory_bg_count
-    if str(args.dataset_name).strip().lower() == 'glas' and args.labeled_ratio == 10:
+    if reference_resolution == 224 and str(args.dataset_name).strip().lower() == 'glas' and args.labeled_ratio == 10:
         assert memory_fg_count == 391, memory_fg_count
         assert memory_bg_count == 294, memory_bg_count
+    if reference_resolution == 320 and str(args.dataset_name).strip().lower() == 'glas' and args.labeled_ratio == 10:
+        assert memory_fg_count == 448, memory_fg_count
+        assert memory_bg_count == 394, memory_bg_count
     assert memory_fg_np.shape[1] == 1024, memory_fg_np.shape
     assert memory_bg_np.shape[1] == 1024, memory_bg_np.shape
     assert feature_dim == 1024, feature_dim
-    assert token_grid == 14, token_grid
+    assert token_grid == expected_grid, (token_grid, expected_grid)
     assert memory_top_k == 5, memory_top_k
     with np.load(str(memory_path), allow_pickle=False) as memory:
         source_ratio = int(memory['source_labeled_ratio']) if 'source_labeled_ratio' in memory.files else 10
@@ -908,6 +981,8 @@ def _load_reference(args, cfg, logger, manifest_dir=None, use_manifests=False):
             str(memory['source_dataset'].item())
             if 'source_dataset' in memory.files else None
         )
+        memory_resolution = int(memory['reference_resolution']) if 'reference_resolution' in memory.files else 224
+    assert memory_resolution == reference_resolution, (memory_resolution, reference_resolution)
     assert source_ratio == args.labeled_ratio, (source_ratio, args.labeled_ratio)
     if source_dataset is not None:
         assert source_dataset.strip().lower() == str(args.dataset_name).strip().lower(), (
@@ -927,9 +1002,9 @@ def _load_reference(args, cfg, logger, manifest_dir=None, use_manifests=False):
     mode_label = 'State-Aware Reference-Guided CPS'
     logger.info(
         '%s UNI/reference loaded | weights=%s | memory=%s | fg=%d bg=%d '
-        '| dim=%d grid=%dx%d k=%d source=labeled_%d',
+        '| dim=%d resolution=%d grid=%dx%d k=%d source=labeled_%d',
         mode_label, weights_path, memory_path, memory_fg.shape[0],
-        memory_bg.shape[0], feature_dim, token_grid, token_grid,
+        memory_bg.shape[0], feature_dim, reference_resolution, token_grid, token_grid,
         args.uni_k, args.labeled_ratio,
     )
     logger.info(
@@ -942,10 +1017,11 @@ def _load_reference(args, cfg, logger, manifest_dir=None, use_manifests=False):
     logger.info('%s reference memory sha256=%s', mode_label, _sha256_file(memory_path))
     logger.info(
         '%s reference memory build control | flag=%s | built_this_run=%s '
-        '| source=labeled_10 GT only',
+        '| source=labeled_%d GT only',
         mode_label,
         bool(getattr(args, 'uni_build_reference_memory', False)),
         memory_built,
+        args.labeled_ratio,
     )
     logger.info('%s UNI implementation=models/uni.py', mode_label)
     return {
@@ -954,6 +1030,7 @@ def _load_reference(args, cfg, logger, manifest_dir=None, use_manifests=False):
         'memory_bg': memory_bg,
         'feature_dim': feature_dim,
         'token_grid': token_grid,
+        'reference_resolution': reference_resolution,
         'weights_path': str(weights_path),
         'weights_sha256': _sha256_file(weights_path),
         'memory_path': str(memory_path),
@@ -966,22 +1043,24 @@ def _load_reference(args, cfg, logger, manifest_dir=None, use_manifests=False):
         'memory_top_k': memory_top_k,
         'memory_built': memory_built,
         'memory_build_requested': bool(getattr(args, 'uni_build_reference_memory', False)),
-        'memory_build_source': 'labeled_10 GT only',
+        'memory_build_source': 'labeled_{} GT only'.format(args.labeled_ratio),
         'hard_reference_threshold_used': False,
     }
 
 
-def _uni_dense_features(uni, rgb_01):
+def _uni_dense_features(uni, rgb_01, reference_resolution=DEFAULT_REFERENCE_RESOLUTION):
     mean = torch.tensor(UNI_MEAN, device=rgb_01.device, dtype=rgb_01.dtype).view(1, 3, 1, 1)
     std = torch.tensor(UNI_STD, device=rgb_01.device, dtype=rgb_01.dtype).view(1, 3, 1, 1)
-    x = F.interpolate(rgb_01, size=UNI_SIZE, mode='bilinear', align_corners=False)
+    reference_size = _reference_size(reference_resolution)
+    expected_grid = _reference_grid(reference_resolution)
+    x = F.interpolate(rgb_01, size=reference_size, mode='bilinear', align_corners=False)
     x = (x - mean) / std
     tokens = uni.dense_patch_tokens(x)
     token_count = int(tokens.shape[1])
     token_grid = int(math.sqrt(token_count))
     if token_grid * token_grid != token_count:
         raise RuntimeError('UNI dense token count is not square: {}'.format(token_count))
-    if tokens.shape[-1] != 1024 or token_grid != 14:
+    if tokens.shape[-1] != 1024 or token_grid != expected_grid:
         raise RuntimeError(
             'Unexpected UNI dense feature shape: {}'.format(tuple(tokens.shape))
         )
@@ -1079,7 +1158,8 @@ def _build_reference_weights(logits_a, logits_b, rgb_input, context, cfg, args):
     original_pseudo_b = pseudo_b.clone()
     with torch.inference_mode():
         tokens = _uni_dense_features(
-            context['uni'], _reconstruct_rgb(rgb_input, cfg)
+            context['uni'], _reconstruct_rgb(rgb_input, cfg),
+            context.get('reference_resolution', DEFAULT_REFERENCE_RESOLUTION),
         )
         actual_grid = int(math.sqrt(int(tokens.shape[1])))
         if actual_grid != context['token_grid']:
@@ -1100,13 +1180,8 @@ def _build_reference_weights(logits_a, logits_b, rgb_input, context, cfg, args):
     return result
 
 
-def _build_state_aware_reference_targets(
-    logits_a, logits_b, rgb_input, context, cfg, args,
-):
-    """Extend the existing reference targets with D-only directional weights."""
-    targets = _build_reference_weights(
-        logits_a, logits_b, rgb_input, context, cfg, args,
-    )
+def _add_state_aware_directional_weights(targets):
+    """Add the frozen State-Aware D-routing quantities to reference targets."""
     pseudo_a = targets['pseudo_a']
     pseudo_b = targets['pseudo_b']
     disagreement = targets['disagreement']
@@ -1140,6 +1215,25 @@ def _build_state_aware_reference_targets(
         'routing_tie': disagreement & ((signed_a - signed_b).abs() <= 1e-8),
     })
     return targets
+
+
+def _build_state_aware_reference_targets(
+    logits_a, logits_b, rgb_input, context, cfg, args,
+):
+    """Build frozen UNI evidence and the unchanged State-Aware weights."""
+    targets = _build_reference_weights(
+        logits_a, logits_b, rgb_input, context, cfg, args,
+    )
+    return _add_state_aware_directional_weights(targets)
+
+
+def _build_state_aware_reference_targets_from_margin(logits_a, logits_b, margin):
+    """Replay State-Aware mathematics from a cached dense validation margin."""
+    pseudo_a = logits_a.detach().argmax(dim=1)
+    pseudo_b = logits_b.detach().argmax(dim=1)
+    targets = _reference_weights_from_margin(pseudo_a, pseudo_b, margin)
+    targets['margin'] = margin
+    return _add_state_aware_directional_weights(targets)
 
 
 def compute_state_aware_cps_losses(ce_loss, prediction1, prediction2, targets):
@@ -1235,6 +1329,8 @@ def _state_batch_stats(
         'potential_reverse_any': 0, 'potential_reverse_both': 0,
         'original_loss_pixel_sum': float(original_losses['total'].item()) * int(valid.sum().item()),
         'state_loss_pixel_sum': float(state_losses['total'].item()) * int(valid.sum().item()),
+        'state_loss_1_to_2_pixel_sum': float(state_losses['1_to_2'].item()) * int(valid.sum().item()),
+        'state_loss_2_to_1_pixel_sum': float(state_losses['2_to_1'].item()) * int(valid.sum().item()),
         'agreement_soft_pixel_sum': float((0.5 * (state_losses['agreement_loss_1_to_2'][agreement].sum() + state_losses['agreement_loss_2_to_1'][agreement].sum())).item()),
         'disagreement_original_pixel_sum': float((0.5 * (state_losses['current_loss_1_to_2'][disagreement].sum() + state_losses['current_loss_2_to_1'][disagreement].sum())).item()),
         'disagreement_routed_pixel_sum': float((0.5 * (state_losses['disagreement_loss_1_to_2'][disagreement].sum() + state_losses['disagreement_loss_2_to_1'][disagreement].sum())).item()),
@@ -1273,7 +1369,9 @@ def _state_new_epoch_totals(learning_rate):
         'sum_s_a_disagreement', 'sum_s_b_disagreement', 'sum_w_a_disagreement',
         'sum_w_b_disagreement', 'sum_min_teacher_weight', 'sum_max_teacher_weight',
         'sum_suppressed_direction_weight', 'directional_attenuation_sum',
+        'sum_abs_margin',
         'original_loss_pixel_sum', 'state_loss_pixel_sum', 'agreement_soft_pixel_sum',
+        'state_loss_1_to_2_pixel_sum', 'state_loss_2_to_1_pixel_sum',
         'disagreement_original_pixel_sum', 'disagreement_routed_pixel_sum',
         'supervised_pixels', 'supervised_loss_A_pixel_sum',
         'supervised_loss_B_pixel_sum', 'total_loss_pixel_sum',
@@ -1363,7 +1461,7 @@ def _run_state_aware_startup_checks(args, cfg, context, models, optimizers, loss
         raise AssertionError('State-aware UNI SHA256 mismatch')
     if context['memory_fg_count'] <= 0 or context['memory_bg_count'] <= 0:
         raise AssertionError('State-aware reference memory is empty')
-    if (context['feature_dim'], context['token_grid'], context['memory_top_k'], args.uni_k) != (1024, 14, 5, 5):
+    if (context['feature_dim'], context['token_grid'], context['memory_top_k'], args.uni_k) != (1024, _reference_grid(args.reference_resolution), 5, 5):
         raise AssertionError('State-aware reference geometry/K mismatch')
     if max(context['memory_fg_norm_error'], context['memory_bg_norm_error']) > 1e-4:
         raise AssertionError('State-aware reference memory is not L2 normalized')
@@ -2043,6 +2141,69 @@ def _binary_metrics_at_threshold(logits, masks, threshold, inclusive=False):
     }
 
 
+def _build_validation_reference_cache(dataloader, context, cfg, args, cache_dir):
+    """Compute frozen validation UNI fields exactly once per formal run."""
+    cache_dir = Path(cache_dir)
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    grid = int(context['token_grid'])
+    resolution = int(context['reference_resolution'])
+    margins = []
+    ids = []
+    with torch.inference_mode():
+        for batch in dataloader:
+            rgb = _reconstruct_rgb(batch['image_rgb'].cuda(non_blocking=True), cfg)
+            tokens = _uni_dense_features(context['uni'], rgb, resolution)
+            flat = tokens.reshape(-1, tokens.shape[-1])
+            score_fg = _topk_scores(flat, context['memory_fg'], args.uni_k).reshape(-1, grid, grid)
+            score_bg = _topk_scores(flat, context['memory_bg'], args.uni_k).reshape(-1, grid, grid)
+            margin_grid = score_fg - score_bg
+            margin = F.interpolate(
+                margin_grid[:, None], size=(256, 256), mode='bilinear', align_corners=False
+            )[:, 0]
+            assert margin_grid.shape[1:] == (grid, grid)
+            assert torch.isfinite(score_fg).all() and torch.isfinite(score_bg).all()
+            assert torch.isfinite(margin).all()
+            margins.append(margin.detach())
+            ids.extend(str(value) for value in batch['ID'])
+            for index, image_id in enumerate(batch['ID']):
+                np.savez_compressed(
+                    cache_dir / '{}.npz'.format(Path(str(image_id)).stem),
+                    id=np.asarray(str(image_id)),
+                    resolution=np.asarray(resolution),
+                    grid=np.asarray(grid),
+                    S_FG=score_fg[index].cpu().numpy().astype(np.float32),
+                    S_BG=score_bg[index].cpu().numpy().astype(np.float32),
+                    margin_grid=margin_grid[index].cpu().numpy().astype(np.float32),
+                    margin_256=margin[index].cpu().numpy().astype(np.float32),
+                )
+    cache = {
+        'margin': torch.cat(margins, dim=0),
+        'ids': ids,
+        'resolution': resolution,
+        'grid': grid,
+    }
+    metadata = {
+        'dataset': args.dataset_name,
+        'labeled_ratio': args.labeled_ratio,
+        'split': 'validation',
+        'seed': args.sd,
+        'reference_resolution': resolution,
+        'reference_grid': grid,
+        'feature_dim': context['feature_dim'],
+        'K': args.uni_k,
+        'anchor_fg': REFERENCE_MEMORY_ANCHOR_FG,
+        'anchor_bg': REFERENCE_MEMORY_ANCHOR_BG,
+        'memory_sha256': context['memory_sha256'],
+        'UNI_sha256': context['weights_sha256'],
+        'image_ids': ids,
+        'cache_fields': ['S_FG', 'S_BG', 'margin_grid', 'margin_256'],
+    }
+    (cache_dir / 'metadata.json').write_text(
+        json.dumps(metadata, indent=2, sort_keys=True), encoding='utf-8'
+    )
+    return cache
+
+
 def _evaluate_frozen_pair(
     models, losses, dataloaders, cfg, checkpoint_label, source_epochs,
 ):
@@ -2056,24 +2217,16 @@ def _evaluate_frozen_pair(
             cfg['NUM_CLASSES'], validation['scores1'], validation['scores2'],
             validation['masks'], 30,
         )
-    test = validate(models, losses, dataloaders['test'])
+    test = validate(models, losses, dataloaders['test']) if dataloaders.get('test') is not None else None
     rows = []
     for index, (branch, val_eval) in enumerate(
         (('A', val_eval1), ('B', val_eval2))
     ):
         val_logits = validation['scores1'] if index == 0 else validation['scores2']
-        test_logits = test['scores1'] if index == 0 else test['scores2']
         val_fixed = _binary_metrics_at_threshold(
             val_logits, validation['masks'], 0.5, inclusive=True
         )
-        test_from_val = _binary_metrics_at_threshold(
-            test_logits, test['masks'], float(val_eval[0]), inclusive=False
-        )
-        test_fixed = _binary_metrics_at_threshold(
-            test_logits, test['masks'], 0.5, inclusive=True
-        )
-        rows.extend([
-            {
+        rows.append({
                 'checkpoint': checkpoint_label, 'branch': branch,
                 'source_epoch': int(source_epochs[index]), 'split': 'validation',
                 'threshold': float(val_eval[0]),
@@ -2081,8 +2234,16 @@ def _evaluate_frozen_pair(
                 'jaccard': float(val_eval[1]), 'dice': float(val_eval[2]),
                 'fixed05_jaccard': val_fixed['jaccard'],
                 'fixed05_dice': val_fixed['dice'],
-            },
-            {
+            })
+        if test is not None:
+            test_logits = test['scores1'] if index == 0 else test['scores2']
+            test_from_val = _binary_metrics_at_threshold(
+                test_logits, test['masks'], float(val_eval[0]), inclusive=False
+            )
+            test_fixed = _binary_metrics_at_threshold(
+                test_logits, test['masks'], 0.5, inclusive=True
+            )
+            rows.append({
                 'checkpoint': checkpoint_label, 'branch': branch,
                 'source_epoch': int(source_epochs[index]), 'split': 'test',
                 'threshold': float(val_eval[0]),
@@ -2091,13 +2252,13 @@ def _evaluate_frozen_pair(
                 'dice': test_from_val['dice'],
                 'fixed05_jaccard': test_fixed['jaccard'],
                 'fixed05_dice': test_fixed['dice'],
-            },
-        ])
+            })
     return rows
 
 
 def _state_validation_diagnostic(
     validation, dataloader, context, cfg, args, val_eval1, val_eval2,
+    reference_cache=None,
 ):
     """GT-only retrospective diagnostics; none of these values enters loss."""
     totals = defaultdict(float)
@@ -2110,14 +2271,23 @@ def _state_validation_diagnostic(
             offset += batch_size
             gt = batch['mask'].cuda(non_blocking=True)
             valid = gt.ne(-1)
-            targets = _build_state_aware_reference_targets(
-                logits_a, logits_b, batch['image_rgb'].cuda(non_blocking=True),
-                context, cfg, args,
-            )
+            if reference_cache is None:
+                targets = _build_state_aware_reference_targets(
+                    logits_a, logits_b, batch['image_rgb'].cuda(non_blocking=True),
+                    context, cfg, args,
+                )
+            else:
+                margin = reference_cache['margin'][offset - batch_size:offset]
+                targets = _build_state_aware_reference_targets_from_margin(
+                    logits_a, logits_b, margin
+                )
             pa, pb = targets['pseudo_a'], targets['pseudo_b']
             agreement = targets['agreement'] & valid
             disagreement = targets['disagreement'] & valid
             gt_fg = gt.eq(1)
+            reference_correct = ((targets['margin'] > 0) & gt_fg) | (
+                (targets['margin'] < 0) & ~gt_fg
+            )
             a_correct = pa.eq(gt)
             b_correct = pb.eq(gt)
             cc = agreement & a_correct
@@ -2185,6 +2355,15 @@ def _state_validation_diagnostic(
                 ('hc90_route_correct', (route_correct & conf.ge(0.90)).sum()),
                 ('hc95_non_tie', (non_tie & conf.ge(0.95)).sum()),
                 ('hc95_route_correct', (route_correct & conf.ge(0.95)).sum()),
+                ('WW_reference_direction_correct', (ww & reference_correct).sum()),
+                ('CC_reference_harmful_direction', (cc & ~reference_correct).sum()),
+                ('WW_correct_but_insufficient', (ww & reference_correct & ~(rev_a | rev_b)).sum()),
+                ('HC90_ref_correct', (ww & conf.ge(0.90) & reference_correct).sum()),
+                ('HC95_ref_correct', (ww & conf.ge(0.95) & reference_correct).sum()),
+                ('strong_wrong_005', (route_wrong & targets['margin'].abs().ge(0.05)).sum()),
+                ('strong_wrong_010', (route_wrong & targets['margin'].abs().ge(0.10)).sum()),
+                ('strong_wrong_020', (route_wrong & targets['margin'].abs().ge(0.20)).sum()),
+                ('sum_abs_margin', targets['margin'].abs()[valid].sum()),
             ):
                 totals[key] += float(value.item())
     if offset != int(validation['masks'].shape[0]):
@@ -2223,6 +2402,29 @@ def _state_validation_diagnostic(
         'net_gradient_selective_gain': (totals['sum_harmful_g'] - totals['sum_routed_harmful_g']) - (totals['sum_helpful_g'] - totals['sum_routed_helpful_g']),
         'val_dice_student1': float(val_eval1[2]), 'val_dice_student2': float(val_eval2[2]),
         'val_jaccard_student1': float(val_eval1[1]), 'val_jaccard_student2': float(val_eval2[1]),
+        'agreement_rate': _safe_mean(cc + ww, valid),
+        'cc_all_rate': _safe_mean(cc, valid), 'ww_all_rate': _safe_mean(ww, valid),
+        'd_all_rate': _safe_mean(d, valid), 'ww_over_agreement': _safe_mean(ww, cc + ww),
+        'HC90_WW_over_WW': _safe_mean(totals['HC90_WW_all'], ww),
+        'HC95_WW_over_WW': _safe_mean(totals['HC95_WW_all'], ww),
+        'WW_reference_direction_correct': _safe_mean(totals['WW_reference_direction_correct'], ww),
+        'CC_reference_harmful_direction': _safe_mean(totals['CC_reference_harmful_direction'], cc),
+        'WW_potential_reverse_A': _safe_mean(totals['WW_reverse_A'], ww),
+        'WW_potential_reverse_B': _safe_mean(totals['WW_reverse_B'], ww),
+        'WW_potential_reverse_any': _safe_mean(totals['WW_any_reverse'], ww),
+        'WW_potential_reverse_both': _safe_mean(totals['WW_both_reverse'], ww),
+        'WW_correct_but_insufficient': _safe_mean(totals['WW_correct_but_insufficient'], ww),
+        'HC90_ref_correct': _safe_mean(totals['HC90_ref_correct'], totals['HC90_WW_all']),
+        'HC95_ref_correct': _safe_mean(totals['HC95_ref_correct'], totals['HC95_WW_all']),
+        'D_routing_accuracy': _safe_mean(totals['routing_correct'], non_tie),
+        'A_correct_given_D': _safe_mean(totals['AC'], d),
+        'B_correct_given_D': _safe_mean(totals['BC'], d),
+        'best_fixed_branch_accuracy': max(_safe_mean(totals['AC'], d), _safe_mean(totals['BC'], d)),
+        'routing_gain_over_best_fixed': _safe_mean(totals['routing_correct'], non_tie) - max(_safe_mean(totals['AC'], d), _safe_mean(totals['BC'], d)),
+        'strong_wrong_routing_005': _safe_mean(totals['strong_wrong_005'], d),
+        'strong_wrong_routing_010': _safe_mean(totals['strong_wrong_010'], d),
+        'strong_wrong_routing_020': _safe_mean(totals['strong_wrong_020'], d),
+        'mean_reference_abs_margin': _safe_mean(totals['sum_abs_margin'], valid),
     }
 
 
@@ -2237,6 +2439,8 @@ def _state_aware_checkpoint_metadata(args, context, best_val_eval_lists, best_ep
         'best_epochs': list(best_epochs),
         'reference_memory_path': context['memory_path'],
         'reference_memory_sha256': context['memory_sha256'],
+        'reference_resolution': context['reference_resolution'],
+        'reference_grid': context['token_grid'],
         'reference_memory_source': 'labeled_10 GT only',
         'uni_sha256': context['weights_sha256'],
         'uni_weights': context['weights_path'], 'uni_k': args.uni_k,
@@ -2288,13 +2492,15 @@ def _write_state_aware_protocol_audit(
             'labeled_unique': len(datasets['train_sup_unique']),
             'unlabeled': len(datasets['train_unsup']),
             'validation': len(datasets['val']),
-            'test': len(datasets['test']),
+            'test': datasets['test_count'],
         },
         'config': {
             'labeled_ratio': args.labeled_ratio, 'seed': args.sd,
             'batch_size': args.batch_size, 'num_epochs': args.num_epochs,
             'network': args.network, 'input_mode': args.input_mode,
             'cps_mode': args.cps_mode, 'lr': args.lr,
+            'reference_resolution': args.reference_resolution,
+            'reference_grid': _reference_grid(args.reference_resolution),
             'momentum': args.momentum, 'weight_decay': 5 * 10 ** args.wd,
             'step_size': args.step_size, 'gamma': args.gamma,
             'unsup_weight': args.unsup_weight,
@@ -2325,7 +2531,8 @@ def _write_state_aware_protocol_audit(
         },
         'UNI': {
             'architecture': 'ViT-L/16', 'feature_dim': 1024,
-            'dense_token_grid': [14, 14],
+            'dense_token_grid': [context['token_grid'], context['token_grid']],
+            'reference_resolution': context['reference_resolution'],
             'sha256': context['weights_sha256'], 'path': context['weights_path'],
             'frozen': True, 'eval': not context['uni'].training,
             'requires_grad': any(
@@ -2390,12 +2597,14 @@ def train_model(
             path for path in Path(trained_models_path).rglob('*')
             if path.is_file()
         ]
-        if existing_training_artifacts:
+        if existing_training_artifacts and not args.resume:
             raise RuntimeError(
                 'Reference formal output is not empty; refusing resume/overwrite: {}'.format(
                     trained_models_path
                 )
             )
+        if args.resume and not os.path.isfile(os.path.join(trained_models_path, 'resume_checkpoint.pth')):
+            raise RuntimeError('Requested resume but resume_checkpoint.pth is missing: {}'.format(trained_models_path))
     logger, metrics_path, diagnostic_logger = create_run_outputs(
         args, trained_models_path
     )
@@ -2404,6 +2613,10 @@ def train_model(
     state_metrics_file = None
     state_validation_writer = None
     state_validation_file = None
+    training_epoch_writer = None
+    training_epoch_file = None
+    validation_epoch_writer = None
+    validation_epoch_file = None
     state_iter_writer = None
     state_iter_file = None
     if _is_reference_mode(args.cps_mode):
@@ -2428,6 +2641,10 @@ def train_model(
         else:
             reference_context['reference_build_rng_isolated'] = False
         reference_context['cfg'] = cfg
+        reference_context['validation_reference_cache'] = _build_validation_reference_cache(
+            dataloaders['val'], reference_context, cfg, args,
+            Path(trained_models_path) / 'reference_validation_cache',
+        )
 
     (
         models,
@@ -2437,6 +2654,24 @@ def train_model(
     ) = build_training_components(args, cfg)
 
     model1, model2 = models
+    resume_payload = None
+    if args.resume:
+        resume_path = os.path.join(trained_models_path, 'resume_checkpoint.pth')
+        resume_payload = torch.load(resume_path, map_location='cpu')
+        expected = {
+            'dataset_name': args.dataset_name,
+            'labeled_ratio': args.labeled_ratio,
+            'seed': args.sd,
+            'reference_resolution': args.reference_resolution,
+            'reference_memory_sha256': reference_context['memory_sha256'],
+            'uni_sha256': reference_context['weights_sha256'],
+        }
+        for key, value in expected.items():
+            if resume_payload.get(key) != value:
+                raise RuntimeError('Resume protocol mismatch for {}: {} != {}'.format(key, resume_payload.get(key), value))
+        model1.load_state_dict(resume_payload['appearance_state_dict'], strict=True)
+        model2.load_state_dict(resume_payload['structure_state_dict'], strict=True)
+        logger.info('Resume student weights loaded strictly | epoch=%d', int(resume_payload['epoch']))
     if reference_context is not None:
         _run_state_aware_startup_checks(
             args, cfg, reference_context, models, optimizers, losses
@@ -2466,17 +2701,47 @@ def train_model(
     )
     best_model_states = (None, None)
     best_epochs = (0, 0)
+    best_sync_mean = -float('inf')
+    best_sync_state = None
+    best_sync_epoch = 0
+    start_epoch = 0
+    if resume_payload is not None:
+        best_val_eval_lists = resume_payload['best_val_eval_lists']
+        best_model_states = resume_payload['best_model_states']
+        best_epochs = tuple(resume_payload['best_epochs'])
+        best_sync_mean = float(resume_payload['best_sync_mean'])
+        best_sync_state = resume_payload['best_sync_state']
+        best_sync_epoch = int(resume_payload['best_sync_epoch'])
+        start_epoch = int(resume_payload['epoch'])
+        optimizers[0].load_state_dict(resume_payload['optimizer1'])
+        optimizers[1].load_state_dict(resume_payload['optimizer2'])
+        schedulers[0].load_state_dict(resume_payload['scheduler1'])
+        schedulers[1].load_state_dict(resume_payload['scheduler2'])
+        global_step = int(resume_payload['global_step'])
+        _restore_rng_state(resume_payload['rng_state'])
+    else:
+        global_step = 0
     print_num = 77 + (cfg['NUM_CLASSES'] - 3) * 14
     print_num_minus = print_num - 2
     print_num_half = int(print_num / 2 - 1)
     training_start = time.time()
-    global_step = 0
+    # global_step is restored above for a resumed run.
 
     with ExitStack() as stack:
         metrics_file = stack.enter_context(
-            open(metrics_path, 'w', newline='', encoding='utf-8')
+            open(metrics_path, 'a' if args.resume else 'w', newline='', encoding='utf-8')
         )
         if reference_context is not None and args.cps_mode == 'state_aware':
+            training_epoch_file = stack.enter_context(
+                open(os.path.join(trained_models_path, 'training_epoch_metrics.csv'), 'a' if args.resume else 'w', newline='', encoding='utf-8')
+            )
+            validation_epoch_file = stack.enter_context(
+                open(os.path.join(trained_models_path, 'validation_epoch_metrics.csv'), 'a' if args.resume else 'w', newline='', encoding='utf-8')
+            )
+            training_epoch_writer = csv.DictWriter(training_epoch_file, fieldnames=TRAINING_EPOCH_FIELDS)
+            validation_epoch_writer = csv.DictWriter(validation_epoch_file, fieldnames=VALIDATION_EPOCH_FIELDS)
+            if not args.resume:
+                training_epoch_writer.writeheader(); validation_epoch_writer.writeheader()
             state_metrics_path = os.path.join(
                 trained_models_path, 'state_aware_reference_metrics.csv'
             )
@@ -2484,38 +2749,43 @@ def train_model(
                 trained_models_path, 'state_aware_validation_diagnostic.csv'
             )
             state_metrics_file = stack.enter_context(
-                open(state_metrics_path, 'w', newline='', encoding='utf-8')
+                open(state_metrics_path, 'a' if args.resume else 'w', newline='', encoding='utf-8')
             )
             state_validation_file = stack.enter_context(
-                open(state_validation_path, 'w', newline='', encoding='utf-8')
+                open(state_validation_path, 'a' if args.resume else 'w', newline='', encoding='utf-8')
             )
             state_epoch_writer = csv.DictWriter(
                 state_metrics_file, fieldnames=STATE_METRIC_FIELDS
             )
-            state_epoch_writer.writeheader()
+            if not args.resume:
+                state_epoch_writer.writeheader()
             state_validation_writer = csv.DictWriter(
                 state_validation_file, fieldnames=STATE_VALIDATION_FIELDS
             )
-            state_validation_writer.writeheader()
+            if not args.resume:
+                state_validation_writer.writeheader()
             if args.state_aware_log_interval > 0:
                 state_iter_path = os.path.join(
                     trained_models_path,
                     'state_aware_reference_metrics_iter.csv',
                 )
                 state_iter_file = stack.enter_context(
-                    open(state_iter_path, 'w', newline='', encoding='utf-8')
+                    open(state_iter_path, 'a' if args.resume else 'w', newline='', encoding='utf-8')
                 )
                 state_iter_writer = csv.DictWriter(
                     state_iter_file, fieldnames=STATE_ITER_METRIC_FIELDS
                 )
-                state_iter_writer.writeheader()
+                if not args.resume:
+                    state_iter_writer.writeheader()
         metrics_writer = csv.DictWriter(
             metrics_file, fieldnames=METRIC_FIELDS
         )
-        metrics_writer.writeheader()
+        if not args.resume:
+            metrics_writer.writeheader()
 
-        for epoch in range(args.num_epochs):
+        for epoch in range(start_epoch, args.num_epochs):
             epoch_start = time.time()
+            torch.cuda.reset_peak_memory_stats()
             loss_totals, train_predictions, global_step, reference_totals = train_one_epoch(
                 args,
                 epoch,
@@ -2594,6 +2864,7 @@ def train_model(
                 state_validation_row = _state_validation_diagnostic(
                     validation, dataloaders['val'], reference_context, cfg, args,
                     val_eval1, val_eval2,
+                    reference_cache=reference_context['validation_reference_cache'],
                 )
                 state_validation_row['epoch'] = epoch + 1
                 state_validation_writer.writerow(state_validation_row)
@@ -2670,6 +2941,25 @@ def train_model(
                 epoch,
                 split_name='Val',
             )
+            sync_mean = 0.5 * (float(val_eval1[1]) + float(val_eval2[1]))
+            if sync_mean > best_sync_mean:
+                best_sync_mean = sync_mean
+                best_sync_epoch = current_epoch
+                best_sync_state = (
+                    _model_state_snapshot(model1), _model_state_snapshot(model2)
+                )
+                sync_metadata = (
+                    _state_aware_checkpoint_metadata(
+                        args, reference_context, best_val_eval_lists, best_epochs
+                    ) if reference_context is not None else {}
+                )
+                torch.save({
+                    'epoch': current_epoch,
+                    'appearance_state_dict': best_sync_state[0],
+                    'structure_state_dict': best_sync_state[1],
+                    'best_synchronized_mean_val_jaccard': sync_mean,
+                    **sync_metadata,
+                }, os.path.join(trained_models_path, 'best_synchronized_mean_val.pth'))
             if (
                 args.milestone_interval > 0
                 and current_epoch % args.milestone_interval == 0
@@ -2735,6 +3025,30 @@ def train_model(
                     ).ljust(print_num_minus, ' '),
                     '|',
                 )
+                if reference_context is not None and args.cps_mode == 'state_aware':
+                    torch.save({
+                        'epoch': current_epoch,
+                        'global_step': global_step,
+                        'appearance_state_dict': _model_state_snapshot(model1),
+                        'structure_state_dict': _model_state_snapshot(model2),
+                        'optimizer1': optimizers[0].state_dict(),
+                        'optimizer2': optimizers[1].state_dict(),
+                        'scheduler1': schedulers[0].state_dict(),
+                        'scheduler2': schedulers[1].state_dict(),
+                        'best_val_eval_lists': best_val_eval_lists,
+                        'best_model_states': best_model_states,
+                        'best_epochs': best_epochs,
+                        'best_sync_mean': best_sync_mean,
+                        'best_sync_state': best_sync_state,
+                        'best_sync_epoch': best_sync_epoch,
+                        'rng_state': _snapshot_rng_state(),
+                        'dataset_name': args.dataset_name,
+                        'labeled_ratio': args.labeled_ratio,
+                        'seed': args.sd,
+                        'reference_resolution': args.reference_resolution,
+                        'reference_memory_sha256': reference_context['memory_sha256'],
+                        'uni_sha256': reference_context['weights_sha256'],
+                    }, os.path.join(trained_models_path, 'resume_checkpoint.pth'))
             if (
                 args.best_save_interval > 0
                 and current_epoch % args.best_save_interval == 0
@@ -2787,6 +3101,40 @@ def train_model(
             if reference_context is not None and args.cps_mode == 'state_aware':
                 state_epoch_writer.writerow(_state_epoch_row(epoch + 1, reference_totals))
                 state_metrics_file.flush()
+                unlabeled = reference_totals['unlabeled_pixels']
+                disagreement = reference_totals['disagreement_pixels']
+                agreement = reference_totals['agreement_pixels']
+                dir_a_to_b = _safe_mean(reference_totals['state_loss_1_to_2_pixel_sum'], unlabeled)
+                dir_b_to_a = _safe_mean(reference_totals['state_loss_2_to_1_pixel_sum'], unlabeled)
+                train_row = {
+                    'epoch': epoch + 1,
+                    'learning_rate': optimizers[0].param_groups[0]['lr'],
+                    'unsup_weight': args.unsup_weight * (epoch + 1) / args.num_epochs,
+                    'train_sup_loss_A': train_losses[0] / num_batches['train_sup'],
+                    'train_sup_loss_B': train_losses[1] / num_batches['train_sup'],
+                    'train_unsup_A_to_B': dir_a_to_b,
+                    'train_unsup_B_to_A': dir_b_to_a,
+                    'train_total_A': train_losses[0] / num_batches['train_sup'] + (args.unsup_weight * (epoch + 1) / args.num_epochs) * dir_b_to_a,
+                    'train_total_B': train_losses[1] / num_batches['train_sup'] + (args.unsup_weight * (epoch + 1) / args.num_epochs) * dir_a_to_b,
+                    'train_total': train_losses[3] / num_batches['train_sup'],
+                    'Agreement_rate_train': _safe_mean(agreement, unlabeled),
+                    'Disagreement_rate_train': _safe_mean(disagreement, unlabeled),
+                    'mean_r_agreement_train': _safe_mean(reference_totals['sum_r_agreement'], agreement),
+                    'mean_w_A_train': _safe_mean(reference_totals['sum_w_a_disagreement'], disagreement),
+                    'mean_w_B_train': _safe_mean(reference_totals['sum_w_b_disagreement'], disagreement),
+                    'mean_reference_abs_margin_train': _safe_mean(reference_totals['sum_abs_margin'], unlabeled),
+                    'epoch_time_seconds': epoch_seconds,
+                    'peak_cuda_memory_MiB': torch.cuda.max_memory_allocated() / (1024 ** 2),
+                    'peak_cuda_reserved_MiB': torch.cuda.max_memory_reserved() / (1024 ** 2),
+                }
+                training_epoch_writer.writerow(train_row); training_epoch_file.flush()
+                validation_epoch_writer.writerow({
+                    'epoch': epoch + 1, 'Jaccard_A': val_eval1[1], 'Jaccard_B': val_eval2[1],
+                    'Dice_A': val_eval1[2], 'Dice_B': val_eval2[2],
+                    'mean_Jaccard': 0.5 * (val_eval1[1] + val_eval2[1]),
+                    'mean_Dice': 0.5 * (val_eval1[2] + val_eval2[2]),
+                    'threshold_A': val_eval1[0], 'threshold_B': val_eval2[0],
+                }); validation_epoch_file.flush()
 
     state_final_rows = None
     state_last_path = None
@@ -2830,8 +3178,8 @@ def train_model(
             writer.writeheader()
             writer.writerows(state_final_rows)
         logger.info(
-            'State-aware final frozen evaluation complete | test inspected '
-            'only now after epoch 200 | path=%s', final_path,
+            'State-aware final validation snapshot complete | test deferred '
+            'to unified post-matrix evaluation | path=%s', final_path,
         )
 
     elapsed = time.time() - training_start
@@ -2880,6 +3228,8 @@ def train_model(
                 (Path(trained_models_path) / 'milestones').glob('epoch_*.pth')
             )),
             'best_epochs': list(best_epochs),
+            'best_synchronized_epoch': best_sync_epoch,
+            'best_synchronized_mean_val_jaccard': best_sync_mean,
             'best_validation_metrics': [
                 list(values) for values in best_val_eval_lists
             ],
@@ -3018,10 +3368,20 @@ def parse_args():
     )
     parser.add_argument('--uni_k', default=5, type=int)
     parser.add_argument(
+        '--reference-resolution', '--reference_resolution',
+        dest='reference_resolution', type=int, default=DEFAULT_REFERENCE_RESOLUTION,
+        choices=list(SUPPORTED_REFERENCE_RESOLUTIONS),
+        help='Frozen UNI reference input resolution; default 224 preserves R224 behavior.',
+    )
+    parser.add_argument(
         '--state_aware_log_interval',
         default=50,
         type=int,
         help='write one state-aware iteration row every N optimizer steps; 0 disables it',
+    )
+    parser.add_argument(
+        '--resume', action='store_true',
+        help='Resume only from the run-local verified resume_checkpoint.pth.',
     )
     parser.add_argument('--loss', default='dice')
     parser.add_argument('-w', '--warm_up_duration', default=20, type=int)
@@ -3046,6 +3406,7 @@ def parse_args():
     if _is_reference_mode(args.cps_mode):
         if args.uni_k != 5:
             parser.error('--uni_k must remain 5 for UNI reference modes')
+        args.reference_grid = _reference_grid(args.reference_resolution)
     if args.path_trained_models is None:
         if args.cps_mode == 'state_aware':
             args.path_trained_models = (
@@ -3057,6 +3418,10 @@ def parse_args():
             args.path_trained_models = 'checkpoints/semi_fdcl_paper_{}'.format(
                 args.labeled_ratio
             )
+    if args.cps_mode == 'state_aware' and args.reference_resolution != DEFAULT_REFERENCE_RESOLUTION and '_refR{}'.format(args.reference_resolution) not in str(args.path_trained_models):
+        args.path_trained_models = '{}_refR{}'.format(
+            args.path_trained_models, args.reference_resolution
+        )
     if args.path_seg_results is None:
         if args.cps_mode == 'state_aware':
             args.path_seg_results = (
@@ -3068,6 +3433,10 @@ def parse_args():
             args.path_seg_results = 'seg_pred/semi_fdcl_paper_{}'.format(
                 args.labeled_ratio
             )
+    if args.cps_mode == 'state_aware' and args.reference_resolution != DEFAULT_REFERENCE_RESOLUTION and '_refR{}'.format(args.reference_resolution) not in str(args.path_seg_results):
+        args.path_seg_results = '{}_refR{}'.format(
+            args.path_seg_results, args.reference_resolution
+        )
     return args
 
 
@@ -3080,7 +3449,9 @@ def main():
     if args.check_data:
         print_data_summary(args, datasets, manifest_dir, use_manifests)
         return
+    summary_rng = _snapshot_rng_state()
     print_data_summary(args, datasets, manifest_dir, use_manifests)
+    _restore_rng_state(summary_rng)
     if not torch.cuda.is_available():
         raise RuntimeError(
             'use --check_data to validate input only.'
