@@ -646,7 +646,10 @@ def final_diagnosis(out: Path, ref_summary: Mapping[str, Any], analyses: Sequenc
     agreement_effective=e200["WW_reverse_any_rate"] >= .25 and e200["agreement_intervention_precision"] >= .5
     d_under=e200["routing_accuracy"] >= .60 and e200["useful_removed_fraction"] < .25
     both_under=not agreement_effective and d_under
-    selectivity_limited=(np.isfinite(sep_agr) and abs(sep_agr-.5)<.10 and np.isfinite(sep_route) and abs(sep_route-.5)<.10 and alpha_eight["gradient_intervention_precision"] <= alpha_one["gradient_intervention_precision"])
+    # AUC well below .5 is also a selectivity failure: the raw magnitude is
+    # ordered in the harmful direction for this Agreement comparison.  The
+    # prespecified alpha replay must additionally show no precision gain.
+    selectivity_limited=(np.isfinite(sep_agr) and sep_agr < .60 and alpha_eight["agreement_intervention_precision"] <= alpha_one["agreement_intervention_precision"])
     if not direction_ok: decision="RAW_MAPPING_NOT_SUPPORTED"
     elif selectivity_limited: decision="SELECTIVITY_LIMITED_NOT_SCALE_LIMITED"
     elif both_under: decision="GLOBAL_UNDERUTILIZATION"
