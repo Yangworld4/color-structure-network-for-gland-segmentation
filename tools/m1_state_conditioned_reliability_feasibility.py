@@ -330,7 +330,7 @@ def class_conditioned(items: Sequence[Mapping[str, Any]], epoch: int, kind: str,
     out=[]
     conditions=[("FG",c==True),("BG",c==False)]
     if kind=="D":
-        a_correct=np.concatenate([x["events"]["pa"][x["events"]["d_non_tie"]]==x["events"]["gt"][x["events"]["d_non_tie"]] for x in items])
+        a_correct=np.concatenate([x["pa"][x["d_non_tie"]]==x["gt"][x["d_non_tie"]] for x in items])
         conditions.extend([("A_CORRECT",a_correct),("B_CORRECT",~a_correct)])
     for name,q in conditions:
         mm=metric(z[q],u[q]); out.append({"epoch":epoch,"source":source,"kind":kind,"condition":name,"count":int(q.sum()),"WW_prevalence_or_routing_accuracy":float(z[q].mean()) if q.any() else np.nan,"AUROC":mm["AUROC"],"AUPRC":mm["AUPRC"]})
