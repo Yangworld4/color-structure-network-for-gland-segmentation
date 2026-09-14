@@ -326,10 +326,14 @@ def coverage_rows(items: Sequence[Mapping[str, Any]], u_key: str, z_key: str, pr
 
 def class_conditioned(items: Sequence[Mapping[str, Any]], epoch: int, kind: str, source: str) -> List[Dict[str, Any]]:
     u,z,im=concat_events(items,"u_a" if kind=="Agreement" else "u_d","z_a" if kind=="Agreement" else "z_d")
-    cls=[np.concatenate([x["yc_a"] for x in items]) if kind=="Agreement" else np.concatenate([x["yr_d"] for x in items])]
-    c=cls[0] if cls else np.empty(0,bool); out=[]
-    for name,val in (("FG",True),("BG",False)):
-        q=c==val; mm=metric(z[q],u[q]); out.append({"epoch":epoch,"source":source,"kind":kind,"condition":name,"count":int(q.sum()),"WW_prevalence_or_routing_accuracy":float(z[q].mean()) if q.any() else np.nan,"AUROC":mm["AUROC"],"AUPRC":mm["AUPRC"]})
+    c=np.concatenate([x["yc_a"] for x in items]) if kind=="Agreement" else np.concatenate([x["yr_d"] for x in items])
+    out=[]
+    conditions=[("FG",c==True),("BG",c==False)]
+    if kind=="D":
+        a_correct=np.concatenate([x["events"]["pa"][x["events"]["d_non_tie"]]==x["events"]["gt"][x["events"]["d_non_tie"]] for x in items])
+        conditions.extend([("A_CORRECT",a_correct),("B_CORRECT",~a_correct)])
+    for name,q in conditions:
+        mm=metric(z[q],u[q]); out.append({"epoch":epoch,"source":source,"kind":kind,"condition":name,"count":int(q.sum()),"WW_prevalence_or_routing_accuracy":float(z[q].mean()) if q.any() else np.nan,"AUROC":mm["AUROC"],"AUPRC":mm["AUPRC"]})
     return out
 
 
