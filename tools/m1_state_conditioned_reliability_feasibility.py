@@ -333,6 +333,46 @@ def class_conditioned(items: Sequence[Mapping[str, Any]], epoch: int, kind: str,
     return out
 
 
+def agreement_aux_metrics(items: Sequence[Mapping[str, Any]]) -> Dict[str, Any]:
+    """Agreement HC90 and confidence-baseline metrics on contradiction events."""
+    us, ys, confs, hcs = [], [], [], []
+    for x in items:
+        e = x["events"]; mask = e["a_contra"]
+        pa = np.asarray(x["prob_a"], float).ravel(); pb = np.asarray(x["prob_b"], float).ravel()
+        joint_conf = np.minimum(np.maximum(pa, 1 - pa), np.maximum(pb, 1 - pb))
+        us.append(np.clip(e["u_a"], 0, 1)); ys.append(e["z_a"])
+        confs.append(1 - joint_conf[mask]); hcs.append(e["hc90_a"][mask])
+    if not us:
+        return {"HC90_CC_count": 0, "HC90_WW_count": 0, "HC90_AUROC_WW": np.nan,
+                "HC90_AUPRC_WW": np.nan, "confidence_AUROC_WW": np.nan,
+                "confidence_AUPRC_WW": np.nan, "confidence_HC90_AUROC_WW": np.nan,
+                "confidence_HC90_AUPRC_WW": np.nan}
+    u, y, confidence_score, hc = map(np.concatenate, (us, ys, confs, hcs))
+    hm = metric(y[hc], u[hc]); cm = metric(y, confidence_score); hcm = metric(y[hc], confidence_score[hc])
+    return {"HC90_CC_count": int(np.sum(hc & ~y)), "HC90_WW_count": int(np.sum(hc & y)),
+            "HC90_AUROC_WW": hm["AUROC"], "HC90_AUPRC_WW": hm["AUPRC"],
+            "confidence_AUROC_WW": cm["AUROC"], "confidence_AUPRC_WW": cm["AUPRC"],
+            "confidence_HC90_AUROC_WW": hcm["AUROC"], "confidence_HC90_AUPRC_WW": hcm["AUPRC"]}
+
+
+def confidence_routing_metrics(items: Sequence[Mapping[str, Any]]) -> Dict[str, Any]:
+    """Route every disagreement pixel by higher Student joint confidence."""
+    total = correct_total = non_tie = correct_non_tie = ties = 0
+    for x in items:
+        e = x["events"]; mask = e["disagree"]
+        pa = np.asarray(x["prob_a"], float).ravel()[mask]; pb = np.asarray(x["prob_b"], float).ravel()[mask]
+        pred_a = e["pa"][mask]; pred_b = e["pb"][mask]; gt = e["gt"][mask]
+        ca = np.maximum(pa, 1 - pa); cb = np.maximum(pb, 1 - pb)
+        choose_a = ca > cb; choose_b = cb > ca; tie = ~(choose_a | choose_b)
+        chosen_correct = np.where(choose_a, pred_a == gt, np.where(choose_b, pred_b == gt, False))
+        total += len(gt); correct_total += int(chosen_correct.sum()); ties += int(tie.sum())
+        non_tie += int((~tie).sum()); correct_non_tie += int((chosen_correct & ~tie).sum())
+    return {"confidence_routing_accuracy_total": safe_div(correct_total, total),
+            "confidence_routing_accuracy_non_tie": safe_div(correct_non_tie, non_tie),
+            "confidence_routing_tie_rate": safe_div(ties, total),
+            "confidence_routing_total_count": total, "confidence_routing_non_tie_count": non_tie}
+
+
 def replay_agreement(items: Sequence[Mapping[str, Any]], a: float, b: float) -> Dict[str, Any]:
     raw_u=[]; z=[]; paopp=[]; pbopp=[]; hc90=[]; hc95=[]; ww_total=[]; cc_total=[]; cc_u=[]; cc_paopp=[]; cc_pbopp=[]; cc_hc90=[]; cc_hc95=[]
     for x in items:
@@ -382,13 +422,13 @@ def plot_reliability(path: Path, y: np.ndarray, p: np.ndarray, xlabel: str) -> N
 
 
 def bootstrap(epoch_payload: Mapping[str, Any], mode: str) -> List[Dict[str, Any]]:
-    ev=epoch_payload["items"]; rng=np.random.default_rng(BOOTSTRAP_SEED+(0 if mode=="strict" else 10000)); names=("raw_AUROC","delta_precision","delta_H","delta_U","delta_reverse") if mode=="strict" else ("d_AUROC","d_advantage","d_net","d_precision"); vals={k:[] for k in names}
+    ev=epoch_payload["items"]; rng=np.random.default_rng(BOOTSTRAP_SEED+(0 if mode=="strict" else 10000)); names=("raw_AUROC","raw_AUPRC","HC90_AUROC","HC90_AUPRC","score_gap","delta_precision","delta_H","delta_U","delta_reverse") if mode=="strict" else ("d_AUROC","d_AUPRC","d_advantage","d_net","d_precision"); vals={k:[] for k in names}
     for _ in range(BOOTSTRAP_REPS):
         chosen=[ev[int(i)] for i in rng.integers(0,len(ev),len(ev))]
         if mode=="strict":
-            chosen_events=[x["events"] for x in chosen]; u,z,_=concat_events(chosen_events,"u_a","z_a"); mm=metric(z,u); vals["raw_AUROC"].append(mm["AUROC"]); ra=replay_agreement(chosen,epoch_payload["a"],epoch_payload["b"]); vals["delta_precision"].append(ra["Delta_Precision_A"]); vals["delta_H"].append(ra["Delta_H_A"]); vals["delta_U"].append(ra["Delta_U_A"]); vals["delta_reverse"].append(ra["cal_reverse_any_WW_contradiction"]-ra["raw_reverse_any_WW_contradiction"])
+            chosen_events=[x["events"] for x in chosen]; u,z,_=concat_events(chosen_events,"u_a","z_a"); mm=metric(z,u); aux=agreement_aux_metrics(chosen); vals["raw_AUROC"].append(mm["AUROC"]); vals["raw_AUPRC"].append(mm["AUPRC"]); vals["HC90_AUROC"].append(aux["HC90_AUROC_WW"]); vals["HC90_AUPRC"].append(aux["HC90_AUPRC_WW"]); vals["score_gap"].append(float(np.mean(u[z])-np.mean(u[~z])) if np.any(z) and np.any(~z) else np.nan); ra=replay_agreement(chosen,epoch_payload["a"],epoch_payload["b"]); vals["delta_precision"].append(ra["Delta_Precision_A"]); vals["delta_H"].append(ra["Delta_H_A"]); vals["delta_U"].append(ra["Delta_U_A"]); vals["delta_reverse"].append(ra["cal_reverse_any_WW_contradiction"]-ra["raw_reverse_any_WW_contradiction"])
         else:
-            chosen_events=[x["events"] for x in chosen]; u,z,_=concat_events(chosen_events,"u_d","z_d"); mm=metric(z,u); vals["d_AUROC"].append(mm["AUROC"]); rd=replay_d(chosen,epoch_payload["a_d"],epoch_payload["b_d"]); vals["d_advantage"].append(rd["directional_advantage"]); vals["d_net"].append(rd["net_gradient_benefit"]); vals["d_precision"].append(rd["gradient_redistribution_precision"])
+            chosen_events=[x["events"] for x in chosen]; u,z,_=concat_events(chosen_events,"u_d","z_d"); mm=metric(z,u); vals["d_AUROC"].append(mm["AUROC"]); vals["d_AUPRC"].append(mm["AUPRC"]); rd=replay_d(chosen,epoch_payload["a_d"],epoch_payload["b_d"]); vals["d_advantage"].append(rd["directional_advantage"]); vals["d_net"].append(rd["net_gradient_benefit"]); vals["d_precision"].append(rd["gradient_redistribution_precision"])
     out=[]
     for k,v in vals.items():
         x=np.asarray(v,float); ok=np.isfinite(x); out.append({"epoch":200,"mode":mode,"metric":k,"estimate":float(np.nanmean(x)) if ok.any() else np.nan,"ci_low":float(np.nanpercentile(x[ok],2.5)) if ok.any() else np.nan,"ci_high":float(np.nanpercentile(x[ok],97.5)) if ok.any() else np.nan,"n_valid_bootstrap":int(ok.sum()),"n_requested_bootstrap":BOOTSTRAP_REPS})
@@ -439,25 +479,31 @@ def run(args: argparse.Namespace) -> None:
             # samples and evaluates only image i.
             cv_a=[]; cv_d=[]
             for hold in range(7):
-                fit=[x["events"] for j,x in enumerate(train_items) if j!=hold]; aa,ba,pa=fit_logistic(fit,"u_a","z_a"); ad,bd,pd=fit_logistic(fit,"u_d","z_d"); e=train_items[hold]["events"]; cv_a.append({"y":e["z_a"],"raw":np.clip(e["u_a"],0,1),"q":apply_cal(aa,ba,e["u_a"]),"base":np.full(len(e["u_a"]),pa),"image_id":train_items[hold]["image_id"]}); cv_d.append({"y":e["z_d"],"raw":np.abs(e["u_d"]),"q":apply_cal(ad,bd,e["u_d"]),"base":np.full(len(e["u_d"]),pd),"image_id":train_items[hold]["image_id"]})
+                fit=[x["events"] for j,x in enumerate(train_items) if j!=hold]; aa,ba,pa=fit_logistic(fit,"u_a","z_a"); ad,bd,pd=fit_logistic(fit,"u_d","z_d"); e=train_items[hold]["events"]; prob_a=np.asarray(train_items[hold]["prob_a"],float).ravel(); prob_b=np.asarray(train_items[hold]["prob_b"],float).ravel(); conf=1-np.minimum(np.maximum(prob_a,1-prob_a),np.maximum(prob_b,1-prob_b))[e["a_contra"]]; cv_a.append({"y":e["z_a"],"raw":np.clip(e["u_a"],0,1),"q":apply_cal(aa,ba,e["u_a"]),"base":np.full(len(e["u_a"]),pa),"confidence":conf,"hc90":e["hc90_a"][e["a_contra"]],"image_id":train_items[hold]["image_id"]}); cv_d.append({"y":e["z_d"],"raw":np.abs(e["u_d"]),"q":apply_cal(ad,bd,e["u_d"]),"base":np.full(len(e["u_d"]),pd),"image_id":train_items[hold]["image_id"]})
                 for domain,arr in (("Agreement",cv_a[-1]),("Disagreement",cv_d[-1])):
                     for predictor in ("constant","raw","calibrated"):
-                        pred_key={"constant":"base","raw":"raw","calibrated":"q"}[predictor]; mm=calibration_metrics(arr["y"],arr[pred_key]); train_metrics.append({"epoch":epoch,"evaluation":"7fold_LOO","domain":domain,"predictor":predictor,"fold":hold,"image_id":arr["image_id"],**mm})
+                        pred_key={"constant":"base","raw":"raw","calibrated":"q"}[predictor]; mm=calibration_metrics(arr["y"],arr[pred_key]); extra={};
+                        if domain=="Agreement":
+                            hm=calibration_metrics(arr["y"][arr["hc90"]],arr[pred_key][arr["hc90"]]); extra={"HC90_count":int(arr["hc90"].sum()),"HC90_AUROC":hm["AUROC"],"HC90_AUPRC":hm["AUPRC"]}
+                        train_metrics.append({"epoch":epoch,"evaluation":"7fold_LOO","domain":domain,"predictor":predictor,"fold":hold,"image_id":arr["image_id"],**mm,**extra})
             aa,ba,pra=fit_logistic([x["events"] for x in train_items],"u_a","z_a"); ad,bd,prd=fit_logistic([x["events"] for x in train_items],"u_d","z_d")
             params.append({"epoch":epoch,"a_A":aa,"b_A":ba,"fit_prevalence_A":pra,"a_D":ad,"b_D":bd,"fit_prevalence_D":prd,"fit_images":7,"reference_memory":"LOO_exclude_self"})
             u,z,_=concat_events([x["events"] for x in train_items],"u_a","z_a"); rawm=metric(z,u); ud,zd,_=concat_events([x["events"] for x in train_items],"u_d","z_d"); rawd=metric(zd,ud)
             raw_bins.extend(bins_rows([x["events"] for x in train_items],"u_a","z_a","Agreement",epoch,"Agreement_train_LOO")); d_bins.extend(bins_rows([x["events"] for x in train_items],"u_d","z_d","D",epoch,"D_train_LOO")); cov_rows.extend(coverage_rows([x["events"] for x in train_items],"u_a","z_a","Agreement",epoch,"Agreement_train_LOO")); d_cov.extend(coverage_rows([x["events"] for x in train_items],"u_d","z_d","D",epoch,"D_train_LOO")); class_rows.extend(class_conditioned([x["events"] for x in train_items],epoch,"Agreement","train_LOO")); d_class.extend(class_conditioned([x["events"] for x in train_items],epoch,"D","train_LOO"))
             for domain,cv in (("Agreement",cv_a),("Disagreement",cv_d)):
                 for predictor in ("constant","raw","calibrated"):
-                    y=np.concatenate([x["y"] for x in cv]); pp=np.concatenate([x[{"constant":"base","raw":"raw","calibrated":"q"}[predictor]] for x in cv]); train_metrics.append({"epoch":epoch,"evaluation":"7fold_LOO_pooled","domain":domain,"predictor":predictor,"fold":"pooled","image_id":"ALL",**calibration_metrics(y,pp)})
+                    y=np.concatenate([x["y"] for x in cv]); pp=np.concatenate([x[{"constant":"base","raw":"raw","calibrated":"q"}[predictor]] for x in cv]); extra={};
+                    if domain=="Agreement":
+                        hh=np.concatenate([x["hc90"] for x in cv]); hm=calibration_metrics(y[hh],pp[hh]); confm=calibration_metrics(y,np.concatenate([x["confidence"] for x in cv])); extra={"HC90_count":int(hh.sum()),"HC90_AUROC":hm["AUROC"],"HC90_AUPRC":hm["AUPRC"],"confidence_AUROC":confm["AUROC"],"confidence_AUPRC":confm["AUPRC"]}
+                    train_metrics.append({"epoch":epoch,"evaluation":"7fold_LOO_pooled","domain":domain,"predictor":predictor,"fold":"pooled","image_id":"ALL",**calibration_metrics(y,pp),**extra})
             d_train_sample_rows.extend({"epoch":epoch,"image_id":s["image_id"],"count":len(s["events"]["u_d"]),"routing_correct":int(s["events"]["z_d"].sum()),"routing_accuracy":float(s["events"]["z_d"].mean()) if len(s["events"]["z_d"]) else np.nan} for s in train_items)
             va=[]
             for x in val_items:
                 e=x["events"]; va.append(e)
                 im={"epoch":epoch,"image_id":x["image_id"],"agreement_contradiction_pixels":int(len(e["u_a"])),"agreement_WW_contradiction":int(e["z_a"].sum()),"agreement_CC_contradiction":int((~e["z_a"]).sum()),"disagreement_non_tie_pixels":int(len(e["u_d"])),"disagreement_reference_correct":int(e["z_d"].sum())}; image_rows.append(im)
             cov_rows.extend(coverage_rows(va,"u_a","z_a","Agreement",epoch,"Agreement_validation")); d_cov.extend(coverage_rows(va,"u_d","z_d","D",epoch,"D_validation")); class_rows.extend(class_conditioned(va,epoch,"Agreement","validation")); d_class.extend(class_conditioned(va,epoch,"D","validation"))
-            vu,vz,_=concat_events(va,"u_a","z_a"); vdu,vdz,_=concat_events(va,"u_d","z_d"); vm=metric(vz,vu); vdm=metric(vdz,vdu); cal_a=np.concatenate([apply_cal(aa,ba,x["u_a"]) for x in va]); cal_d=np.concatenate([apply_cal(ad,bd,x["u_d"]) for x in va]); val_metrics.extend([{**{"epoch":epoch,"domain":"Agreement","predictor":"raw"},**calibration_metrics(vz,np.clip(vu,0,1))},{**{"epoch":epoch,"domain":"Agreement","predictor":"calibrated"},**calibration_metrics(vz,cal_a)},{**{"epoch":epoch,"domain":"Disagreement","predictor":"raw"},**calibration_metrics(vdz,np.clip(vdu,0,1))},{**{"epoch":epoch,"domain":"Disagreement","predictor":"calibrated"},**calibration_metrics(vdz,cal_d)}])
-            ra=replay_agreement(val_items,aa,ba); rd=replay_d(val_items,ad,bd); nww=sum(int(x["events"]["z_a"].sum()) for x in val_items); ncc=sum(int((~x["events"]["z_a"]).sum()) for x in val_items); ncontra=sum(len(x["events"]["u_a"]) for x in val_items); ww_total=sum(int((x["events"]["agree"] & (x["events"]["pa"] != x["events"]["gt"])).sum()) for x in val_items); cc_total=sum(int((x["events"]["agree"] & (x["events"]["pa"] == x["events"]["gt"])).sum()) for x in val_items); val_agree.append({"epoch":epoch,"WW_contradiction_recall":safe_div(nww,ww_total),"CC_false_contradiction_rate":safe_div(ncc,cc_total),"WW_contradiction_precision":safe_div(nww,ncontra),"WW_contradiction_count":nww,"CC_contradiction_count":ncc,"WW_total_agreement_count":ww_total,"CC_total_agreement_count":cc_total,"contradiction_events":ncontra,**ra,"raw_AUROC":vm["AUROC"],"raw_AUPRC":vm["AUPRC"]}); val_d.append({"epoch":epoch,"raw_AUROC":vdm["AUROC"],"raw_AUPRC":vdm["AUPRC"],**rd}); temporal.append({"epoch":epoch,"train_raw_A_AUROC":rawm["AUROC"],"train_raw_D_AUROC":rawd["AUROC"],"validation_raw_A_AUROC":vm["AUROC"],"validation_raw_D_AUROC":vdm["AUROC"],"validation_A_precision_raw":ra["Precision_raw"],"validation_A_precision_cal":ra["Precision_cal"],"validation_U_A_raw":ra["U_A_raw"],"validation_U_A_cal":ra["U_A_cal"],"validation_H_A_raw":ra["H_A_raw"],"validation_H_A_cal":ra["H_A_cal"],"validation_D_routing_accuracy":float(vdz.mean()) if len(vdz) else np.nan,**{("train_LOO_q_A_"+k):v for k,v in calibration_metrics(np.concatenate([x["y"] for x in cv_a]),np.concatenate([x["q"] for x in cv_a])).items() if k in ("Brier","NLL","ECE")},**{("validation_q_D_"+k):v for k,v in calibration_metrics(vdz,cal_d).items() if k in ("Brier","NLL","ECE")}})
+            vu,vz,_=concat_events(va,"u_a","z_a"); vdu,vdz,_=concat_events(va,"u_d","z_d"); vm=metric(vz,vu); vdm=metric(vdz,vdu); cal_a=np.concatenate([apply_cal(aa,ba,x["u_a"]) for x in va]); cal_d=np.concatenate([apply_cal(ad,bd,x["u_d"]) for x in va]); aux_a=agreement_aux_metrics(val_items); conf_d=confidence_routing_metrics(val_items); val_metrics.extend([{**{"epoch":epoch,"domain":"Agreement","predictor":"raw"},**calibration_metrics(vz,np.clip(vu,0,1)),**aux_a},{**{"epoch":epoch,"domain":"Agreement","predictor":"calibrated"},**calibration_metrics(vz,cal_a),**aux_a},{**{"epoch":epoch,"domain":"Disagreement","predictor":"raw"},**calibration_metrics(vdz,np.clip(vdu,0,1)),**conf_d},{**{"epoch":epoch,"domain":"Disagreement","predictor":"calibrated"},**calibration_metrics(vdz,cal_d),**conf_d}])
+            ra=replay_agreement(val_items,aa,ba); rd=replay_d(val_items,ad,bd); nww=sum(int(x["events"]["z_a"].sum()) for x in val_items); ncc=sum(int((~x["events"]["z_a"]).sum()) for x in val_items); ncontra=sum(len(x["events"]["u_a"]) for x in val_items); ww_total=sum(int((x["events"]["agree"] & (x["events"]["pa"] != x["events"]["gt"])).sum()) for x in val_items); cc_total=sum(int((x["events"]["agree"] & (x["events"]["pa"] == x["events"]["gt"])).sum()) for x in val_items); val_agree.append({"epoch":epoch,"WW_contradiction_recall":safe_div(nww,ww_total),"CC_false_contradiction_rate":safe_div(ncc,cc_total),"WW_contradiction_precision":safe_div(nww,ncontra),"WW_contradiction_count":nww,"CC_contradiction_count":ncc,"WW_total_agreement_count":ww_total,"CC_total_agreement_count":cc_total,"contradiction_events":ncontra,**ra,**aux_a,"raw_AUROC":vm["AUROC"],"raw_AUPRC":vm["AUPRC"]}); val_d.append({"epoch":epoch,"raw_AUROC":vdm["AUROC"],"raw_AUPRC":vdm["AUPRC"],**rd,**conf_d}); temporal.append({"epoch":epoch,"train_raw_A_AUROC":rawm["AUROC"],"train_raw_D_AUROC":rawd["AUROC"],"validation_raw_A_AUROC":vm["AUROC"],"validation_raw_D_AUROC":vdm["AUROC"],"validation_A_precision_raw":ra["Precision_raw"],"validation_A_precision_cal":ra["Precision_cal"],"validation_U_A_raw":ra["U_A_raw"],"validation_U_A_cal":ra["U_A_cal"],"validation_H_A_raw":ra["H_A_raw"],"validation_H_A_cal":ra["H_A_cal"],"validation_D_routing_accuracy":float(vdz.mean()) if len(vdz) else np.nan,"validation_D_confidence_routing_accuracy":conf_d["confidence_routing_accuracy_total"],"validation_A_HC90_AUROC":aux_a["HC90_AUROC_WW"],"validation_A_HC90_AUPRC":aux_a["HC90_AUPRC_WW"],"validation_A_confidence_AUROC":aux_a["confidence_AUROC_WW"],"validation_A_confidence_AUPRC":aux_a["confidence_AUPRC_WW"],**{("train_LOO_q_A_"+k):v for k,v in calibration_metrics(np.concatenate([x["y"] for x in cv_a]),np.concatenate([x["q"] for x in cv_a])).items() if k in ("Brier","NLL","ECE")},**{("validation_q_D_"+k):v for k,v in calibration_metrics(vdz,cal_d).items() if k in ("Brier","NLL","ECE")}})
             summary.append({"epoch":epoch,"loo_train_agreement_samples":len(u),"loo_train_D_samples":len(ud),"validation_agreement_samples":len(vu),"validation_D_samples":len(vdu),"train_raw_AUROC":rawm["AUROC"],"train_raw_AUPRC":rawm["AUPRC"],"train_raw_D_AUROC":rawd["AUROC"],"train_raw_D_AUPRC":rawd["AUPRC"],"validation_raw_AUROC":vm["AUROC"],"validation_raw_AUPRC":vm["AUPRC"],"validation_cal_AUROC":metric(vz,cal_a)["AUROC"],"validation_cal_AUPRC":metric(vz,cal_a)["AUPRC"],"validation_raw_D_AUROC":vdm["AUROC"],"validation_raw_D_AUPRC":vdm["AUPRC"],"validation_cal_D_AUROC":metric(vdz,cal_d)["AUROC"],"validation_cal_D_AUPRC":metric(vdz,cal_d)["AUPRC"],"validation_A_precision_raw":ra["Precision_raw"],"validation_A_precision_cal":ra["Precision_cal"],"validation_D_advantage":rd["directional_advantage"],"validation_D_net_gradient_benefit":rd["net_gradient_benefit"],"validation_D_gradient_precision":rd["gradient_redistribution_precision"],"time_seconds":time.time()-t0})
             print("epoch=%03d train_LOO_A=%.4f train_LOO_D=%.4f val_A=%.4f val_D=%.4f A_precision_raw/cal=%.4f/%.4f D_advantage=%.4f"%(epoch,rawm["AUROC"],rawd["AUROC"],vm["AUROC"],vdm["AUROC"],ra["Precision_raw"],ra["Precision_cal"],rd["directional_advantage"]))
             if epoch==200: boot_payloads["strict"]={"items":val_items,"a":aa,"b":ba}; boot_payloads["d"]={"items":val_items,"a_d":ad,"b_d":bd}
