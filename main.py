@@ -61,8 +61,9 @@ UNI_WEIGHTS_DEFAULT = (
 UNI_CONFIG_DEFAULT = str(Path(UNI_WEIGHTS_DEFAULT).with_name('config.json'))
 UNI_PATCH_SIZE = 16
 DEFAULT_REFERENCE_RESOLUTION = 224
-SUPPORTED_REFERENCE_RESOLUTIONS = (224, 320)
-UNI_SIZE = (DEFAULT_REFERENCE_RESOLUTION, DEFAULT_REFERENCE_RESOLUTION)
+# UNI's original ViT-L/16 input contract is fixed at 224x224 (14x14 patches).
+SUPPORTED_REFERENCE_RESOLUTIONS = (DEFAULT_REFERENCE_RESOLUTION,)
+UNI_SIZE = (224, 224)
 UNI_MEAN = (0.485, 0.456, 0.406)
 UNI_STD = (0.229, 0.224, 0.225)
 REFERENCE_MEMORY_ANCHOR_FG = 0.90
@@ -967,9 +968,6 @@ def _load_reference(args, cfg, logger, manifest_dir=None, use_manifests=False):
     if reference_resolution == 224 and str(args.dataset_name).strip().lower() == 'glas' and args.labeled_ratio == 10:
         assert memory_fg_count == 391, memory_fg_count
         assert memory_bg_count == 294, memory_bg_count
-    if reference_resolution == 320 and str(args.dataset_name).strip().lower() == 'glas' and args.labeled_ratio == 10:
-        assert memory_fg_count == 448, memory_fg_count
-        assert memory_bg_count == 394, memory_bg_count
     assert memory_fg_np.shape[1] == 1024, memory_fg_np.shape
     assert memory_bg_np.shape[1] == 1024, memory_bg_np.shape
     assert feature_dim == 1024, feature_dim
@@ -3265,7 +3263,10 @@ def parse_args():
         default=None,
         help='默认按标注比例保存到 seg_pred/semi_fdcl_paper_10 或 20',
     )
-    parser.add_argument('-pd', '--path_dataset', default='datasets/GLaS')
+    parser.add_argument(
+        '-pd', '--path_dataset', default=None,
+        help='dataset root; defaults to the selected dataset config path',
+    )
     parser.add_argument(
         '--dataset_name',
         default='GlaS',
@@ -3444,6 +3445,8 @@ def main():
     args = parse_args()
     init_seeds(args.sd)
     cfg = dataset_cfg(args.dataset_name)
+    if args.path_dataset is None:
+        args.path_dataset = cfg['PATH_DATASET']
     datasets, manifest_dir, use_manifests = build_datasets(args, cfg)
 
     if args.check_data:

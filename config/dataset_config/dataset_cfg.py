@@ -34,7 +34,7 @@ def dataset_cfg(dataet_name):
             },
         'MoNuSeg':
             {
-                'PATH_DATASET': 'dataset/MoNuSeg',
+                'PATH_DATASET': 'datasets/MoNuSeg',
                 'PATH_TRAINED_MODEL': 'checkpoints',
                 'PATH_SEG_RESULT': 'seg_pred',
                 'IN_CHANNELS': 3,
