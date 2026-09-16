@@ -69,28 +69,14 @@ UNI_STD = (0.229, 0.224, 0.225)
 REFERENCE_MEMORY_ANCHOR_FG = 0.90
 REFERENCE_MEMORY_ANCHOR_BG = 0.10
 REFERENCE_MEMORY_PER_IMAGE_PER_CLASS = 64
+# Cell nuclei are much smaller than the gland regions in GLaS/CRAG.  If no
+# UNI patch reaches an anchor threshold, retain the most foreground/background
+# dominated patches instead of producing an empty class memory.
+REFERENCE_MEMORY_FALLBACK_FRACTION = 0.10
 REFERENCE_MEMORY_SEED = 2026
 EXPECTED_UNI_SHA256 = (
     '56ef09b44a25dc5c7eedc55551b3d47bcd17659a7a33837cf9abc9ec4e2ffb40'
 )
-
-
-def _reference_memory_dataset_slug(dataset_name):
-    """Return a filesystem-safe, stable dataset identifier."""
-    slug = ''.join(
-        character if character.isalnum() else '_'
-        for character in str(dataset_name).strip().lower()
-    ).strip('_')
-    return slug or 'dataset'
-
-
-def _default_reference_memory_path(dataset_name, labeled_ratio, seed):
-    """Resolve the default dataset-isolated memory path under checkpoints."""
-    root = Path(__file__).resolve().parent / 'checkpoints'
-    slug = _reference_memory_dataset_slug(dataset_name)
-    return root / (
-        '{}_labeled{}_seed{}'.format(slug, int(labeled_ratio), int(seed))
-    ) / 'reference_memory.npz'
 
 
 def _reference_grid(reference_resolution):
@@ -833,6 +819,7 @@ def _build_reference_memory(
     rng = np.random.default_rng(REFERENCE_MEMORY_SEED)
     token_grid = None
     feature_dim = None
+    fallback_count = 0
     with torch.inference_mode():
         for batch in loader:
             rgb = _reconstruct_rgb(
@@ -847,11 +834,27 @@ def _build_reference_memory(
             token_cpu = tokens.detach().cpu().numpy()
             occupancy_cpu = occupancy.detach().cpu().numpy()
             for index in range(len(batch['ID'])):
-                for cls, threshold, relation in (
-                    (1, REFERENCE_MEMORY_ANCHOR_FG, lambda value: value >= threshold),
-                    (0, REFERENCE_MEMORY_ANCHOR_BG, lambda value: value <= threshold),
+                for cls, threshold in (
+                    (1, REFERENCE_MEMORY_ANCHOR_FG),
+                    (0, REFERENCE_MEMORY_ANCHOR_BG),
                 ):
-                    candidates = np.flatnonzero(relation(occupancy_cpu[index]))
+                    occupancy_row = occupancy_cpu[index]
+                    if cls == 1:
+                        candidates = np.flatnonzero(occupancy_row >= threshold)
+                        order = np.argsort(-occupancy_row, kind='stable')
+                    else:
+                        candidates = np.flatnonzero(occupancy_row <= threshold)
+                        order = np.argsort(occupancy_row, kind='stable')
+                    if not len(candidates):
+                        fallback_count += 1
+                        fallback_size = max(
+                            1,
+                            min(
+                                REFERENCE_MEMORY_PER_IMAGE_PER_CLASS,
+                                int(math.ceil(len(occupancy_row) * REFERENCE_MEMORY_FALLBACK_FRACTION)),
+                            ),
+                        )
+                        candidates = order[:fallback_size]
                     chosen = candidates
                     if len(candidates) > REFERENCE_MEMORY_PER_IMAGE_PER_CLASS:
                         chosen = np.sort(
@@ -892,6 +895,8 @@ def _build_reference_memory(
         anchor_fg=np.array(REFERENCE_MEMORY_ANCHOR_FG),
         anchor_bg=np.array(REFERENCE_MEMORY_ANCHOR_BG),
         memory_per_image_class=np.array(REFERENCE_MEMORY_PER_IMAGE_PER_CLASS),
+        anchor_fallback_fraction=np.array(REFERENCE_MEMORY_FALLBACK_FRACTION),
+        anchor_fallback_count=np.array(fallback_count),
         source_labeled_ratio=np.array(args.labeled_ratio),
         seed=np.array(REFERENCE_MEMORY_SEED),
         source_dataset=np.array(str(args.dataset_name)),
@@ -899,7 +904,7 @@ def _build_reference_memory(
     )
     logger.info(
         'Reference memory built before training | source=labeled_%s | fg=%d bg=%d '
-        '| cap=%d resolution=%d grid=%dx%d dim=%d | path=%s',
+        '| cap=%d resolution=%d grid=%dx%d dim=%d fallback=%d | path=%s',
         args.labeled_ratio,
         memory_fg.shape[0],
         memory_bg.shape[0],
@@ -908,6 +913,7 @@ def _build_reference_memory(
         token_grid,
         token_grid,
         feature_dim,
+        fallback_count,
         memory_path,
     )
 
@@ -2595,7 +2601,11 @@ def train_model(
             path for path in Path(trained_models_path).rglob('*')
             if path.is_file()
         ]
-        if existing_training_artifacts and not args.resume:
+        completed_run = (
+            Path(trained_models_path, 'state_aware_training_complete.json').is_file()
+            or any(Path(trained_models_path, 'milestones').glob('epoch_*.pth'))
+        )
+        if existing_training_artifacts and completed_run and not args.resume:
             raise RuntimeError(
                 'Reference formal output is not empty; refusing resume/overwrite: {}'.format(
                     trained_models_path
@@ -2603,6 +2613,10 @@ def train_model(
             )
         if args.resume and not os.path.isfile(os.path.join(trained_models_path, 'resume_checkpoint.pth')):
             raise RuntimeError('Requested resume but resume_checkpoint.pth is missing: {}'.format(trained_models_path))
+    if _is_reference_mode(args.cps_mode) and args.uni_reference_memory is None:
+        args.uni_reference_memory = str(
+            Path(trained_models_path) / 'reference_memory.npz'
+        )
     logger, metrics_path, diagnostic_logger = create_run_outputs(
         args, trained_models_path
     )
@@ -3345,8 +3359,7 @@ def parse_args():
         default=None,
         help=(
             'reference_memory.npz used by UNI reference modes; when omitted, '
-            'checkpoints/<dataset>_labeled<ratio>_seed<seed>/reference_memory.npz '
-            'is selected automatically'
+            'it is created inside the current experiment checkpoint directory'
         ),
     )
     parser.add_argument(
@@ -3392,12 +3405,6 @@ def parse_args():
     parser.add_argument('-n', '--network', default='unet')
 
     args = parser.parse_args()
-    if args.uni_reference_memory is None:
-        args.uni_reference_memory = str(
-            _default_reference_memory_path(
-                args.dataset_name, args.labeled_ratio, args.sd
-            )
-        )
     if args.milestone_interval < 0:
         parser.error('--milestone_interval must be non-negative')
     if args.best_save_interval < 0:
