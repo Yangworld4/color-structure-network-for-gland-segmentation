@@ -46,6 +46,20 @@ def dataset_cfg(dataet_name):
                     [255, 255, 255],
                 ]).flatten())
             },
+        'RINGS':
+            {
+                'PATH_DATASET': 'datasets/RINGS',
+                'PATH_TRAINED_MODEL': 'checkpoints',
+                'PATH_SEG_RESULT': 'seg_pred',
+                'IN_CHANNELS': 3,
+                'NUM_CLASSES': 2,
+                'MEAN': [0.712235771, 0.528842835, 0.647660459],
+                'STD': [0.188671834, 0.224334177, 0.179181517],
+                'PALETTE': list(np.array([
+                    [0, 0, 0],
+                    [255, 255, 255],
+                ]).flatten())
+            },
     }
 
     return config[dataet_name]

@@ -3,11 +3,12 @@
 With ``--threshold auto``, the threshold is selected on the validation
 manifest and then applied unchanged to the selected evaluation split.
 
-python test.py --dataset_name CRAG \
+python test.py \
+--dataset_name GlaS \
 --split test \
---checkpoint /data/mission/models/Exp/DUAL/checkpoints/semi_20_seed_24_rgbstain_uni_reference_state_aware/CRAG/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5.0-w=20-31-122-image-input_mode=rgb_stain-cps_mode=uni_reference_state_aware/best_result2_Jc_0.8196.pth  \
+--checkpoint /data/mission/models/Exp/DUAL/checkpoints/semi_10_seed_24_rgbrgb_state_aware/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5.0-w=20-7-61-image-input_mode=rgb_rgb-cps_mode=state_aware/best_result2_Jc_0.8054.pth  \
 --input_view auto \
---input_mode rgb_stain \
+--input_mode rgb_rgb \
 --threshold auto
 
 """
@@ -32,7 +33,9 @@ from dataload.dataset_2d import imagefloder_itn
 from models.getnetwork import get_network
 
 
-KNOWN_DATASETS = {'glas': 'GlaS', 'crag': 'CRAG', 'monuseg': 'MoNuSeg'}
+KNOWN_DATASETS = {
+    'glas': 'GlaS', 'crag': 'CRAG', 'monuseg': 'MoNuSeg', 'rings': 'RINGS'
+}
 
 
 def infer_dataset_from_path(path):
@@ -235,7 +238,7 @@ def select_best_threshold(model, data_loader, device, input_view):
 def parse_args():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--dataset_name', default='auto',
-                        choices=['auto', 'GlaS', 'CRAG', 'MoNuSeg'],
+                        choices=['auto', 'GlaS', 'CRAG', 'MoNuSeg', 'RINGS'],
                         help='infer from an explicit checkpoint or the available checkpoint directory')
     parser.add_argument('--path_dataset', default=None)
     parser.add_argument(
@@ -319,8 +322,6 @@ def main():
             )
         )
     input_view = resolve_input_view(args.input_view, checkpoint_path)
-    if input_view == 'student2' and args.input_mode not in ('rgb_stain', 'rgb_hed'):
-        raise ValueError('--input_view student2 requires --input_mode rgb_stain or rgb_hed')
 
     dataset_root = Path(args.path_dataset or cfg['PATH_DATASET'])
     dataset_path_name = infer_dataset_from_path(dataset_root)

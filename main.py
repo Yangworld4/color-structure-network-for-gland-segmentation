@@ -36,6 +36,21 @@ from config.train_test_config.train_test_config import (
     save_training_milestone,
     save_val_best_2d,
 )
+from config.uni_config.uni_config import (
+    DEFAULT_REFERENCE_RESOLUTION,
+    EXPECTED_UNI_SHA256,
+    REFERENCE_MEMORY_ANCHOR_BG,
+    REFERENCE_MEMORY_ANCHOR_FG,
+    REFERENCE_MEMORY_FALLBACK_FRACTION,
+    REFERENCE_MEMORY_PER_IMAGE_PER_CLASS,
+    REFERENCE_MEMORY_SEED,
+    SUPPORTED_REFERENCE_RESOLUTIONS,
+    UNI_MEAN,
+    UNI_PATCH_SIZE,
+    UNI_STD,
+    UNI_CONFIG_DEFAULT,
+    UNI_WEIGHTS_DEFAULT,
+)
 from config.warmup_config.warmup import GradualWarmupScheduler
 from dataload.dataset_2d import imagefloder_itn
 from loss.loss_function import DiceLoss
@@ -53,30 +68,6 @@ METRIC_FIELDS = [
     'pseudo_dice_student1', 'pseudo_dice_student2',
     'pseudo_jaccard_student1', 'pseudo_jaccard_student2',
 ]
-
-UNI_WEIGHTS_DEFAULT = (
-    '/home/yangorange/.cache/huggingface/hub/models--MahmoodLab--UNI/'
-    'snapshots/b55a5ec6cade1a39edfe6534189a9b8ca7a022f0/pytorch_model.bin'
-)
-UNI_CONFIG_DEFAULT = str(Path(UNI_WEIGHTS_DEFAULT).with_name('config.json'))
-UNI_PATCH_SIZE = 16
-DEFAULT_REFERENCE_RESOLUTION = 224
-# UNI's original ViT-L/16 input contract is fixed at 224x224 (14x14 patches).
-SUPPORTED_REFERENCE_RESOLUTIONS = (DEFAULT_REFERENCE_RESOLUTION,)
-UNI_SIZE = (224, 224)
-UNI_MEAN = (0.485, 0.456, 0.406)
-UNI_STD = (0.229, 0.224, 0.225)
-REFERENCE_MEMORY_ANCHOR_FG = 0.90
-REFERENCE_MEMORY_ANCHOR_BG = 0.10
-REFERENCE_MEMORY_PER_IMAGE_PER_CLASS = 64
-# Cell nuclei are much smaller than the gland regions in GLaS/CRAG.  If no
-# UNI patch reaches an anchor threshold, retain the most foreground/background
-# dominated patches instead of producing an empty class memory.
-REFERENCE_MEMORY_FALLBACK_FRACTION = 0.10
-REFERENCE_MEMORY_SEED = 2026
-EXPECTED_UNI_SHA256 = (
-    '56ef09b44a25dc5c7eedc55551b3d47bcd17659a7a33837cf9abc9ec4e2ffb40'
-)
 
 
 def _reference_grid(reference_resolution):
@@ -223,6 +214,11 @@ def get_training_views(
             )
         )
     return student1, student2
+
+
+def _get_rgb_view(batch: Mapping[str, torch.Tensor]) -> torch.Tensor:
+    """Return the normalized RGB view exposed by any supported input mode."""
+    return batch.get('image_rgb', batch['image'])
 
 
 def compute_supervised_loss(
@@ -823,7 +819,7 @@ def _build_reference_memory(
     with torch.inference_mode():
         for batch in loader:
             rgb = _reconstruct_rgb(
-                batch['image_rgb'].cuda(non_blocking=True), cfg
+                _get_rgb_view(batch).cuda(non_blocking=True), cfg
             )
             gt = batch['mask'].cuda(non_blocking=True).float().unsqueeze(1)
             tokens = _uni_dense_features(uni, rgb, reference_resolution)
@@ -2155,7 +2151,7 @@ def _build_validation_reference_cache(dataloader, context, cfg, args, cache_dir)
     ids = []
     with torch.inference_mode():
         for batch in dataloader:
-            rgb = _reconstruct_rgb(batch['image_rgb'].cuda(non_blocking=True), cfg)
+            rgb = _reconstruct_rgb(_get_rgb_view(batch).cuda(non_blocking=True), cfg)
             tokens = _uni_dense_features(context['uni'], rgb, resolution)
             flat = tokens.reshape(-1, tokens.shape[-1])
             score_fg = _topk_scores(flat, context['memory_fg'], args.uni_k).reshape(-1, grid, grid)
@@ -2277,7 +2273,7 @@ def _state_validation_diagnostic(
             valid = gt.ne(-1)
             if reference_cache is None:
                 targets = _build_state_aware_reference_targets(
-                    logits_a, logits_b, batch['image_rgb'].cuda(non_blocking=True),
+                    logits_a, logits_b, _get_rgb_view(batch).cuda(non_blocking=True),
                     context, cfg, args,
                 )
             else:
@@ -3284,7 +3280,7 @@ def parse_args():
     parser.add_argument(
         '--dataset_name',
         default='GlaS',
-        choices=['GlaS', 'CRAG', 'MoNuSeg'],
+        choices=['GlaS', 'CRAG', 'MoNuSeg', 'RINGS'],
     )
     parser.add_argument('--input1', default='image')
     parser.add_argument(
