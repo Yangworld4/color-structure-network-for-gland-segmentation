@@ -52,10 +52,10 @@ echo "=== 所有实验已全部完成！ ==="
 
 
 python -u main.py \
-    --dataset_name GlaS \
-    --path_dataset datasets/GLaS \
-    --path_trained_models checkpoints/semi_10_seed_24_rgbrgb_state_aware \
-    --path_seg_results seg_pred/semi_10_seed_24_rgbrgb_state_aware \
+    --dataset_name RINGS \
+    --path_dataset datasets/RINGS \
+    --path_trained_models checkpoints/semi_10_seed_24_rgb \
+    --path_seg_results seg_pred/semi_10_seed_24_rgb \
     --labeled_ratio 10 \
     --sd 24 \
     --batch_size 2 \
@@ -67,9 +67,7 @@ python -u main.py \
     --gamma 0.5 \
     --unsup_weight 5.0 \
     --momentum 0.9 \
-    --uni_build_reference_memory \
-    --cps_mode state_aware \
-    --uni_k 5 
+    --cps_mode standard 
 
 
 python -u main.py \
@@ -78,7 +76,7 @@ python -u main.py \
     --path_trained_models checkpoints/semi_10_seed_4_rgbstain_state_aware_ce \
     --path_seg_results seg_pred/semi_10_seed_4_rgbstain_state_aware_ce \
     --labeled_ratio 10 \
-    --sd 4 \
+    --sd 24 \
     --batch_size 2 \
     --num_epochs 200 \
     --network unet \

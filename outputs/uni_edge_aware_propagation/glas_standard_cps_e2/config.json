@@ -1,0 +1,34 @@
+{
+  "task": "closed E2 edge-aware coarse-to-fine propagation diagnostic",
+  "methods": [
+    "bilinear",
+    "guided",
+    "jbu"
+  ],
+  "e1_source": "/data/mission/models/Exp/DUAL/outputs/uni_pixel_degradation/glas_standard_cps_uni_token_to_pixel",
+  "standard_cps_source": "checkpoints/semi_10_seed_24_rgbstain/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image-input_mode=rgb_stain/milestones",
+  "uni_memory_source": "checkpoints/glas_labeled10_seed24/reference_memory.npz",
+  "epochs": [
+    40,
+    80,
+    120,
+    160,
+    200
+  ],
+  "validation_image_count": 17,
+  "native_grid": "14x14",
+  "target_resolution": "256x256",
+  "rgb_range": "[0,1]",
+  "projection_source": "main.py::_build_reference_weights",
+  "bilinear_mode": "bilinear",
+  "align_corners": false,
+  "guided_radius": 8,
+  "guided_eps": 0.001,
+  "jbu_radius": 2,
+  "jbu_sigma_spatial": 32.0,
+  "jbu_sigma_range": 0.12,
+  "gt_used_for_propagation": false,
+  "baseline_reproduced": true,
+  "memory_leakage_detected": false,
+  "cps_prediction_source": "standard CPS validation predictions loaded through E1 frozen records"
+}

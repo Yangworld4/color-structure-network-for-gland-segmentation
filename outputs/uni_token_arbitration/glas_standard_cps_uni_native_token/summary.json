@@ -1,0 +1,42 @@
+{
+  "native_token_grid": "14x14",
+  "feature_dim": 1024,
+  "num_eval_images": 17,
+  "num_pure_tokens": 12035,
+  "num_mixed_tokens": 4625,
+  "uni_pure_token_accuracy": 0.9268799335272123,
+  "uni_pure_token_balanced_accuracy": 0.9293825804070351,
+  "cc_arbitration_accuracy": 0.9494938954398414,
+  "cc_contradiction_rate": 0.05050610456015858,
+  "ww_arbitration_accuracy": 0.8192207792207792,
+  "hc90ww_arbitration_accuracy": 0.7887067395264117,
+  "shared_fp_arbitration_accuracy": 0.8308874912648497,
+  "shared_fn_arbitration_accuracy": 0.7854251012145749,
+  "mean_D_CC": -0.20355500034396265,
+  "mean_D_WW": 0.09958663201177274,
+  "mean_D_HC90WW": 0.10336722737561592,
+  "ww_D_positive_rate": 0.8192207792207792,
+  "hc90ww_D_positive_rate": 0.7887067395264117,
+  "mixed_margin_occupancy_pearson": 0.7318149988679443,
+  "mixed_margin_occupancy_spearman": 0.7520178368644324,
+  "memory_leakage_detected": false,
+  "memory_leakage_ids": [],
+  "cps_prediction_source": "frozen existing CPS current-weight milestones; validation inference",
+  "image_macro_bootstrap_1000": {
+    "cc": [
+      0.9510019686114963,
+      0.9309606210833956,
+      0.9683317905280955
+    ],
+    "ww": [
+      0.8127428784159315,
+      0.7623375374512262,
+      0.8632603105735492
+    ],
+    "hc90ww": [
+      0.7811113062869074,
+      0.7038348703862489,
+      0.8523036800490703
+    ]
+  }
+}

@@ -1,0 +1,93 @@
+{
+  "task": "closed UNI native token-level arbitration diagnostic",
+  "dataset": "GlaS",
+  "evaluation_manifest": "/data/mission/models/Exp/DUAL/datasets/GLaS/manifests/paper_seed_2026/validation.csv",
+  "evaluation_image_ids": [
+    "train_14",
+    "train_17",
+    "train_18",
+    "train_21",
+    "train_24",
+    "train_26",
+    "train_29",
+    "train_32",
+    "train_38",
+    "train_57",
+    "train_58",
+    "train_6",
+    "train_60",
+    "train_61",
+    "train_71",
+    "train_80",
+    "train_85"
+  ],
+  "memory_path": "/data/mission/models/Exp/DUAL/checkpoints/glas_labeled10_seed24/reference_memory.npz",
+  "memory_sha256": "8a531f8e4e49ea54e6230a316ca7e525804a74f801b2c907632323582bc8011c",
+  "memory_source_manifest_inferred": "/data/mission/models/Exp/DUAL/datasets/GLaS/manifests/paper_seed_2026/labeled_10.csv",
+  "memory_metadata": {
+    "memory_fg_count": 391,
+    "memory_bg_count": 294,
+    "feature_dim": 1024,
+    "token_grid": 14,
+    "top_k": 5,
+    "anchor_fg": 0.9,
+    "anchor_bg": 0.1,
+    "memory_per_image_class": 64,
+    "source_labeled_ratio": 10,
+    "seed": 2026,
+    "source_dataset": "GlaS"
+  },
+  "memory_leakage_detected": false,
+  "invalid_for_scientific_conclusion": false,
+  "cps_prediction_source": "frozen existing CPS current-weight milestones; validation inference",
+  "checkpoints": {
+    "40": {
+      "path": "/data/mission/models/Exp/DUAL/checkpoints/semi_10_seed_24_rgbstain_uni_reference_state_aware/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5.0-w=20-7-61-image-input_mode=rgb_stain-cps_mode=uni_reference_state_aware/milestones/epoch_040.pth",
+      "sha256": "072c642ede26cb6403dd35237a4b3b03196f4f897b5de96835ec4b72e3ee07b4",
+      "input_mode": "rgb_stain",
+      "selection_split": "validation"
+    },
+    "80": {
+      "path": "/data/mission/models/Exp/DUAL/checkpoints/semi_10_seed_24_rgbstain_uni_reference_state_aware/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5.0-w=20-7-61-image-input_mode=rgb_stain-cps_mode=uni_reference_state_aware/milestones/epoch_080.pth",
+      "sha256": "00f42c232052fd494c352f92bd2c67551bbf1026854fa9ad4adc15cce8b4e5c9",
+      "input_mode": "rgb_stain",
+      "selection_split": "validation"
+    },
+    "120": {
+      "path": "/data/mission/models/Exp/DUAL/checkpoints/semi_10_seed_24_rgbstain_uni_reference_state_aware/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5.0-w=20-7-61-image-input_mode=rgb_stain-cps_mode=uni_reference_state_aware/milestones/epoch_120.pth",
+      "sha256": "18a2e5627e8f59e658ac21c34d1835d452d1a5dfeea17dc251639953e1891517",
+      "input_mode": "rgb_stain",
+      "selection_split": "validation"
+    },
+    "160": {
+      "path": "/data/mission/models/Exp/DUAL/checkpoints/semi_10_seed_24_rgbstain_uni_reference_state_aware/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5.0-w=20-7-61-image-input_mode=rgb_stain-cps_mode=uni_reference_state_aware/milestones/epoch_160.pth",
+      "sha256": "37d960c22b0098d5d39ae666c5e3990f08e5b178b478c772efc6fcea7b670129",
+      "input_mode": "rgb_stain",
+      "selection_split": "validation"
+    },
+    "200": {
+      "path": "/data/mission/models/Exp/DUAL/checkpoints/semi_10_seed_24_rgbstain_uni_reference_state_aware/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5.0-w=20-7-61-image-input_mode=rgb_stain-cps_mode=uni_reference_state_aware/milestones/epoch_200.pth",
+      "sha256": "2f661202d04b0db7adeb8720d90268117b4f308d8d35e55b13a5d63dc380898c",
+      "input_mode": "rgb_stain",
+      "selection_split": "validation"
+    }
+  },
+  "uni": {
+    "weights": "/home/yangorange/.cache/huggingface/hub/models--MahmoodLab--UNI/blobs/56ef09b44a25dc5c7eedc55551b3d47bcd17659a7a33837cf9abc9ec4e2ffb40",
+    "weights_sha256": "56ef09b44a25dc5c7eedc55551b3d47bcd17659a7a33837cf9abc9ec4e2ffb40",
+    "architecture": "vit_large_patch16_224",
+    "input_resolution": 224,
+    "patch_size": 16,
+    "native_grid": "14x14",
+    "feature_dim": 1024
+  },
+  "gt_mapping": {
+    "fg_occ_threshold": 0.9,
+    "bg_occ_threshold": 0.1,
+    "preprocess": "evaluation resize 256 then nearest resize to UNI input resolution; adaptive_avg_pool2d to native grid"
+  },
+  "similarity": "exact project main._topk_scores: normalized query @ normalized memory.T then mean largest K",
+  "top_k": 5,
+  "margin": "S_FG - S_BG",
+  "forbidden_operations": "no score/margin interpolation; no R; no training; no CPS modification"
+}

@@ -227,10 +227,13 @@ def compute_supervised_loss(
     prediction: torch.Tensor,
     target: torch.Tensor,
 ) -> torch.Tensor:
-    return 0.5 * (
-        ce_loss(prediction, target.long())
-        + dice_loss(prediction, target)
-    )
+    # return 0.5 * (
+    #     ce_loss(prediction, target.long())
+    #     + dice_loss(prediction, target)
+    # )
+    return dice_loss(prediction, target)
+        
+    
 
 
 def _pixel_entropy(scores: torch.Tensor) -> torch.Tensor:
@@ -377,7 +380,7 @@ def _normalization_keys(input_name):
 
 
 def build_datasets(args, cfg):
-    """Build training, validation, and test datasets."""
+    """Build training and validation datasets; test is deferred out of training."""
     manifest_dir = args.manifest_dir or os.path.join(
         args.path_dataset, 'manifests', 'paper_seed_2026'
     )
@@ -462,24 +465,11 @@ def build_datasets(args, cfg):
         sup=True,
         training=False,
     )
-    # Formal State-Aware training must not instantiate or touch the test
-    # dataset.  Final test evaluation is a separate post-training stage.
-    if args.cps_mode == 'state_aware':
-        test = None
-        if use_manifests:
-            with open(test_source['manifest_path'], newline='', encoding='utf-8') as handle:
-                test_count = max(0, sum(1 for _ in csv.DictReader(handle)))
-        else:
-            test_count = None
-    else:
-        test = imagefloder_itn(
-            **test_source,
-            **common,
-            data_transform_1=transforms['test'],
-            sup=True,
-            training=False,
-        )
-        test_count = len(test)
+    # Test data is deliberately not instantiated or read during training for
+    # either CPS mode.  Any final frozen test evaluation must be a separate
+    # post-training entry point; validation remains the only selection split.
+    test = None
+    test_count = None
 
     datasets = {
         'train_sup': train_sup,
@@ -501,11 +491,10 @@ def print_data_summary(args, datasets, manifest_dir, use_manifests):
     print('Data source:', manifest_dir if use_manifests else args.path_dataset)
     print('Input mode:', args.input_mode)
     print(
-        'Unique samples: supervised={}, unsupervised={}, validation={}, test={}'.format(
+        'Unique samples: supervised={}, unsupervised={}, validation={}, test=deferred'.format(
             len(datasets['train_sup_unique']),
             len(datasets['train_unsup']),
             len(datasets['val']),
-            datasets['test_count'],
         )
     )
     print(
@@ -604,8 +593,6 @@ def build_dataloaders(datasets, batch_size):
         ),
         'val': DataLoader(datasets['val'], shuffle=False, **loader_options),
     }
-    if datasets.get('test') is not None:
-        loaders['test'] = DataLoader(datasets['test'], shuffle=False, **loader_options)
     return loaders
 
 
@@ -2047,12 +2034,10 @@ def _collect_epoch_metrics(
     optimizers,
     train_losses,
     val_evaluations,
-    test_evaluations,
     validation_diversity,
     best_val_eval_lists,
 ):
     val_eval1, val_eval2 = val_evaluations
-    test_eval1, test_eval2 = test_evaluations
     optimizer1, _ = optimizers
     return {
         'epoch': epoch + 1,
@@ -2062,10 +2047,6 @@ def _collect_epoch_metrics(
         'val_dice_student1': val_eval1[2],
         'val_jaccard_student2': val_eval2[1],
         'val_dice_student2': val_eval2[2],
-        'test_jaccard_student1': test_eval1[1],
-        'test_dice_student1': test_eval1[2],
-        'test_jaccard_student2': test_eval2[1],
-        'test_dice_student2': test_eval2[2],
         'best_val_jaccard1': best_val_eval_lists[0][1],
         'best_val_jaccard2': best_val_eval_lists[1][1],
         'best_val_jaccard': max(
@@ -2081,8 +2062,6 @@ def _log_epoch(logger, args, metrics):
         'epoch=%d/%d | learning_rate=%.8g | average_train_loss=%.6f '
         '| val_dice_student1=%.6f | val_dice_student2=%.6f '
         '| val_jaccard_student1=%.6f | val_jaccard_student2=%.6f '
-        '| test_dice_student1=%.6f | test_dice_student2=%.6f '
-        '| test_jaccard_student1=%.6f | test_jaccard_student2=%.6f '
         '| student12_disagreement=%.6f '
         '| student12_dice_similarity=%.6f '
         '| student1_correct_student2_wrong=%.6f '
@@ -2100,10 +2079,6 @@ def _log_epoch(logger, args, metrics):
         metrics['val_dice_student2'],
         metrics['val_jaccard_student1'],
         metrics['val_jaccard_student2'],
-        metrics['test_dice_student1'],
-        metrics['test_dice_student2'],
-        metrics['test_jaccard_student1'],
-        metrics['test_jaccard_student2'],
         metrics['student12_disagreement'],
         metrics['student12_dice_similarity'],
         metrics['student1_correct_student2_wrong'],
@@ -2217,6 +2192,8 @@ def _evaluate_frozen_pair(
             cfg['NUM_CLASSES'], validation['scores1'], validation['scores2'],
             validation['masks'], 30,
         )
+    # Optional test evaluation is intentionally supported only when a caller
+    # supplies a post-training test loader; train_model never supplies one.
     test = validate(models, losses, dataloaders['test']) if dataloaders.get('test') is not None else None
     rows = []
     for index, (branch, val_eval) in enumerate(
@@ -2878,41 +2855,9 @@ def train_model(
                 state_validation_writer.writerow(state_validation_row)
                 state_validation_file.flush()
 
-            if _is_reference_mode(args.cps_mode):
-                # Reference-aware training inspects test only after all epochs.
-                test_evaluation = None
-                test_eval1 = [float('nan')] * 4
-                test_eval2 = [float('nan')] * 4
-            else:
-                test_evaluation = validate(models, losses, dataloaders['test'])
-                if print_epoch:
-                    print_val_loss(
-                        test_evaluation['loss1'],
-                        test_evaluation['loss2'],
-                        num_batches,
-                        print_num,
-                        print_num_half,
-                        split_name='Test',
-                        loader_name='test',
-                    )
-                    test_eval1, test_eval2, _, _ = print_val_eval(
-                        cfg['NUM_CLASSES'],
-                        test_evaluation['scores1'],
-                        test_evaluation['scores2'],
-                        test_evaluation['masks'],
-                        print_num_half,
-                        split_name='Test',
-                    )
-                else:
-                    with redirect_stdout(io.StringIO()):
-                        test_eval1, test_eval2, _, _ = print_val_eval(
-                            cfg['NUM_CLASSES'],
-                            test_evaluation['scores1'],
-                            test_evaluation['scores2'],
-                            test_evaluation['masks'],
-                            print_num_half,
-                            split_name='Test',
-                        )
+            # Test is intentionally absent from the training loop for both
+            # standard and state-aware CPS.  Epoch selection and diagnostics
+            # use validation only; final test evaluation is a separate stage.
             diagnostics = _finalize_diagnostics(
                 validation['diagnostic_totals'],
                 val_eval1[2],
@@ -2982,14 +2927,8 @@ def train_model(
                     'cps_mode': args.cps_mode,
                     'selection_split': 'validation',
                     'selection_metric': 'jaccard',
-                    'current_test_metrics': (
-                        None if _is_reference_mode(args.cps_mode)
-                        else [list(test_eval1), list(test_eval2)]
-                    ),
-                    'test_evaluation_policy': (
-                        'final_frozen_only' if _is_reference_mode(args.cps_mode)
-                        else 'monitoring_only_not_used_for_selection'
-                    ),
+                    'current_test_metrics': None,
+                    'test_evaluation_policy': 'not_evaluated_during_training',
                     'current_val_metrics': [
                         list(val_eval1),
                         list(val_eval2),
@@ -3101,7 +3040,6 @@ def train_model(
                 optimizers,
                 train_losses,
                 (val_eval1, val_eval2),
-                (test_eval1, test_eval2),
                 validation_diversity,
                 best_val_eval_lists,
             )
