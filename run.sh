@@ -75,8 +75,8 @@ python -u main.py \
 python -u main.py \
     --dataset_name GlaS \
     --path_dataset datasets/GLaS \
-    --path_trained_models checkpoints/semi_10_seed_4_rgbstain_state_aware \
-    --path_seg_results seg_pred/semi_10_seed_4_rgbstain_state_aware \
+    --path_trained_models checkpoints/semi_10_seed_4_rgbstain_state_aware_ce \
+    --path_seg_results seg_pred/semi_10_seed_4_rgbstain_state_aware_ce \
     --labeled_ratio 10 \
     --sd 4 \
     --batch_size 2 \
