@@ -1,0 +1,73 @@
+{
+  "implementation": {
+    "mode": "native_suppress_adaptive",
+    "uni_input": 256,
+    "native_grid": "16x16",
+    "buffer_size": 4096,
+    "buffer_min_size": 512,
+    "w_min": 0.5,
+    "buffer_source": "unlabeled training contradiction D only",
+    "validation_used_for_cdf": false,
+    "e4_outputs_used_for_cdf": false,
+    "hc_correction": false
+  },
+  "training": {
+    "epochs": 200,
+    "seed": 24,
+    "adaptive_buffer_final_size": 4096,
+    "adaptive_buffer_num_seen": 366065
+  },
+  "adaptive_weight_final_epoch": {
+    "mean_adaptive_weight": 0.751202295124002,
+    "median_adaptive_weight": 0.7552490234375,
+    "weight_p10": 0.546142578125,
+    "weight_p50": 0.7552490234375,
+    "weight_p90": 0.9498291015625,
+    "D_Q1_mean_weight": 0.9400216321291373,
+    "D_Q2_mean_weight": 0.8170633518949468,
+    "D_Q3_mean_weight": 0.6901939355931576,
+    "D_Q4_mean_weight": 0.5573860330784575
+  },
+  "final_epoch": {
+    "Fixed Native-S": {
+      "Dice": 0.8819675,
+      "IoU": 0.7888634999999999,
+      "WW_rate": 0.098157994887408,
+      "HC90WW_rate": 0.074628942153033,
+      "CC_rate": 0.8885794246897978,
+      "WW_events": 1713.0,
+      "HC90WW_events": 1534.0
+    },
+    "Adaptive Native-S": {
+      "Dice": 0.853997,
+      "IoU": 0.745268,
+      "WW_rate": 0.1150575525620404,
+      "HC90WW_rate": 0.0857687557444853,
+      "CC_rate": 0.8544634650735294,
+      "WW_events": 1684.0,
+      "HC90WW_events": 1465.0
+    }
+  },
+  "delta_adaptive_minus_fixed_final": {
+    "Dice": -0.02797050000000001,
+    "IoU": -0.0435954999999999,
+    "WW_rate": 0.016899557674632387,
+    "HC90WW_rate": 0.011139813591452288,
+    "CC_rate": -0.03411595961626834,
+    "WW_events": -29.0,
+    "HC90WW_events": -69.0
+  },
+  "best_synchronized": {
+    "Fixed Native-S": {
+      "best_sync_epoch": 191,
+      "best_sync_mean_val_jaccard": 0.7912438293727112,
+      "best_sync_mean_val_dice": 0.8834574237163841
+    },
+    "Adaptive Native-S": {
+      "best_sync_epoch": 143,
+      "best_sync_mean_val_jaccard": 0.7581199007001667,
+      "best_sync_mean_val_dice": 0.8637070858478546
+    }
+  },
+  "outcome": "Outcome C \u2014 D is informative diagnostically, but CDF-based continuous suppression does not improve training over fixed Native-S."
+}

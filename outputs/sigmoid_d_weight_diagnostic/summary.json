@@ -1,0 +1,96 @@
+{
+  "source": "outputs/native_scale_reference/glas_standard_cps_uni256/token_records.csv",
+  "analysis": "offline; existing E4 token_records.csv only; no model, training, or forward",
+  "filter": "agreement == true and contradiction == true and D > 0",
+  "num_contradiction_tokens": 3931,
+  "D": {
+    "min": 0.00022682547569274902,
+    "max": 0.4454859793186188,
+    "mean": 0.10268730846669831,
+    "std": 0.09249299949878481,
+    "p01": 0.0027746260166168213,
+    "p05": 0.007395237684249878,
+    "p10": 0.0153178870677948,
+    "p25": 0.044040463864803314,
+    "p50": 0.0797727108001709,
+    "p75": 0.1287350058555603,
+    "p90": 0.206914022564888,
+    "p95": 0.33485880494117737,
+    "p99": 0.431604695320129
+  },
+  "weight_formula": "sigmoid(-D)=1/(1+exp(D))",
+  "weight_at_D_quantiles": {
+    "p10": 0.49617060310948696,
+    "p25": 0.48899166325600707,
+    "p50": 0.4800673915830929,
+    "p75": 0.4678606226404849,
+    "p90": 0.44845526377445316
+  },
+  "weight_distribution": {
+    "min": 0.3904345493669116,
+    "max": 0.49994329363131995,
+    "mean": 0.4744346614450279,
+    "std": 0.02285880879637793,
+    "p01": 0.3937432308950415,
+    "p05": 0.41705887284808385,
+    "p10": 0.44845526377445316,
+    "p25": 0.4678606226404849,
+    "p50": 0.4800673915830929,
+    "p75": 0.4889916633343926,
+    "p90": 0.49617060310948696,
+    "p95": 0.4981511990070232,
+    "p99": 0.4993063439408578
+  },
+  "dynamic_range": {
+    "p10_minus_p90": 0.0477153393350338,
+    "p25_minus_p75": 0.02113104061552218,
+    "ratio_10_90": 1.1063993294054086,
+    "description": "very narrow"
+  },
+  "D_scale": {
+    "P_D_lt_0.01": 0.06308827270414653,
+    "P_D_lt_0.02": 0.12592215721190536,
+    "P_D_lt_0.05": 0.3014500127194098,
+    "P_D_lt_0.10": 0.6293563978631391,
+    "P_D_gt_0.10": 0.3706436021368609,
+    "P_D_gt_0.20": 0.10353599592978886,
+    "P_D_gt_0.50": 0.0,
+    "P_D_gt_1.00": 0.0
+  },
+  "quartiles": [
+    {
+      "quartile": "Q1",
+      "num_tokens": 983,
+      "mean_D": 0.020958561711733364,
+      "median_D": 0.01936444640159607,
+      "mean_sigmoid_weight": 0.49476076402194535,
+      "median_sigmoid_weight": 0.4951590396713174
+    },
+    {
+      "quartile": "Q2",
+      "num_tokens": 982,
+      "mean_D": 0.0602812943354158,
+      "median_D": 0.05997036397457123,
+      "mean_sigmoid_weight": 0.4849346053163033,
+      "median_sigmoid_weight": 0.4850119007261834
+    },
+    {
+      "quartile": "Q3",
+      "num_tokens": 980,
+      "mean_D": 0.10153967389950946,
+      "median_D": 0.09977500140666962,
+      "mean_sigmoid_weight": 0.47463807844977374,
+      "median_sigmoid_weight": 0.47507692209458263
+    },
+    {
+      "quartile": "Q4",
+      "num_tokens": 986,
+      "mean_D": 0.22754202024448233,
+      "median_D": 0.18415944278240204,
+      "mean_sigmoid_weight": 0.4435108760704304,
+      "median_sigmoid_weight": 0.4540898185256548
+    }
+  ],
+  "near_fixed_fraction_abs_weight_minus_0.5_lt_0.025": 0.6313915034342407,
+  "conclusion": "Outcome B \u2014 Raw D is too small in scale for sigmoid(-D) to provide meaningful dynamic differentiation. The mapping is mathematically clean but practically close to Fixed Native-S."
+}
