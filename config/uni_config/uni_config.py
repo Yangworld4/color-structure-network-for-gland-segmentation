@@ -15,8 +15,11 @@ UNI_CONFIG_DEFAULT = str(Path(UNI_WEIGHTS_DEFAULT).with_name('config.json'))
 UNI_PATCH_SIZE = 16
 DEFAULT_REFERENCE_RESOLUTION = 224
 
-# UNI's original ViT-L/16 input contract is fixed at 224x224 (14x14 patches).
-SUPPORTED_REFERENCE_RESOLUTIONS = (DEFAULT_REFERENCE_RESOLUTION,)
+# Keep the original 224/14 configuration as the default, while allowing the
+# native-scale diagnostic/training branch to use the already validated
+# 256/16 configuration.  No pretrained weights or memory definition changes
+# are implied by this list; it only controls the spatial input contract.
+SUPPORTED_REFERENCE_RESOLUTIONS = (DEFAULT_REFERENCE_RESOLUTION, 256)
 UNI_MEAN = (0.485, 0.456, 0.406)
 UNI_STD = (0.229, 0.224, 0.225)
 
@@ -32,4 +35,3 @@ REFERENCE_MEMORY_SEED = 2026
 EXPECTED_UNI_SHA256 = (
     '56ef09b44a25dc5c7eedc55551b3d47bcd17659a7a33837cf9abc9ec4e2ffb40'
 )
-

@@ -156,13 +156,36 @@ VALIDATION_EPOCH_FIELDS = [
     'mean_Jaccard', 'mean_Dice', 'threshold_A', 'threshold_B',
 ]
 
+NATIVE_TRAINING_FIELDS = [
+    'experiment', 'epoch', 'num_native_tokens', 'num_agreement_tokens',
+    'num_contradiction_tokens', 'contradiction_rate',
+    'num_hc_contradiction_tokens', 'hc_contradiction_rate',
+    'mean_CPS_weight', 'loss_sup', 'loss_cps_raw', 'loss_cps_weighted',
+    'loss_native_ref', 'loss_total', 'mean_pA_token_on_HC',
+    'mean_pB_token_on_HC', 'UNI_FG_HC_count', 'UNI_BG_HC_count',
+]
+
 REFERENCE_CPS_MODES = (
     'state_aware',
 )
 
+# ``cps_mode`` remains the legacy CPS/state-aware selector.  The independent
+# reference-mode selector below is deliberately additive so existing commands
+# retain exactly their previous behavior.
+NATIVE_REFERENCE_MODES = ('native_suppress', 'native_suppress_hc')
+REFERENCE_MODES = ('none', 'pixel_legacy') + NATIVE_REFERENCE_MODES
+
 
 def _is_reference_mode(cps_mode):
     return cps_mode in REFERENCE_CPS_MODES
+
+
+def _uses_uni_reference(args):
+    return _is_reference_mode(args.cps_mode) or getattr(args, 'reference_mode', 'none') in REFERENCE_MODES[1:]
+
+
+def _is_native_reference_mode(args):
+    return getattr(args, 'reference_mode', 'none') in NATIVE_REFERENCE_MODES
 
 def init_seeds(seed):
     torch.manual_seed(seed)
@@ -615,6 +638,9 @@ def _experiment_name(args, split_sup_mark, split_unsup_mark):
     experiment_name += '-cps_mode={}'.format(
         getattr(args, 'cps_mode', 'standard')
     )
+    reference_mode = getattr(args, 'reference_mode', 'none')
+    if reference_mode != 'none':
+        experiment_name += '-reference_mode={}'.format(reference_mode)
     return experiment_name
 
 
@@ -719,7 +745,7 @@ def build_training_components(args, cfg):
         'ce': CrossEntropyLoss().cuda(),
         'dice': DiceLoss().cuda(),
     }
-    if args.cps_mode == 'state_aware':
+    if args.cps_mode == 'state_aware' or _is_native_reference_mode(args):
         losses['ce_none'] = CrossEntropyLoss(reduction='none').cuda()
 
     optimizer1, scheduler1 = _build_optimizer_and_scheduler(model1, args)
@@ -909,6 +935,10 @@ def _load_reference(args, cfg, logger, manifest_dir=None, use_manifests=False):
     uni, weights_path, config_path = _load_uni(args)
     memory_built = False
     if not memory_path.is_file():
+        if _is_native_reference_mode(args):
+            raise FileNotFoundError(
+                'Native reference modes require the fixed UNI-256 memory: {}'.format(memory_path)
+            )
         if args.cps_mode == 'state_aware' and not args.uni_build_reference_memory:
             raise RuntimeError(
                 'State-aware mode requires --uni_build_reference_memory when '
@@ -986,7 +1016,11 @@ def _load_reference(args, cfg, logger, manifest_dir=None, use_manifests=False):
     memory_bg_norm_error = float(
         np.max(np.abs(np.linalg.norm(memory_bg_np, axis=1) - 1.0))
     )
-    mode_label = 'State-Aware Reference-Guided CPS'
+    mode_label = (
+        'Native-Scale Reference-Guided CPS ({})'.format(args.reference_mode)
+        if _is_native_reference_mode(args)
+        else 'State-Aware Reference-Guided CPS'
+    )
     logger.info(
         '%s UNI/reference loaded | weights=%s | memory=%s | fg=%d bg=%d '
         '| dim=%d resolution=%d grid=%dx%d k=%d source=labeled_%d',
@@ -1165,6 +1199,101 @@ def _build_reference_weights(logits_a, logits_b, rgb_input, context, cfg, args):
         raise AssertionError('Reference modified pseudo_B')
     result['margin'] = margin
     return result
+
+
+def _build_native_reference_targets(logits_a, logits_b, rgb_input, context, cfg, args):
+    """Build detached UNI-256 native token gating for S/SC.
+
+    The UNI margin remains at its native 16x16 scale.  Only the boolean
+    contradiction/HC masks are later expanded as *loss weights* with nearest
+    neighbour replication; no semantic UNI value is interpolated here.
+    """
+    if context['token_grid'] != 16 or context['reference_resolution'] != 256:
+        raise AssertionError(
+            'Native reference modes require UNI-256/16x16, got resolution={} grid={}'.format(
+                context['reference_resolution'], context['token_grid']
+            )
+        )
+    prob_a = _foreground_probability(logits_a)
+    prob_b = _foreground_probability(logits_b)
+    p_a_token = F.adaptive_avg_pool2d(prob_a, (16, 16))
+    p_b_token = F.adaptive_avg_pool2d(prob_b, (16, 16))
+    gate_a = p_a_token.detach()
+    gate_b = p_b_token.detach()
+    hard_a = gate_a.ge(0.5)
+    hard_b = gate_b.ge(0.5)
+    conf_a = torch.maximum(gate_a, 1.0 - gate_a)
+    conf_b = torch.maximum(gate_b, 1.0 - gate_b)
+    agreement = hard_a.eq(hard_b)
+    with torch.inference_mode():
+        tokens = _uni_dense_features(
+            context['uni'], _reconstruct_rgb(rgb_input, cfg), 256
+        )
+        if tokens.shape[1:] != (256, 1024):
+            raise AssertionError('UNI native token shape must be [B,256,1024], got {}'.format(tuple(tokens.shape)))
+        margin = _reference_margin(tokens, context, args.uni_k).reshape(-1, 1, 16, 16)
+        uni_fg = margin.gt(0.0)
+        ties = margin.eq(0.0)
+    contradiction = agreement & ~ties & uni_fg.ne(hard_a)
+    hc = contradiction & conf_a.ge(float(args.native_hc_thresh)) & conf_b.ge(float(args.native_hc_thresh))
+    weight_token = torch.where(
+        contradiction,
+        torch.full_like(margin, float(args.native_suppress_gamma)),
+        torch.ones_like(margin),
+    )
+    if not torch.all(weight_token[~contradiction].eq(1.0)).item():
+        raise AssertionError('Non-contradiction native token weight changed from one')
+    return {
+        'p_a_token': p_a_token, 'p_b_token': p_b_token,
+        'hard_a': hard_a, 'hard_b': hard_b,
+        'conf_a': conf_a, 'conf_b': conf_b,
+        'agreement': agreement, 'uni_fg': uni_fg, 'ties': ties,
+        'margin': margin[:, 0], 'contradiction': contradiction[:, 0],
+        'hc': hc[:, 0], 'weight_token': weight_token,
+    }
+
+
+def compute_native_suppressed_cps_losses(
+    ce_none, prediction1, prediction2, pseudo1, pseudo2, weight_pixel,
+):
+    """Original hard-pseudo CPS with a native-token scalar loss weight."""
+    if getattr(ce_none, 'reduction', None) != 'none':
+        raise AssertionError('Native suppression requires reduction=none CE')
+    valid1 = pseudo1.ne(ce_none.ignore_index)
+    valid2 = pseudo2.ne(ce_none.ignore_index)
+    if not valid1.any().item() or not valid2.any().item():
+        raise AssertionError('Native suppression received no valid pseudo-label pixels')
+    pixel_1_to_2 = ce_none(prediction2, pseudo1)
+    pixel_2_to_1 = ce_none(prediction1, pseudo2)
+    weight_scalar = weight_pixel[:, 0] if weight_pixel.dim() == 4 else weight_pixel
+    w1 = weight_scalar.expand_as(pixel_1_to_2).to(pixel_1_to_2.dtype)
+    w2 = weight_scalar.expand_as(pixel_2_to_1).to(pixel_2_to_1.dtype)
+    weighted_1_to_2 = 0.5 * (pixel_1_to_2[valid1] * w1[valid1]).sum() / w1[valid1].sum().clamp_min(1e-8)
+    weighted_2_to_1 = 0.5 * (pixel_2_to_1[valid2] * w2[valid2]).sum() / w2[valid2].sum().clamp_min(1e-8)
+    raw_1_to_2 = 0.5 * pixel_1_to_2[valid1].mean()
+    raw_2_to_1 = 0.5 * pixel_2_to_1[valid2].mean()
+    total = weighted_1_to_2 + weighted_2_to_1
+    if not torch.isfinite(total).item():
+        raise FloatingPointError('Native suppression CPS loss contains NaN/Inf')
+    return {
+        '1_to_2': weighted_1_to_2, '2_to_1': weighted_2_to_1,
+        'total': total, 'raw_total': raw_1_to_2 + raw_2_to_1,
+        'raw_1_to_2': raw_1_to_2, 'raw_2_to_1': raw_2_to_1,
+    }
+
+
+def compute_native_hc_correction_loss(targets):
+    """Token-level BCE on pooled probabilities for HC contradiction tokens."""
+    p_a = targets['p_a_token']
+    p_b = targets['p_b_token']
+    hc = targets['hc']
+    if not hc.any().item():
+        return (p_a.sum() + p_b.sum()) * 0.0
+    target = targets['uni_fg'].float()
+    bce_a = F.binary_cross_entropy(p_a.clamp(1e-6, 1.0 - 1e-6), target, reduction='none')
+    bce_b = F.binary_cross_entropy(p_b.clamp(1e-6, 1.0 - 1e-6), target, reduction='none')
+    hc_mask = hc.unsqueeze(1)
+    return 0.5 * (bce_a[hc_mask].mean() + bce_b[hc_mask].mean())
 
 
 def _add_state_aware_directional_weights(targets):
@@ -1438,6 +1567,34 @@ def _state_iter_row(epoch, iteration, global_step, stats, original_loss, state_l
     }
 
 
+def _run_native_startup_checks(args, context, models, optimizers):
+    """Protocol checks for the two native-scale modes (no training smoke run)."""
+    if not _is_native_reference_mode(args):
+        raise AssertionError('Native startup check called for non-native mode')
+    if args.cps_mode != 'standard':
+        raise AssertionError('Native modes must retain standard CPS')
+    if context['reference_resolution'] != 256 or context['token_grid'] != 16:
+        raise AssertionError('Native UNI geometry must be 256/16x16')
+    if context['feature_dim'] != 1024 or context['memory_top_k'] != 5:
+        raise AssertionError('Unexpected native UNI feature/K configuration')
+    if any(parameter.requires_grad for parameter in context['uni'].parameters()):
+        raise AssertionError('UNI parameters are trainable')
+    optimizer_ids = {
+        id(parameter)
+        for optimizer in optimizers
+        for group in optimizer.param_groups
+        for parameter in group['params']
+    }
+    if any(id(parameter) in optimizer_ids for parameter in context['uni'].parameters()):
+        raise AssertionError('UNI parameters entered CPS optimizer')
+    if Path(context['memory_path']).name != 'reference_memory_uni256.npz':
+        raise AssertionError('Native mode must use reference_memory_uni256.npz')
+    print('UNI input shape       = [B,3,256,256]')
+    print('UNI patch-token shape = [B,256,1024]')
+    print('native grid           = 16x16')
+    print('feature dim           = 1024')
+
+
 def _run_state_aware_startup_checks(args, cfg, context, models, optimizers, losses):
     """Static algebra and protocol assertions for the new CPS state."""
     if args.cps_mode != 'state_aware':
@@ -1534,6 +1691,17 @@ def train_one_epoch(
         if reference_context is not None and args.cps_mode == 'state_aware'
         else None
     )
+    native_totals = None
+    if _is_native_reference_mode(args):
+        native_totals = {
+            'num_tokens': 0.0, 'agreement_tokens': 0.0,
+            'contradiction_tokens': 0.0, 'hc_tokens': 0.0,
+            'sum_weight': 0.0, 'raw_cps_loss': 0.0,
+            'weighted_cps_loss': 0.0, 'native_ref_loss': 0.0,
+            'total_loss': 0.0, 'batches': 0.0,
+            'sum_p_a_hc': 0.0, 'sum_p_b_hc': 0.0,
+            'uni_fg_hc': 0.0, 'uni_bg_hc': 0.0,
+        }
     mask_list = None
 
     unsup_weight = args.unsup_weight * (epoch+1) / args.num_epochs
@@ -1601,6 +1769,7 @@ def train_one_epoch(
         unsup_prediction1 = model1(unsup_input1)[0]
         unsup_prediction2 = model2(unsup_input2)[0]
         
+        native_ref_loss = unsup_prediction1.sum() * 0.0
         if args.cps_mode in REFERENCE_CPS_MODES:
             reference_targets = _build_state_aware_reference_targets(
                 unsup_prediction1, unsup_prediction2, unsup_input1,
@@ -1615,6 +1784,32 @@ def train_one_epoch(
                 losses['ce_none'], unsup_prediction1, unsup_prediction2,
                 reference_targets,
             )
+        elif _is_native_reference_mode(args):
+            reference_targets = _build_native_reference_targets(
+                unsup_prediction1, unsup_prediction2, unsup_input1,
+                reference_context, reference_context['cfg'], args,
+            )
+            pseudo_a = unsup_prediction1.detach().argmax(dim=1)
+            pseudo_b = unsup_prediction2.detach().argmax(dim=1)
+            original_cps_losses = compute_standard_cps_losses(
+                losses['ce'], unsup_prediction1, unsup_prediction2,
+                pseudo_a, pseudo_b,
+            )
+            weight_pixel = F.interpolate(
+                reference_targets['weight_token'],
+                size=unsup_prediction1.shape[-2:], mode='nearest',
+            )
+            native_cps = compute_native_suppressed_cps_losses(
+                losses['ce_none'], unsup_prediction1, unsup_prediction2,
+                pseudo_a, pseudo_b, weight_pixel,
+            )
+            cps_losses = {
+                '1_to_2': native_cps['1_to_2'],
+                '2_to_1': native_cps['2_to_1'],
+                'total': native_cps['total'],
+            }
+            if args.reference_mode == 'native_suppress_hc':
+                native_ref_loss = compute_native_hc_correction_loss(reference_targets)
         else:
             cps_losses = compute_cps_losses(
                 losses['ce'],
@@ -1635,6 +1830,8 @@ def train_one_epoch(
         )
         weighted_unsup_loss = unsup_weight * unsup_loss
         total_loss = model1_loss + model2_loss
+        if _is_native_reference_mode(args):
+            total_loss = total_loss + float(args.lambda_native_ref) * native_ref_loss
         total_loss.backward()
 
         optimizer1.step()
@@ -1659,6 +1856,26 @@ def train_one_epoch(
                 ))
                 state_iter_file.flush()
 
+        if _is_native_reference_mode(args):
+            contradiction = reference_targets['contradiction']
+            hc = reference_targets['hc']
+            agreement = reference_targets['agreement']
+            native_totals['num_tokens'] += float(agreement.numel())
+            native_totals['agreement_tokens'] += float(agreement.sum().item())
+            native_totals['contradiction_tokens'] += float(contradiction.sum().item())
+            native_totals['hc_tokens'] += float(hc.sum().item())
+            native_totals['sum_weight'] += float(reference_targets['weight_token'].sum().item())
+            native_totals['raw_cps_loss'] += float(native_cps['raw_total'].detach().item())
+            native_totals['weighted_cps_loss'] += float(cps_losses['total'].detach().item())
+            native_totals['native_ref_loss'] += float(native_ref_loss.detach().item())
+            native_totals['total_loss'] += float(total_loss.detach().item())
+            native_totals['batches'] += 1.0
+            if hc.any().item():
+                native_totals['sum_p_a_hc'] += float(reference_targets['p_a_token'][hc.unsqueeze(1)].sum().item())
+                native_totals['sum_p_b_hc'] += float(reference_targets['p_b_token'][hc.unsqueeze(1)].sum().item())
+                native_totals['uni_fg_hc'] += float((reference_targets['uni_fg'] & hc.unsqueeze(1)).sum().item())
+                native_totals['uni_bg_hc'] += float(((~reference_targets['uni_fg']) & hc.unsqueeze(1)).sum().item())
+
         metrics_writer.writerow(
             build_iteration_metrics(
                 global_step,
@@ -1680,7 +1897,7 @@ def train_one_epoch(
         loss_totals['sup1'] += supervised_loss1.item()
         loss_totals['sup2'] += supervised_loss2.item()
         loss_totals['total'] += total_loss.item()
-    reference_totals = state_totals
+    reference_totals = state_totals if state_totals is not None else native_totals
     return (
         loss_totals,
         (score_list1, score_list2, mask_list),
@@ -2405,6 +2622,121 @@ def _state_validation_diagnostic(
     }
 
 
+def _native_validation_diagnostic(validation, dataloader, context, cfg, args):
+    """Offline validation diagnostics for the native S/SC intervention.
+
+    GT is consumed only in this function, after inference, to quantify shared
+    errors and token-footprint collateral.  It never enters the training gate.
+    """
+    totals = defaultdict(float)
+    events = defaultdict(float)
+    offset = 0
+    with torch.inference_mode():
+        for batch in dataloader:
+            n = int(batch['mask'].shape[0])
+            logits_a = validation['scores1'][offset:offset + n].cuda(non_blocking=True)
+            logits_b = validation['scores2'][offset:offset + n].cuda(non_blocking=True)
+            offset += n
+            gt = batch['mask'].cuda(non_blocking=True)
+            valid = gt.ne(-1)
+            pa = _foreground_probability(logits_a)
+            pb = _foreground_probability(logits_b)
+            hard_a = pa.ge(0.5)[:, 0]
+            hard_b = pb.ge(0.5)[:, 0]
+            conf_a = torch.maximum(pa, 1.0 - pa)[:, 0]
+            conf_b = torch.maximum(pb, 1.0 - pb)[:, 0]
+            agree_px = hard_a.eq(hard_b)
+            correct_a = hard_a.eq(gt)
+            correct_b = hard_b.eq(gt)
+            cc = correct_a & correct_b & valid
+            ww = ~correct_a & ~correct_b & agree_px & valid
+            hc = ww & conf_a.ge(0.9) & conf_b.ge(0.9)
+            shared_fp = ww & hard_a & gt.eq(0)
+            shared_fn = ww & ~hard_a & gt.eq(1)
+            targets = _build_native_reference_targets(
+                logits_a, logits_b, _get_rgb_view(batch).cuda(non_blocking=True),
+                context, cfg, args,
+            )
+            contradiction = targets['contradiction']
+            hc_token = targets['hc']
+            occ = F.adaptive_avg_pool2d(gt.float().unsqueeze(1), (16, 16))[:, 0]
+            pca = 0.5 * (targets['p_a_token'][:, 0] + targets['p_b_token'][:, 0])
+            direction_valid = (occ - pca).abs().gt(0.05)
+            uni_direction = torch.where(targets['uni_fg'][:, 0], 1.0, -1.0)
+            gt_direction = occ - pca
+            direction_correct = (uni_direction * gt_direction > 0) & direction_valid
+            token_ww = F.adaptive_avg_pool2d(ww.float().unsqueeze(1), (16, 16))[:, 0]
+            token_hc = F.adaptive_avg_pool2d(hc.float().unsqueeze(1), (16, 16))[:, 0]
+            token_cc = F.adaptive_avg_pool2d(cc.float().unsqueeze(1), (16, 16))[:, 0]
+            for key, value in (
+                ('valid', valid.sum()), ('cc', cc.sum()), ('ww', ww.sum()),
+                ('hc90ww', hc.sum()), ('shared_fp', shared_fp.sum()),
+                ('shared_fn', shared_fn.sum()),
+                ('contradiction_tokens', contradiction.sum()),
+                ('hc_contradiction_tokens', hc_token.sum()),
+                ('contradiction_ww_sum', token_ww[contradiction].sum()),
+                ('contradiction_hc_sum', token_hc[contradiction].sum()),
+                ('contradiction_cc_sum', token_cc[contradiction].sum()),
+                ('hc_ww_sum', token_ww[hc_token].sum()),
+                ('hc_hc_sum', token_hc[hc_token].sum()),
+                ('hc_cc_sum', token_cc[hc_token].sum()),
+                ('direction_correct', direction_correct[contradiction & direction_valid].sum()),
+                ('direction_valid', (contradiction & direction_valid).sum()),
+                ('hc_mae_sum', (pca - occ).abs()[hc_token].sum()),
+            ):
+                totals[key] += float(value.item())
+            # Connected-component event counts are validation-only diagnostics.
+            try:
+                from scipy import ndimage
+                for idx in range(n):
+                    for name, mask in (
+                        ('WW', ww[idx]), ('HC90WW', hc[idx]),
+                        ('Shared_FP', shared_fp[idx]), ('Shared_FN', shared_fn[idx]),
+                    ):
+                        count = int(ndimage.label(mask.detach().cpu().numpy(), structure=np.ones((3, 3), dtype=np.uint8))[1])
+                        events[name] += count
+                        events[name + '_images'] += float(count > 0)
+            except ImportError:
+                # Preserve a valid run if scipy is absent; pixel diagnostics
+                # remain exact and event fields are explicitly unavailable.
+                pass
+    if offset != int(validation['masks'].shape[0]):
+        raise AssertionError('Native validation loader/logit length mismatch')
+    valid = totals['valid']
+    contradiction = totals['contradiction_tokens']
+    hc_tokens = totals['hc_contradiction_tokens']
+    shared = {
+        'epoch': 0, 'valid_pixels': int(valid),
+        'CC_rate': _safe_mean(totals['cc'], valid),
+        'WW_rate': _safe_mean(totals['ww'], valid),
+        'HC90WW_rate': _safe_mean(totals['hc90ww'], valid),
+        'Shared_FP_rate': _safe_mean(totals['shared_fp'], valid),
+        'Shared_FN_rate': _safe_mean(totals['shared_fn'], valid),
+        'WW_pixels': int(totals['ww']), 'HC90WW_pixels': int(totals['hc90ww']),
+        'Shared_FP_pixels': int(totals['shared_fp']), 'Shared_FN_pixels': int(totals['shared_fn']),
+    }
+    native = {
+        'epoch': 0, 'contradiction_tokens': int(contradiction),
+        'hc_contradiction_tokens': int(hc_tokens),
+        'contradiction_rate': _safe_mean(contradiction, max(1.0, totals['valid'] / 256.0)),
+        'hc_contradiction_rate': _safe_mean(hc_tokens, max(1.0, totals['valid'] / 256.0)),
+        'mean_WW_ratio_contradiction': _safe_mean(totals['contradiction_ww_sum'], contradiction),
+        'mean_HC90WW_ratio_contradiction': _safe_mean(totals['contradiction_hc_sum'], contradiction),
+        'mean_CC_ratio_contradiction': _safe_mean(totals['contradiction_cc_sum'], contradiction),
+        'mean_WW_ratio_hc_contradiction': _safe_mean(totals['hc_ww_sum'], hc_tokens),
+        'mean_HC90WW_ratio_hc_contradiction': _safe_mean(totals['hc_hc_sum'], hc_tokens),
+        'mean_CC_ratio_hc_contradiction': _safe_mean(totals['hc_cc_sum'], hc_tokens),
+        'direction_accuracy': _safe_mean(totals['direction_correct'], totals['direction_valid']),
+        'HC_token_MAE': _safe_mean(totals['hc_mae_sum'], hc_tokens),
+    }
+    event_row = {'epoch': 0}
+    for name in ('WW', 'HC90WW', 'Shared_FP', 'Shared_FN'):
+        event_row[name + '_events'] = int(events[name])
+        event_row[name + '_images'] = int(events[name + '_images'])
+        event_row[name + '_events_per_image'] = _safe_mean(events[name], len(dataloader.dataset))
+    return shared, native, event_row
+
+
 def _state_aware_checkpoint_metadata(args, context, best_val_eval_lists, best_epochs):
     """Metadata contract for every state-aware current/best checkpoint."""
     return {
@@ -2444,6 +2776,29 @@ def _state_aware_checkpoint_metadata(args, context, best_val_eval_lists, best_ep
         'pseudo_label_flipping_used': False,
         'direction_specific_scaling_used': False,
         'reference_build_rng_isolated': True,
+        'test_evaluation_policy': 'final_frozen_only',
+    }
+
+
+def _native_checkpoint_metadata(args, context, best_val_eval_lists, best_epochs):
+    return {
+        'dataset_name': args.dataset_name, 'labeled_ratio': args.labeled_ratio,
+        'seed': args.sd, 'input_mode': args.input_mode, 'network': args.network,
+        'cps_mode': args.cps_mode, 'reference_mode': args.reference_mode,
+        'selection_split': 'validation', 'selection_metric': 'jaccard',
+        'best_val_metrics': [list(v) for v in best_val_eval_lists],
+        'best_epochs': list(best_epochs),
+        'reference_memory_path': context['memory_path'],
+        'reference_memory_sha256': context['memory_sha256'],
+        'reference_resolution': 256, 'reference_grid': 16,
+        'reference_memory_source': 'labeled_10 GT only',
+        'uni_sha256': context['weights_sha256'], 'uni_weights': context['weights_path'],
+        'uni_k': args.uni_k, 'native_suppress_gamma': args.native_suppress_gamma,
+        'native_hc_thresh': args.native_hc_thresh,
+        'lambda_native_ref': args.lambda_native_ref,
+        'native_gate': 'detach(adaptive_avg_pool2d(pA/pB,(16,16))) agreement and UNI margin sign; no GT',
+        'native_weight_expansion': 'nearest loss-weight expansion only',
+        'native_hc_target': 'UNI sign at token scale; BCE on undetached pooled probabilities',
         'test_evaluation_policy': 'final_frozen_only',
     }
 
@@ -2569,13 +2924,14 @@ def train_model(
     trained_models_path, segmentation_results_path = build_output_paths(
         args, datasets, use_manifests
     )
-    if _is_reference_mode(args.cps_mode):
+    if _uses_uni_reference(args):
         existing_training_artifacts = [
             path for path in Path(trained_models_path).rglob('*')
             if path.is_file()
         ]
         completed_run = (
             Path(trained_models_path, 'state_aware_training_complete.json').is_file()
+            or Path(trained_models_path, 'native_training_complete.json').is_file()
             or any(Path(trained_models_path, 'milestones').glob('epoch_*.pth'))
         )
         if existing_training_artifacts and completed_run and not args.resume:
@@ -2586,13 +2942,49 @@ def train_model(
             )
         if args.resume and not os.path.isfile(os.path.join(trained_models_path, 'resume_checkpoint.pth')):
             raise RuntimeError('Requested resume but resume_checkpoint.pth is missing: {}'.format(trained_models_path))
-    if _is_reference_mode(args.cps_mode) and args.uni_reference_memory is None:
-        args.uni_reference_memory = str(
-            Path(trained_models_path) / 'reference_memory.npz'
-        )
+    if _is_native_reference_mode(args):
+        default_native_memory = Path(
+            'checkpoints/glas_labeled10_seed24/reference_memory_uni256.npz'
+        ).resolve()
+        if args.uni_reference_memory is None:
+            args.uni_reference_memory = str(default_native_memory)
+        if Path(args.uni_reference_memory).resolve() != default_native_memory:
+            raise RuntimeError(
+                'Native reference modes require the fixed UNI-256 memory: {}'.format(
+                    default_native_memory
+                )
+            )
+    elif _is_reference_mode(args.cps_mode) and args.uni_reference_memory is None:
+        args.uni_reference_memory = str(Path(trained_models_path) / 'reference_memory.npz')
     logger, metrics_path, diagnostic_logger = create_run_outputs(
         args, trained_models_path
     )
+    if _is_native_reference_mode(args):
+        native_config = {
+            'experiment': args.reference_mode,
+            'dataset_name': args.dataset_name,
+            'labeled_ratio': args.labeled_ratio,
+            'seed': args.sd,
+            'cps_mode': args.cps_mode,
+            'input_mode': args.input_mode,
+            'uni_input_resolution': 256,
+            'native_grid': '16x16',
+            'feature_dim': 1024,
+            'reference_memory': str(Path(args.uni_reference_memory).resolve()) if args.uni_reference_memory else 'fixed_uni256',
+            'native_suppress_gamma': args.native_suppress_gamma,
+            'native_hc_thresh': args.native_hc_thresh,
+            'lambda_native_ref': args.lambda_native_ref,
+            'contradiction_gate': 'detach pooled pA/pB; agreement and UNI margin sign only; no GT',
+            'loss_weight_expansion': 'nearest 16x16 -> student pixel resolution',
+            'hc_correction': 'BCE on undetached pooled probabilities and UNI token label',
+            'test_evaluation_policy': 'not evaluated during training',
+            'command': ' '.join(sys.argv),
+        }
+        for root in (Path(trained_models_path), Path('outputs/native_scale_training')):
+            root.mkdir(parents=True, exist_ok=True)
+            (root / 'config_{}.json'.format(
+                'native_s' if args.reference_mode == 'native_suppress' else 'native_sc'
+            )).write_text(json.dumps(native_config, indent=2, ensure_ascii=False), encoding='utf-8')
     reference_context = None
     state_epoch_writer = None
     state_metrics_file = None
@@ -2604,11 +2996,16 @@ def train_model(
     validation_epoch_file = None
     state_iter_writer = None
     state_iter_file = None
-    if _is_reference_mode(args.cps_mode):
-        rng_state = (
-            _snapshot_rng_state()
-            if args.cps_mode == 'state_aware' else None
-        )
+    native_training_writer = None
+    native_training_file = None
+    native_validation_writer = None
+    native_validation_file = None
+    native_state_writer = None
+    native_state_file = None
+    native_events_writer = None
+    native_events_file = None
+    if _uses_uni_reference(args):
+        rng_state = _snapshot_rng_state() if args.cps_mode == 'state_aware' else None
         reference_context = _load_reference(
             args,
             cfg,
@@ -2626,10 +3023,12 @@ def train_model(
         else:
             reference_context['reference_build_rng_isolated'] = False
         reference_context['cfg'] = cfg
-        reference_context['validation_reference_cache'] = _build_validation_reference_cache(
-            dataloaders['val'], reference_context, cfg, args,
-            Path(trained_models_path) / 'reference_validation_cache',
-        )
+        reference_context['validation_reference_cache'] = None
+        if args.cps_mode == 'state_aware':
+            reference_context['validation_reference_cache'] = _build_validation_reference_cache(
+                dataloaders['val'], reference_context, cfg, args,
+                Path(trained_models_path) / 'reference_validation_cache',
+            )
 
     (
         models,
@@ -2657,7 +3056,7 @@ def train_model(
         model1.load_state_dict(resume_payload['appearance_state_dict'], strict=True)
         model2.load_state_dict(resume_payload['structure_state_dict'], strict=True)
         logger.info('Resume student weights loaded strictly | epoch=%d', int(resume_payload['epoch']))
-    if reference_context is not None:
+    if reference_context is not None and args.cps_mode == 'state_aware':
         _run_state_aware_startup_checks(
             args, cfg, reference_context, models, optimizers, losses
         )
@@ -2679,6 +3078,14 @@ def train_model(
             'State-aware fresh initialization confirmed | resume_checkpoint=None '
             '| checkpoint_root=%s | segmentation_root=%s',
             trained_models_path, segmentation_results_path,
+        )
+    if reference_context is not None and _is_native_reference_mode(args):
+        _run_native_startup_checks(args, reference_context, models, optimizers)
+        logger.info(
+            'Native-scale reference startup checks passed | mode=%s | '
+            'UNI input=256 | token grid=16x16 | gamma=%.4f | hc_thresh=%.4f | lambda_ref=%.4f',
+            args.reference_mode, args.native_suppress_gamma,
+            args.native_hc_thresh, args.lambda_native_ref,
         )
     best_val_eval_lists = (
         [0 for _ in range(4)],
@@ -2762,6 +3169,35 @@ def train_model(
                 )
                 if not args.resume:
                     state_iter_writer.writeheader()
+        if _is_native_reference_mode(args):
+            native_root = Path('outputs/native_scale_training')
+            native_root.mkdir(parents=True, exist_ok=True)
+            mode_tag = 'native_s' if args.reference_mode == 'native_suppress' else 'native_sc'
+            native_training_file = stack.enter_context(open(
+                native_root / 'training_{}.csv'.format(mode_tag),
+                'a' if args.resume else 'w', newline='', encoding='utf-8'
+            ))
+            native_validation_file = stack.enter_context(open(
+                native_root / 'validation_shared_errors_{}.csv'.format(mode_tag),
+                'a' if args.resume else 'w', newline='', encoding='utf-8'
+            ))
+            native_state_file = stack.enter_context(open(
+                native_root / 'validation_native_states_{}.csv'.format(mode_tag),
+                'a' if args.resume else 'w', newline='', encoding='utf-8'
+            ))
+            native_events_file = stack.enter_context(open(
+                native_root / 'validation_events_{}.csv'.format(mode_tag),
+                'a' if args.resume else 'w', newline='', encoding='utf-8'
+            ))
+            native_training_writer = csv.DictWriter(native_training_file, fieldnames=NATIVE_TRAINING_FIELDS)
+            shared_fields = ['epoch', 'valid_pixels', 'CC_rate', 'WW_rate', 'HC90WW_rate', 'Shared_FP_rate', 'Shared_FN_rate', 'WW_pixels', 'HC90WW_pixels', 'Shared_FP_pixels', 'Shared_FN_pixels']
+            native_validation_writer = csv.DictWriter(native_validation_file, fieldnames=shared_fields)
+            state_fields = ['epoch', 'contradiction_tokens', 'hc_contradiction_tokens', 'contradiction_rate', 'hc_contradiction_rate', 'mean_WW_ratio_contradiction', 'mean_HC90WW_ratio_contradiction', 'mean_CC_ratio_contradiction', 'mean_WW_ratio_hc_contradiction', 'mean_HC90WW_ratio_hc_contradiction', 'mean_CC_ratio_hc_contradiction', 'direction_accuracy', 'HC_token_MAE']
+            native_state_writer = csv.DictWriter(native_state_file, fieldnames=state_fields)
+            event_fields = ['epoch'] + [x for name in ('WW', 'HC90WW', 'Shared_FP', 'Shared_FN') for x in (name + '_events', name + '_images', name + '_events_per_image')]
+            native_events_writer = csv.DictWriter(native_events_file, fieldnames=event_fields)
+            if not args.resume:
+                native_training_writer.writeheader(); native_validation_writer.writeheader(); native_state_writer.writeheader(); native_events_writer.writeheader()
         metrics_writer = csv.DictWriter(
             metrics_file, fieldnames=METRIC_FIELDS
         )
@@ -2854,6 +3290,16 @@ def train_model(
                 state_validation_row['epoch'] = epoch + 1
                 state_validation_writer.writerow(state_validation_row)
                 state_validation_file.flush()
+            if _is_native_reference_mode(args):
+                shared_row, native_row, event_row = _native_validation_diagnostic(
+                    validation, dataloaders['val'], reference_context, cfg, args
+                )
+                shared_row['epoch'] = current_epoch
+                native_row['epoch'] = current_epoch
+                event_row['epoch'] = current_epoch
+                native_validation_writer.writerow(shared_row); native_validation_file.flush()
+                native_state_writer.writerow(native_row); native_state_file.flush()
+                native_events_writer.writerow(event_row); native_events_file.flush()
 
             # Test is intentionally absent from the training loop for both
             # standard and state-aware CPS.  Epoch selection and diagnostics
@@ -2906,6 +3352,10 @@ def train_model(
                         args, reference_context, best_val_eval_lists, best_epochs
                     ) if reference_context is not None else {}
                 )
+                if _is_native_reference_mode(args):
+                    sync_metadata = _native_checkpoint_metadata(
+                        args, reference_context, best_val_eval_lists, best_epochs
+                    )
                 torch.save({
                     'epoch': current_epoch,
                     'appearance_state_dict': best_sync_state[0],
@@ -2925,6 +3375,7 @@ def train_model(
                     'input_mode': args.input_mode,
                     'network': args.network,
                     'cps_mode': args.cps_mode,
+                    'reference_mode': getattr(args, 'reference_mode', 'none'),
                     'selection_split': 'validation',
                     'selection_metric': 'jaccard',
                     'current_test_metrics': None,
@@ -2954,6 +3405,10 @@ def train_model(
                             'best_val_metrics', 'best_epochs',
                         }
                     })
+                if _is_native_reference_mode(args):
+                    milestone_metadata.update(_native_checkpoint_metadata(
+                        args, reference_context, best_val_eval_lists, best_epochs
+                    ))
                 milestone_path = save_training_milestone(
                     model1,
                     model2,
@@ -2995,6 +3450,27 @@ def train_model(
                         'reference_resolution': args.reference_resolution,
                         'reference_memory_sha256': reference_context['memory_sha256'],
                         'uni_sha256': reference_context['weights_sha256'],
+                    }, os.path.join(trained_models_path, 'resume_checkpoint.pth'))
+                if _is_native_reference_mode(args):
+                    torch.save({
+                        'epoch': current_epoch,
+                        'global_step': global_step,
+                        'appearance_state_dict': _model_state_snapshot(model1),
+                        'structure_state_dict': _model_state_snapshot(model2),
+                        'optimizer1': optimizers[0].state_dict(),
+                        'optimizer2': optimizers[1].state_dict(),
+                        'scheduler1': schedulers[0].state_dict(),
+                        'scheduler2': schedulers[1].state_dict(),
+                        'best_val_eval_lists': best_val_eval_lists,
+                        'best_model_states': best_model_states,
+                        'best_epochs': best_epochs,
+                        'best_sync_mean': best_sync_mean,
+                        'best_sync_state': best_sync_state,
+                        'best_sync_epoch': best_sync_epoch,
+                        'rng_state': _snapshot_rng_state(),
+                        **_native_checkpoint_metadata(
+                            args, reference_context, best_val_eval_lists, best_epochs
+                        ),
                     }, os.path.join(trained_models_path, 'resume_checkpoint.pth'))
             if (
                 args.best_save_interval > 0
@@ -3081,6 +3557,33 @@ def train_model(
                     'mean_Dice': 0.5 * (val_eval1[2] + val_eval2[2]),
                     'threshold_A': val_eval1[0], 'threshold_B': val_eval2[0],
                 }); validation_epoch_file.flush()
+            if _is_native_reference_mode(args):
+                native = reference_totals
+                token_count = native['num_tokens']
+                agreement_count = native['agreement_tokens']
+                contradiction_count = native['contradiction_tokens']
+                hc_count = native['hc_tokens']
+                native_training_writer.writerow({
+                    'experiment': args.reference_mode,
+                    'epoch': epoch + 1,
+                    'num_native_tokens': int(token_count),
+                    'num_agreement_tokens': int(agreement_count),
+                    'num_contradiction_tokens': int(contradiction_count),
+                    'contradiction_rate': _safe_mean(contradiction_count, agreement_count),
+                    'num_hc_contradiction_tokens': int(hc_count),
+                    'hc_contradiction_rate': _safe_mean(hc_count, contradiction_count),
+                    'mean_CPS_weight': _safe_mean(native['sum_weight'], token_count),
+                    'loss_sup': 0.5 * (train_losses[0] + train_losses[1]) / num_batches['train_sup'],
+                    'loss_cps_raw': _safe_mean(native['raw_cps_loss'], native['batches']),
+                    'loss_cps_weighted': _safe_mean(native['weighted_cps_loss'], native['batches']),
+                    'loss_native_ref': _safe_mean(native['native_ref_loss'], native['batches']),
+                    'loss_total': _safe_mean(native['total_loss'], native['batches']),
+                    'mean_pA_token_on_HC': _safe_mean(native['sum_p_a_hc'], hc_count * 1.0),
+                    'mean_pB_token_on_HC': _safe_mean(native['sum_p_b_hc'], hc_count * 1.0),
+                    'UNI_FG_HC_count': int(native['uni_fg_hc']),
+                    'UNI_BG_HC_count': int(native['uni_bg_hc']),
+                })
+                native_training_file.flush()
 
     state_final_rows = None
     state_last_path = None
@@ -3127,6 +3630,18 @@ def train_model(
             'State-aware final validation snapshot complete | test deferred '
             'to unified post-matrix evaluation | path=%s', final_path,
         )
+    if _is_native_reference_mode(args):
+        native_last_path = os.path.join(trained_models_path, 'last_checkpoint.pth')
+        torch.save({
+            'epoch': args.num_epochs,
+            'appearance_state_dict': _model_state_snapshot(model1),
+            'structure_state_dict': _model_state_snapshot(model2),
+            **_native_checkpoint_metadata(
+                args, reference_context, best_val_eval_lists, best_epochs
+            ),
+        }, native_last_path)
+    else:
+        native_last_path = None
 
     elapsed = time.time() - training_start
     minutes, seconds = divmod(elapsed, 60)
@@ -3158,7 +3673,7 @@ def train_model(
         best_epochs[1],
         best_val_eval_lists[1][1],
     )
-    if _is_reference_mode(args.cps_mode):
+    if _uses_uni_reference(args):
         best_paths = [
             os.path.join(
                 trained_models_path,
@@ -3184,12 +3699,16 @@ def train_model(
             'epoch200_checkpoint': str(
                 Path(trained_models_path) / 'milestones' / 'epoch_200.pth'
             ),
-            'last_checkpoint': state_last_path,
+            'last_checkpoint': state_last_path if state_last_path is not None else native_last_path,
             'final_frozen_evaluation': state_final_rows,
             'test_policy': 'final_frozen_only_after_epoch200',
             'training_elapsed_seconds_including_final_evaluation': elapsed,
         }
-        completion_name = 'state_aware_training_complete.json'
+        completion_name = (
+            'native_training_complete.json'
+            if _is_native_reference_mode(args)
+            else 'state_aware_training_complete.json'
+        )
         with open(
             os.path.join(trained_models_path, completion_name),
             'w', encoding='utf-8'
@@ -3289,7 +3808,33 @@ def parse_args():
         ),
     )
     parser.add_argument(
-        '--uni_reference_memory',
+        '--reference-mode', '--reference_mode',
+        dest='reference_mode', default='none', choices=REFERENCE_MODES,
+        help=(
+            'Additional frozen UNI reference behavior. none preserves vanilla '
+            'CPS; pixel_legacy preserves the existing state-aware reference '
+            'path; native_suppress and native_suppress_hc are the two native '
+            '16x16 diagnostics.'
+        ),
+    )
+    parser.add_argument(
+        '--native-suppress-gamma', dest='native_suppress_gamma',
+        default=0.5, type=float,
+        help='Fixed CPS loss weight for native contradiction tokens.',
+    )
+    parser.add_argument(
+        '--native-hc-thresh', dest='native_hc_thresh',
+        default=0.9, type=float,
+        help='Fixed confidence threshold for native HC correction.',
+    )
+    parser.add_argument(
+        '--lambda-native-ref', dest='lambda_native_ref',
+        default=0.5, type=float,
+        help='Fixed weight of token-level HC UNI correction loss.',
+    )
+    parser.add_argument(
+        '--uni_reference_memory', '--reference-memory', '--reference_memory',
+        dest='uni_reference_memory',
         default=None,
         help=(
             'reference_memory.npz used by UNI reference modes; when omitted, '
@@ -3322,6 +3867,10 @@ def parse_args():
         help='Frozen UNI reference input resolution; default 224 preserves R224 behavior.',
     )
     parser.add_argument(
+        '--uni-input-size', dest='uni_input_size', type=int, default=None,
+        help='Alias for the frozen UNI reference resolution; native modes require 256.',
+    )
+    parser.add_argument(
         '--state_aware_log_interval',
         default=50,
         type=int,
@@ -3339,18 +3888,41 @@ def parse_args():
     parser.add_argument('-n', '--network', default='unet')
 
     args = parser.parse_args()
+    if args.uni_input_size is not None:
+        if args.reference_resolution != DEFAULT_REFERENCE_RESOLUTION and args.reference_resolution != args.uni_input_size:
+            parser.error('--uni-input-size conflicts with --reference-resolution')
+        args.reference_resolution = int(args.uni_input_size)
+    if args.reference_mode in NATIVE_REFERENCE_MODES:
+        if args.cps_mode != 'standard':
+            parser.error('native reference modes require --cps_mode standard')
+        if args.reference_resolution != 256:
+            parser.error('native reference modes require --uni-input-size 256')
+        if not (0.0 < args.native_suppress_gamma <= 1.0):
+            parser.error('--native-suppress-gamma must be in (0,1]')
+        if not (0.0 < args.native_hc_thresh <= 1.0):
+            parser.error('--native-hc-thresh must be in (0,1]')
+        if args.lambda_native_ref < 0.0:
+            parser.error('--lambda-native-ref must be non-negative')
+    if args.reference_mode == 'pixel_legacy' and args.cps_mode == 'standard':
+        # Explicit selector for the pre-existing UNI reference behavior; no
+        # separate implementation is introduced for the legacy branch.
+        args.cps_mode = 'state_aware'
     if args.milestone_interval < 0:
         parser.error('--milestone_interval must be non-negative')
     if args.best_save_interval < 0:
         parser.error('--best_save_interval must be non-negative')
     if args.state_aware_log_interval < 0:
         parser.error('--state_aware_log_interval must be non-negative')
-    if _is_reference_mode(args.cps_mode):
+    if _is_reference_mode(args.cps_mode) or _is_native_reference_mode(args):
         if args.uni_k != 5:
             parser.error('--uni_k must remain 5 for UNI reference modes')
         args.reference_grid = _reference_grid(args.reference_resolution)
     if args.path_trained_models is None:
-        if args.cps_mode == 'state_aware':
+        if args.reference_mode == 'native_suppress':
+            args.path_trained_models = 'checkpoints/native_s_seed{}'.format(args.sd)
+        elif args.reference_mode == 'native_suppress_hc':
+            args.path_trained_models = 'checkpoints/native_sc_seed{}'.format(args.sd)
+        elif args.cps_mode == 'state_aware':
             args.path_trained_models = (
                 'checkpoints/semi_{}_seed_{}_rgbstain_state_aware'.format(
                     args.labeled_ratio, args.sd
@@ -3365,7 +3937,11 @@ def parse_args():
             args.path_trained_models, args.reference_resolution
         )
     if args.path_seg_results is None:
-        if args.cps_mode == 'state_aware':
+        if args.reference_mode == 'native_suppress':
+            args.path_seg_results = 'seg_pred/native_s_seed{}'.format(args.sd)
+        elif args.reference_mode == 'native_suppress_hc':
+            args.path_seg_results = 'seg_pred/native_sc_seed{}'.format(args.sd)
+        elif args.cps_mode == 'state_aware':
             args.path_seg_results = (
                 'seg_pred/semi_{}_seed_{}_rgbstain_state_aware'.format(
                     args.labeled_ratio, args.sd

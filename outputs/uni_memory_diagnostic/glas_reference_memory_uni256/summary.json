@@ -1,0 +1,86 @@
+{
+  "memory_path": "checkpoints/glas_labeled10_seed24/reference_memory_uni256.npz",
+  "output_dir": "outputs/uni_memory_diagnostic/glas_reference_memory_uni256",
+  "feature_dim": 1024,
+  "num_foreground": 437,
+  "num_background": 355,
+  "num_total": 792,
+  "metadata": {
+    "memory_fg_count": 437,
+    "memory_bg_count": 355,
+    "feature_dim": 1024,
+    "token_grid": 16,
+    "top_k": 5,
+    "anchor_fg": 0.9,
+    "anchor_bg": 0.1,
+    "memory_per_image_class": 64,
+    "anchor_fallback_fraction": 0.1,
+    "anchor_fallback_count": 0,
+    "source_labeled_ratio": 10,
+    "seed": 2026,
+    "source_dataset": "GlaS",
+    "reference_resolution": 256
+  },
+  "raw_norms": {
+    "fg_mean": 1.0000000317048021,
+    "fg_std": 4.0220843985817767e-08,
+    "bg_mean": 1.0000000301111645,
+    "bg_std": 3.902792735479355e-08
+  },
+  "cosine": {
+    "within_fg": {
+      "count": 95266,
+      "mean": 0.27766715220398014,
+      "std": 0.16524073423301217,
+      "median": 0.2405379356415523,
+      "p05": 0.0771500718216175,
+      "p95": 0.640481746092236
+    },
+    "within_bg": {
+      "count": 62835,
+      "mean": 0.24951702993694044,
+      "std": 0.15597179769963312,
+      "median": 0.21788353660327486,
+      "p05": 0.058425895716775374,
+      "p95": 0.5572107559114038
+    },
+    "cross_fg_bg": {
+      "count": 155135,
+      "mean": 0.12822992023956126,
+      "std": 0.07601254944198955,
+      "median": 0.11500611136146233,
+      "p05": 0.03545124346812967,
+      "p95": 0.26670341694244354
+    },
+    "centroid_fg_margin": {
+      "count": 437,
+      "mean": 0.27288010913416716,
+      "std": 0.15112264959892208,
+      "median": 0.3077011866227075,
+      "p05": -0.005689276864762516,
+      "p95": 0.45837583756702455
+    },
+    "centroid_bg_margin": {
+      "count": 355,
+      "mean": 0.25900188465791496,
+      "std": 0.16508686472708328,
+      "median": 0.3096913502841778,
+      "p05": -0.08604943363676602,
+      "p95": 0.4480085182134196
+    },
+    "centroid_accuracy": 0.9292929292929293,
+    "centroid_balanced_accuracy": 0.9272053372868791,
+    "original_space_silhouette_cosine": 0.15520872977731606
+  },
+  "pca": {
+    "components": 50,
+    "explained_variance_ratio_first2": 0.19159265108587786,
+    "silhouette_euclidean": 0.11935180249558845
+  },
+  "tsne": {
+    "perplexity": 30.0,
+    "max_iter": 1500,
+    "random_state": 2026,
+    "interpretation": "qualitative visualization; do not treat t-SNE distances as metric evidence"
+  }
+}

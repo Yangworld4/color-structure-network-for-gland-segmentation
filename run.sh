@@ -54,14 +54,14 @@ echo "=== 所有实验已全部完成！ ==="
 python -u main.py \
     --dataset_name RINGS \
     --path_dataset datasets/RINGS \
-    --path_trained_models checkpoints/semi_10_seed_24_rgb \
-    --path_seg_results seg_pred/semi_10_seed_24_rgb \
+    --path_trained_models checkpoints/semi_10_seed_24_rgbstain \
+    --path_seg_results seg_pred/semi_10_seed_24_rgbstain \
     --labeled_ratio 10 \
     --sd 24 \
     --batch_size 2 \
     --num_epochs 200 \
     --network unet \
-    --input_mode rgb_rgb \
+    --input_mode rgb_stain \
     --step_size 50 \
     --lr 0.5 \
     --gamma 0.5 \

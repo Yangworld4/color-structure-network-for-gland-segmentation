@@ -1,0 +1,97 @@
+{
+  "uni_input": 256,
+  "native_grid": "16x16",
+  "images": 17,
+  "epochs": [
+    40,
+    80,
+    120,
+    160,
+    200
+  ],
+  "memory_leakage": false,
+  "contradiction": {
+    "num_tokens": 3931,
+    "num_images": 17,
+    "mean_WW_ratio": 0.5837891121851946,
+    "median_WW_ratio": 0.70703125,
+    "mean_HC90WW_ratio": 0.3900069161790893,
+    "mean_CC_ratio": 0.3619506804884253,
+    "mean_shared_FP_ratio": 0.40278892934367844,
+    "mean_shared_FN_ratio": 0.18100018284151614
+  },
+  "non_contradiction": {
+    "mean_WW_ratio": 0.06269321487171838,
+    "mean_HC90WW_ratio": 0.03851315446002387,
+    "mean_CC_ratio": 0.9130637958681385
+  },
+  "enrichment": {
+    "WW": 9.311690295184546,
+    "HC90WW": 10.12632684391139
+  },
+  "coverage": {
+    "WW_pixel": 0.5328335625758999,
+    "HC90WW_pixel": 0.5554678704809138,
+    "CC_exposure": 0.08621734495088568,
+    "WW_event": 0.15526247061896056,
+    "HC90WW_event": 0.20691687954411475
+  },
+  "direction": {
+    "all_contradiction": 0.8939621507960348,
+    "hc_contradiction": 0.9814432989690721,
+    "mixed_contradiction": 0.8944504896626768,
+    "WW_heavy": 0.8095401509951956,
+    "HC90WW_heavy": 0.7765567765567766
+  },
+  "counterfactual_step": {
+    "eta_0.1_improvement_rate": 0.7570592724497583,
+    "eta_0.25_improvement_rate": 0.7186466547952175
+  },
+  "purity": {
+    "P_WW_ratio_gt_25": 0.6667514627321293,
+    "P_WW_ratio_gt_50": 0.6011193080641059,
+    "P_HC90WW_ratio_gt_25": 0.46553039938946833,
+    "P_HC90WW_ratio_gt_50": 0.3780208598321038,
+    "P_CC_ratio_gt_50": 0.3594505214958026
+  },
+  "image_bootstrap_1000": {
+    "WW_enrichment": [
+      11.20193885392339,
+      9.620011904471582,
+      13.045387976501877
+    ],
+    "HC90WW_enrichment": [
+      23.938763617722884,
+      14.763544130960563,
+      36.85900621381968
+    ],
+    "WW_coverage": [
+      0.5328335625758999,
+      0.47473767018368623,
+      0.5876810341033568
+    ],
+    "HC90WW_coverage": [
+      0.5554678704809138,
+      0.49018388770520366,
+      0.6183732194874815
+    ],
+    "direction_accuracy": [
+      0.8580999084907105,
+      0.8261157669615457,
+      0.8895454291897031
+    ],
+    "WW_event_coverage": [
+      0.16732464387190443,
+      0.152465260654616,
+      0.18274650624353836
+    ],
+    "HC90WW_event_coverage": [
+      0.2328891435667895,
+      0.20659704693689732,
+      0.25989028026133676
+    ]
+  },
+  "cps_prediction_source": "frozen standard CPS current-weight milestones; validation states loaded from E1",
+  "memory_path": "/data/mission/models/Exp/DUAL/checkpoints/glas_labeled10_seed24/reference_memory_uni256.npz",
+  "output_directory": "/data/mission/models/Exp/DUAL/outputs/native_scale_reference/glas_standard_cps_uni256"
+}
