@@ -173,6 +173,15 @@ NATIVE_TRAINING_FIELDS = [
     'fraction_weight_0.8_1.0', 'gap_Q1_mean_gap', 'gap_Q1_mean_weight',
     'gap_Q2_mean_gap', 'gap_Q2_mean_weight', 'gap_Q3_mean_gap',
     'gap_Q3_mean_weight', 'gap_Q4_mean_gap', 'gap_Q4_mean_weight',
+    'mean_D_contradiction', 'D_p10', 'D_p25', 'D_p50', 'D_p75', 'D_p90',
+    'mean_contradiction_weight', 'contradiction_weight_p10',
+    'contradiction_weight_p25', 'contradiction_weight_p50',
+    'contradiction_weight_p75', 'contradiction_weight_p90',
+    'fraction_weight_0_0.1', 'fraction_weight_0.1_0.2',
+    'fraction_weight_0.2_0.3', 'fraction_weight_0.3_0.4',
+    'fraction_weight_0.4_0.5', 'fraction_zero_weight',
+    'D_Q1_mean_D', 'D_Q1_mean_weight', 'D_Q2_mean_D', 'D_Q2_mean_weight',
+    'D_Q3_mean_D', 'D_Q3_mean_weight', 'D_Q4_mean_D', 'D_Q4_mean_weight',
 ]
 
 REFERENCE_CPS_MODES = (
@@ -184,6 +193,7 @@ REFERENCE_CPS_MODES = (
 # retain exactly their previous behavior.
 NATIVE_REFERENCE_MODES = (
     'native_suppress', 'native_suppress_hc', 'native_suppress_adaptive',
+    'native_suppress_d_adaptive',
 )
 REFERENCE_MODES = ('none', 'pixel_legacy') + NATIVE_REFERENCE_MODES
 
@@ -1274,6 +1284,15 @@ def _build_native_reference_targets(logits_a, logits_b, rgb_input, context, cfg,
             (1.0 - relative_gap).unsqueeze(1),
             torch.ones_like(margin),
         ).detach()
+    elif args.reference_mode == 'native_suppress_d_adaptive':
+        # D-Adaptive Native-S: preserve Fixed Native-S at D->0 and apply
+        # only the requested additional suppression.  Keep the explicit
+        # channel dimension so W_token is [B,1,16,16].
+        weight_token = torch.where(
+            contradiction.unsqueeze(1),
+            torch.clamp(0.5 - d_positive, min=0.0, max=0.5).unsqueeze(1),
+            torch.ones_like(margin),
+        ).detach()
     else:
         weight_token = torch.where(
             contradiction,
@@ -1289,6 +1308,17 @@ def _build_native_reference_targets(logits_a, logits_b, rgb_input, context, cfg,
             raise AssertionError('Direct adaptive native weight escaped [0,1]')
         if weight_token.requires_grad or relative_gap.requires_grad:
             raise AssertionError('Native adaptive weight/gap must be detached')
+    elif args.reference_mode == 'native_suppress_d_adaptive':
+        if not torch.isfinite(d_positive).all().item():
+            raise FloatingPointError('D-Adaptive D contains NaN/Inf')
+        if not torch.all((weight_token >= 0.0) & (weight_token <= 1.0)).item():
+            raise AssertionError('D-Adaptive weight escaped [0,1]')
+        if contradiction.any().item() and not torch.all(
+            weight_token[:, 0][contradiction] <= 0.5
+        ).item():
+            raise AssertionError('D-Adaptive contradiction weight exceeded 0.5')
+        if weight_token.requires_grad or d_positive.requires_grad or contradiction.requires_grad:
+            raise AssertionError('D-Adaptive D/contradiction/weight must be detached')
     if not torch.all(weight_token[:, 0][~contradiction].eq(1.0)).item():
         raise AssertionError('Non-contradiction native token weight changed from one')
     return {
@@ -1648,6 +1678,13 @@ def _run_native_startup_checks(args, context, models, optimizers):
         print('Adaptive strategy:    direct_relative_semantic_gap')
         print('CDF:                  disabled')
         print('Running buffer:       disabled')
+    if args.reference_mode == 'native_suppress_d_adaptive':
+        print('Reference mode:       native_suppress_d_adaptive')
+        print('Adaptive strategy:    direct_D_extra_suppression')
+        print('Weight formula:       no contradiction=1; contradiction=max(0,0.5-D)')
+        print('CDF:                  disabled')
+        print('Running buffer:       disabled')
+        print('Extra hyperparameters: none')
 
 
 def _run_direct_gap_numerical_checks():
@@ -1665,6 +1702,31 @@ def _run_direct_gap_numerical_checks():
     assert weight.min().item() >= 0.0 and weight.max().item() <= 1.0
     assert not weight.requires_grad
     print('Direct gap numerical checks: PASS')
+
+
+def _run_d_adaptive_numerical_checks():
+    """Exact algebra checks for the closed D-Adaptive Native-S formula."""
+    d = torch.tensor([-0.1, 0.0, 0.01, 0.10, 0.20, 0.50, 0.75], device='cuda')
+    agreement = torch.ones_like(d, dtype=torch.bool)
+    contradiction = agreement & d.gt(0.0)
+    weight = torch.ones_like(d)
+    weight[contradiction] = torch.clamp(0.5 - d[contradiction], min=0.0, max=0.5)
+    assert torch.isfinite(d).all().item() and torch.isfinite(weight).all().item()
+    assert torch.allclose(weight[2], torch.tensor(0.49, device='cuda'), atol=1e-6, rtol=0.0)
+    assert torch.allclose(weight[3], torch.tensor(0.40, device='cuda'), atol=1e-6, rtol=0.0)
+    assert torch.allclose(weight[4], torch.tensor(0.30, device='cuda'), atol=1e-6, rtol=0.0)
+    assert weight[5].item() == 0.0 and weight[6].item() == 0.0
+    assert weight[0].item() == 1.0 and weight[1].item() == 1.0
+    assert weight.min().item() >= 0.0 and weight.max().item() <= 1.0
+    assert not weight.requires_grad
+    # Explicit disagreement check: disagreement is always trusted at weight 1.
+    disagreement = torch.tensor([True, False], device='cuda')
+    d2 = torch.tensor([0.4, 0.4], device='cuda')
+    c2 = (~disagreement) & d2.gt(0.0)
+    w2 = torch.ones_like(d2)
+    w2[c2] = torch.clamp(0.5 - d2[c2], min=0.0, max=0.5)
+    assert w2[0].item() == 1.0 and torch.allclose(w2[1], torch.tensor(0.1, device='cuda'), atol=1e-6, rtol=0.0)
+    print('D-Adaptive Native-S numerical checks: PASS')
 
 
 def _run_state_aware_startup_checks(args, cfg, context, models, optimizers, losses):
@@ -1949,7 +2011,7 @@ def train_one_epoch(
                 native_totals['sum_p_b_hc'] += float(reference_targets['p_b_token'][hc.unsqueeze(1)].sum().item())
                 native_totals['uni_fg_hc'] += float((reference_targets['uni_fg'] & hc.unsqueeze(1)).sum().item())
             native_totals['uni_bg_hc'] += float(((~reference_targets['uni_fg']) & hc.unsqueeze(1)).sum().item())
-            if args.reference_mode == 'native_suppress_adaptive':
+            if args.reference_mode in ('native_suppress_adaptive', 'native_suppress_d_adaptive'):
                 contradiction_mask = reference_targets['contradiction']
                 native_totals['s_cur_values'].extend(reference_targets['s_cur'][contradiction_mask].detach().cpu().tolist())
                 native_totals['s_opp_values'].extend(reference_targets['s_opp'][contradiction_mask].detach().cpu().tolist())
@@ -2891,6 +2953,14 @@ def _native_checkpoint_metadata(args, context, best_val_eval_lists, best_epochs)
             'native_adaptive_weight_floor': 0.0,
             'native_adaptive_weight_ceiling': 1.0,
         })
+    if args.reference_mode == 'native_suppress_d_adaptive':
+        metadata.update({
+            'native_d_adaptive_weight_definition': 'w=1 when disagreement or D<=0; w=max(0,0.5-D) when agreement and D>0',
+            'native_d_adaptive_weight_floor_on_contradiction': 0.0,
+            'native_d_adaptive_weight_ceiling_on_contradiction': 0.5,
+            'native_d_adaptive_history': False,
+            'native_d_adaptive_extra_hyperparameters': 'none',
+        })
     return metadata
 
 
@@ -3065,9 +3135,10 @@ def train_model(
             'native_suppress_gamma': args.native_suppress_gamma,
             'native_hc_thresh': args.native_hc_thresh,
             'lambda_native_ref': args.lambda_native_ref,
-            'adaptive_strategy': 'direct_relative_semantic_gap' if args.reference_mode == 'native_suppress_adaptive' else 'fixed_contradiction_suppression',
-            'cdf': 'disabled' if args.reference_mode == 'native_suppress_adaptive' else 'not_applicable',
-            'running_buffer': 'disabled' if args.reference_mode == 'native_suppress_adaptive' else 'not_applicable',
+            'adaptive_strategy': ('direct_relative_semantic_gap' if args.reference_mode == 'native_suppress_adaptive' else 'direct_D_extra_suppression' if args.reference_mode == 'native_suppress_d_adaptive' else 'fixed_contradiction_suppression'),
+            'cdf': 'disabled' if args.reference_mode in ('native_suppress_adaptive', 'native_suppress_d_adaptive') else 'not_applicable',
+            'running_buffer': 'disabled' if args.reference_mode in ('native_suppress_adaptive', 'native_suppress_d_adaptive') else 'not_applicable',
+            'd_adaptive_formula': 'w=1 if disagreement or D<=0 else max(0,0.5-D)' if args.reference_mode == 'native_suppress_d_adaptive' else 'not_applicable',
             'contradiction_gate': 'detach pooled pA/pB; agreement and UNI margin sign only; no GT',
             'loss_weight_expansion': 'nearest 16x16 -> student pixel resolution',
             'hc_correction': (
@@ -3084,6 +3155,7 @@ def train_model(
                     'native_suppress': 'native_s',
                     'native_suppress_hc': 'native_sc',
                     'native_suppress_adaptive': 'native_gap_adaptive_s',
+                    'native_suppress_d_adaptive': 'native_d_adaptive_s',
                 }[args.reference_mode]
             )).write_text(json.dumps(native_config, indent=2, ensure_ascii=False), encoding='utf-8')
     reference_context = None
@@ -3184,6 +3256,8 @@ def train_model(
         _run_native_startup_checks(args, reference_context, models, optimizers)
         if args.reference_mode == 'native_suppress_adaptive':
             _run_direct_gap_numerical_checks()
+        if args.reference_mode == 'native_suppress_d_adaptive':
+            _run_d_adaptive_numerical_checks()
         logger.info(
             'Native-scale reference startup checks passed | mode=%s | '
             'UNI input=256 | token grid=16x16 | gamma=%.4f | hc_thresh=%.4f | lambda_ref=%.4f',
@@ -3279,6 +3353,7 @@ def train_model(
                 'native_suppress': 'native_s',
                 'native_suppress_hc': 'native_sc',
                 'native_suppress_adaptive': 'native_gap_adaptive_s',
+                'native_suppress_d_adaptive': 'native_d_adaptive_s',
             }[args.reference_mode]
             native_training_file = stack.enter_context(open(
                 native_root / 'training_{}.csv'.format(mode_tag),
@@ -3697,6 +3772,30 @@ def train_model(
                     'fraction_weight_0.6_0.8': float(((adaptive_weights >= .6) & (adaptive_weights < .8)).mean()) if adaptive_weights.size else None,
                     'fraction_weight_0.8_1.0': float(((adaptive_weights >= .8) & (adaptive_weights <= 1.0)).mean()) if adaptive_weights.size else None,
                 }
+                if d_values.size:
+                    adaptive_stats.update({
+                        'mean_D_contradiction': float(d_values.mean()),
+                        'D_p10': float(np.percentile(d_values, 10)),
+                        'D_p25': float(np.percentile(d_values, 25)),
+                        'D_p50': float(np.percentile(d_values, 50)),
+                        'D_p75': float(np.percentile(d_values, 75)),
+                        'D_p90': float(np.percentile(d_values, 90)),
+                    })
+                if adaptive_weights.size:
+                    adaptive_stats.update({
+                        'mean_contradiction_weight': float(adaptive_weights.mean()),
+                        'contradiction_weight_p10': float(np.percentile(adaptive_weights, 10)),
+                        'contradiction_weight_p25': float(np.percentile(adaptive_weights, 25)),
+                        'contradiction_weight_p50': float(np.percentile(adaptive_weights, 50)),
+                        'contradiction_weight_p75': float(np.percentile(adaptive_weights, 75)),
+                        'contradiction_weight_p90': float(np.percentile(adaptive_weights, 90)),
+                        'fraction_weight_0_0.1': float(((adaptive_weights >= 0.0) & (adaptive_weights < .1)).mean()),
+                        'fraction_weight_0.1_0.2': float(((adaptive_weights >= .1) & (adaptive_weights < .2)).mean()),
+                        'fraction_weight_0.2_0.3': float(((adaptive_weights >= .2) & (adaptive_weights < .3)).mean()),
+                        'fraction_weight_0.3_0.4': float(((adaptive_weights >= .3) & (adaptive_weights < .4)).mean()),
+                        'fraction_weight_0.4_0.5': float(((adaptive_weights >= .4) & (adaptive_weights <= .5)).mean()),
+                        'fraction_zero_weight': float((adaptive_weights == 0.0).mean()),
+                    })
                 if adaptive_weights.size:
                     if not np.isfinite(relative_gaps).all() or not np.isfinite(adaptive_weights).all() or not np.all((relative_gaps >= 0.0) & (relative_gaps <= 1.0)) or not np.all((adaptive_weights >= 0.0) & (adaptive_weights <= 1.0)):
                         raise AssertionError('Direct relative gap/weight escaped [0,1] or became non-finite')
@@ -3719,6 +3818,26 @@ def train_model(
                         })
                         if len(q_weight_means) == 4 and not all(q_weight_means[i] >= q_weight_means[i + 1] - 1e-6 for i in range(3)):
                             raise AssertionError('Direct gap quartiles are not ordered by decreasing weight')
+                    if args.reference_mode == 'native_suppress_d_adaptive':
+                        edges = np.quantile(d_values, [0.25, .5, .75])
+                        d_groups = [
+                            d_values <= edges[0],
+                            (d_values > edges[0]) & (d_values <= edges[1]),
+                            (d_values > edges[1]) & (d_values <= edges[2]),
+                            d_values > edges[2],
+                        ]
+                        q_d_means = [float(d_values[g].mean()) if g.any() else None for g in d_groups]
+                        q_w_means = [float(adaptive_weights[g].mean()) if g.any() else None for g in d_groups]
+                        adaptive_stats.update({
+                            'D_Q1_mean_D': q_d_means[0], 'D_Q1_mean_weight': q_w_means[0],
+                            'D_Q2_mean_D': q_d_means[1], 'D_Q2_mean_weight': q_w_means[1],
+                            'D_Q3_mean_D': q_d_means[2], 'D_Q3_mean_weight': q_w_means[2],
+                            'D_Q4_mean_D': q_d_means[3], 'D_Q4_mean_weight': q_w_means[3],
+                        })
+                        if not all(q_d_means[i] < q_d_means[i + 1] for i in range(3)):
+                            raise AssertionError('D-Adaptive D quartiles are not strictly ordered')
+                        if not all(q_w_means[i] >= q_w_means[i + 1] - 1e-6 for i in range(3)):
+                            raise AssertionError('D-Adaptive weights are not monotonically decreasing by D quartile')
                 native_training_writer.writerow({
                     'experiment': args.reference_mode,
                     'epoch': epoch + 1,
@@ -3971,8 +4090,9 @@ def parse_args():
             'Additional frozen UNI reference behavior. none preserves vanilla '
             'CPS; pixel_legacy preserves the existing state-aware reference '
             'path; native_suppress and native_suppress_hc preserve the existing '
-            'native modes; native_suppress_adaptive is direct relative '
-            'semantic-gap weighting.'
+            'native modes; native_suppress_adaptive is legacy direct relative '
+            'semantic-gap weighting; native_suppress_d_adaptive is exactly '
+            'w=max(0,0.5-D) on contradiction.'
         ),
     )
     parser.add_argument(
@@ -4083,6 +4203,8 @@ def parse_args():
             args.path_trained_models = 'checkpoints/native_sc_seed{}'.format(args.sd)
         elif args.reference_mode == 'native_suppress_adaptive':
             args.path_trained_models = 'checkpoints/native_gap_adaptive_s_seed{}'.format(args.sd)
+        elif args.reference_mode == 'native_suppress_d_adaptive':
+            args.path_trained_models = 'checkpoints/native_d_adaptive_s_seed{}'.format(args.sd)
         elif args.cps_mode == 'state_aware':
             args.path_trained_models = (
                 'checkpoints/semi_{}_seed_{}_rgbstain_state_aware'.format(
@@ -4104,6 +4226,8 @@ def parse_args():
             args.path_seg_results = 'seg_pred/native_sc_seed{}'.format(args.sd)
         elif args.reference_mode == 'native_suppress_adaptive':
             args.path_seg_results = 'seg_pred/native_gap_adaptive_s_seed{}'.format(args.sd)
+        elif args.reference_mode == 'native_suppress_d_adaptive':
+            args.path_seg_results = 'seg_pred/native_d_adaptive_s_seed{}'.format(args.sd)
         elif args.cps_mode == 'state_aware':
             args.path_seg_results = (
                 'seg_pred/semi_{}_seed_{}_rgbstain_state_aware'.format(

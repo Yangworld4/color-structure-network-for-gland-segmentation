@@ -1,0 +1,108 @@
+{
+  "implementation": {
+    "mode": "native_suppress_d_adaptive",
+    "formula": "w=1 if disagreement or D<=0; otherwise max(0,0.5-D)",
+    "uni_input": [
+      256,
+      256
+    ],
+    "native_grid": [
+      16,
+      16
+    ],
+    "cdf": false,
+    "running_buffer": false,
+    "extra_hyperparameters": "none",
+    "validation_used_for_weighting": false,
+    "gt_used_for_weighting": false
+  },
+  "formal_training": {
+    "epochs": 200,
+    "seed": 24
+  },
+  "best_epochs": {
+    "fixed_dice": 191,
+    "d_adaptive_dice": 142
+  },
+  "fixed_best_dice": {
+    "Dice": 0.8834575,
+    "IoU": 0.791244,
+    "WW_rate": 0.097028844496783,
+    "HC90WW_rate": 0.0750615737017463,
+    "CC_rate": 0.8902273739085478,
+    "Shared_FP_rate": 0.0483434340533088,
+    "Shared_FN_rate": 0.0486854104434742
+  },
+  "d_adaptive_best_dice": {
+    "Dice": 0.8886315,
+    "IoU": 0.7995975,
+    "WW_rate": 0.0919027889476103,
+    "HC90WW_rate": 0.0347128475413602,
+    "CC_rate": 0.8714850930606618,
+    "Shared_FP_rate": 0.0598826688878676,
+    "Shared_FN_rate": 0.0320201200597426
+  },
+  "epoch_200": {
+    "fixed": {
+      "Dice": 0.8819675,
+      "IoU": 0.7888634999999999,
+      "WW_rate": 0.098157994887408,
+      "HC90WW_rate": 0.074628942153033,
+      "CC_rate": 0.8885794246897978,
+      "Shared_FP_rate": 0.0486737419577205,
+      "Shared_FN_rate": 0.0494842529296875
+    },
+    "d_adaptive": {
+      "Dice": 0.885392,
+      "IoU": 0.7943534999999999,
+      "WW_rate": 0.0929412841796875,
+      "HC90WW_rate": 0.0708824606502757,
+      "CC_rate": 0.889530855066636,
+      "Shared_FP_rate": 0.0482070025275735,
+      "Shared_FN_rate": 0.0447342816521139
+    }
+  },
+  "outcome_basis": "matched epoch 200 (best-Dice rows are reported separately)",
+  "d_weight_epoch_200": {
+    "mean_D": 0.0964025549118482,
+    "D_p10": 0.0087006449699401,
+    "D_p50": 0.062235951423645,
+    "D_p90": 0.2316467940807342,
+    "mean_contradiction_weight": 0.4035974450990047,
+    "weight_p10": 0.2683532059192657,
+    "weight_p50": 0.437764048576355,
+    "weight_p90": 0.4912993550300598,
+    "fraction_zero_weight": 0.0
+  },
+  "D_quartiles_epoch_200": [
+    {
+      "quartile": "Q1",
+      "mean_D": 0.0112935566711564,
+      "mean_weight": 0.4887064433721609
+    },
+    {
+      "quartile": "Q2",
+      "mean_D": 0.0402326950526446,
+      "mean_weight": 0.4597673049473554
+    },
+    {
+      "quartile": "Q3",
+      "mean_D": 0.0953138239529668,
+      "mean_weight": 0.4046861762208076
+    },
+    {
+      "quartile": "Q4",
+      "mean_D": 0.2390182751608311,
+      "mean_weight": 0.2609817246653943
+    }
+  ],
+  "D_to_weight_monotonic": true,
+  "outcome": "Outcome A",
+  "conclusion": "D-dependent extra suppression improves Fixed Native-S.",
+  "artifacts": {
+    "training_log": "training_log.csv",
+    "validation_metrics": "validation_metrics.csv",
+    "weight_statistics": "weight_statistics.csv",
+    "comparison": "fixed_vs_d_adaptive_selected.csv"
+  }
+}

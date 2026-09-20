@@ -1,0 +1,35 @@
+{
+  "methods": {
+    "Original_CPS": "/data/mission/models/Exp/DUAL/checkpoints/semi_10_seed_24_rgbstain/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image-input_mode=rgb_stain/milestones",
+    "D_Adaptive": "/data/mission/models/Exp/DUAL/checkpoints/native_d_adaptive_s_seed24/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5.0-w=20-7-61-image-input_mode=rgb_stain-cps_mode=standard-reference_mode=native_suppress_d_adaptive/milestones"
+  },
+  "memory": "/data/mission/models/Exp/DUAL/checkpoints/glas_labeled10_seed24/reference_memory_uni256.npz",
+  "common_epochs": [
+    10,
+    20,
+    30,
+    40,
+    50,
+    60,
+    70,
+    80,
+    90,
+    100,
+    110,
+    120,
+    130,
+    140,
+    150,
+    160,
+    170,
+    180,
+    190,
+    200
+  ],
+  "validation_images": 17,
+  "state_definition": "CC=A=B=GT; WW=A=B!=GT; DIS=A!=B; threshold p>=0.5",
+  "contradiction_definition": "agreement token and D=S_opp-S_cur>0; no GT",
+  "deterministic": true,
+  "shuffle": false,
+  "random_augmentation": false
+}

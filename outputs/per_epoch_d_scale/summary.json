@@ -1,0 +1,39 @@
+{
+  "input": "/data/mission/models/Exp/DUAL/outputs/native_scale_reference/glas_standard_cps_uni256/token_records.csv",
+  "epochs": [
+    40,
+    80,
+    120,
+    160,
+    200
+  ],
+  "filter": {
+    "agreement": true,
+    "contradiction": true,
+    "D_gt": 0,
+    "total_input_rows": 21760,
+    "selected_rows": 3931
+  },
+  "median_D": {
+    "40": 0.07989728450775146,
+    "80": 0.08066946268081665,
+    "120": 0.08058706670999527,
+    "160": 0.07920403778553009,
+    "200": 0.07606980204582214
+  },
+  "p90_D": {
+    "40": 0.21565188914537445,
+    "80": 0.19907572865486145,
+    "120": 0.20131165534257903,
+    "160": 0.20645471960306164,
+    "200": 0.21274393200874334
+  },
+  "median_ratio_max_over_min": 1.0604663152818952,
+  "median_absolute_range": 0.004599660634994507,
+  "p90_ratio_max_over_min": 1.0832656024992775,
+  "max_abs_relative_median_drift": 0.04790503814319349,
+  "max_abs_relative_p90_drift": 0.07686536183906033,
+  "distribution_stability": "stable",
+  "outcome": "A",
+  "conclusion": "Outcome A \u2014 Raw D has a relatively stable numerical scale across training epochs. A fixed D-to-weight mapping is plausible."
+}
