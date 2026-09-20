@@ -163,6 +163,14 @@ NATIVE_TRAINING_FIELDS = [
     'mean_CPS_weight', 'loss_sup', 'loss_cps_raw', 'loss_cps_weighted',
     'loss_native_ref', 'loss_total', 'mean_pA_token_on_HC',
     'mean_pB_token_on_HC', 'UNI_FG_HC_count', 'UNI_BG_HC_count',
+    'buffer_size', 'buffer_num_seen', 'mean_D_contradiction',
+    'median_D_contradiction', 'D_p10', 'D_p25', 'D_p50', 'D_p75', 'D_p90',
+    'mean_adaptive_weight', 'median_adaptive_weight', 'weight_p10',
+    'weight_p25', 'weight_p50', 'weight_p75', 'weight_p90',
+    'fraction_weight_0.50_0.60', 'fraction_weight_0.60_0.70',
+    'fraction_weight_0.70_0.80', 'fraction_weight_0.80_0.90',
+    'fraction_weight_0.90_1.00', 'D_Q1_mean_weight', 'D_Q2_mean_weight',
+    'D_Q3_mean_weight', 'D_Q4_mean_weight',
 ]
 
 REFERENCE_CPS_MODES = (
@@ -172,7 +180,9 @@ REFERENCE_CPS_MODES = (
 # ``cps_mode`` remains the legacy CPS/state-aware selector.  The independent
 # reference-mode selector below is deliberately additive so existing commands
 # retain exactly their previous behavior.
-NATIVE_REFERENCE_MODES = ('native_suppress', 'native_suppress_hc')
+NATIVE_REFERENCE_MODES = (
+    'native_suppress', 'native_suppress_hc', 'native_suppress_adaptive',
+)
 REFERENCE_MODES = ('none', 'pixel_legacy') + NATIVE_REFERENCE_MODES
 
 
@@ -1236,11 +1246,50 @@ def _build_native_reference_targets(logits_a, logits_b, rgb_input, context, cfg,
         ties = margin.eq(0.0)
     contradiction = agreement & ~ties & uni_fg.ne(hard_a)
     hc = contradiction & conf_a.ge(float(args.native_hc_thresh)) & conf_b.ge(float(args.native_hc_thresh))
-    weight_token = torch.where(
-        contradiction,
-        torch.full_like(margin, float(args.native_suppress_gamma)),
-        torch.ones_like(margin),
-    )
+    # D=S_opp-S_cur at native scale.  This is detached reference evidence;
+    # it must never enter the Student autograd graph.
+    d_token = torch.where(hard_a[:, 0], -margin[:, 0], margin[:, 0]).detach()
+    contradiction_mask = contradiction[:, 0]
+    if args.reference_mode == 'native_suppress_adaptive':
+        history = context.get('native_d_buffer', [])
+        if len(history) < int(args.native_d_buffer_min_size):
+            contradiction_weight = torch.full_like(
+                d_token, float(args.native_suppress_gamma)
+            )
+        else:
+            history_tensor = torch.as_tensor(
+                history, device=d_token.device, dtype=d_token.dtype
+            )
+            current_d = d_token[contradiction_mask].detach()
+            # Historical buffer only: the current batch is appended after
+            # optimizer.step(), so a token cannot change its own percentile.
+            rank = (
+                history_tensor.unsqueeze(0)
+                .le(current_d.unsqueeze(1))
+                .to(d_token.dtype)
+                .mean(dim=1)
+            ) if current_d.numel() else current_d
+            adaptive_values = 1.0 - (
+                1.0 - float(args.native_suppress_gamma)
+            ) * rank
+            contradiction_weight = torch.ones_like(d_token)
+            if current_d.numel():
+                contradiction_weight[contradiction_mask] = adaptive_values
+        weight_token = torch.where(
+            contradiction_mask.unsqueeze(1), contradiction_weight.unsqueeze(1),
+            torch.ones_like(margin),
+        )
+    else:
+        weight_token = torch.where(
+            contradiction,
+            torch.full_like(margin, float(args.native_suppress_gamma)),
+            torch.ones_like(margin),
+        )
+    if not torch.isfinite(weight_token).all().item():
+        raise FloatingPointError('Native token weight contains NaN/Inf')
+    if args.reference_mode == 'native_suppress_adaptive':
+        if not torch.all((weight_token >= float(args.native_suppress_gamma)) & (weight_token <= 1.0)).item():
+            raise AssertionError('Adaptive native weight escaped [w_min,1]')
     if not torch.all(weight_token[~contradiction].eq(1.0)).item():
         raise AssertionError('Non-contradiction native token weight changed from one')
     return {
@@ -1248,7 +1297,8 @@ def _build_native_reference_targets(logits_a, logits_b, rgb_input, context, cfg,
         'hard_a': hard_a, 'hard_b': hard_b,
         'conf_a': conf_a, 'conf_b': conf_b,
         'agreement': agreement, 'uni_fg': uni_fg, 'ties': ties,
-        'margin': margin[:, 0], 'contradiction': contradiction[:, 0],
+        'margin': margin[:, 0], 'd_token': d_token,
+        'contradiction': contradiction[:, 0],
         'hc': hc[:, 0], 'weight_token': weight_token,
     }
 
@@ -1294,6 +1344,22 @@ def compute_native_hc_correction_loss(targets):
     bce_b = F.binary_cross_entropy(p_b.clamp(1e-6, 1.0 - 1e-6), target, reduction='none')
     hc_mask = hc.unsqueeze(1)
     return 0.5 * (bce_a[hc_mask].mean() + bce_b[hc_mask].mean())
+
+
+def _update_native_d_buffer(context, d_values, max_size):
+    """Append detached positive contradiction D values using FIFO semantics."""
+    if not d_values:
+        return
+    buffer = context.setdefault('native_d_buffer', [])
+    buffer.extend(float(value) for value in d_values)
+    max_size = int(max_size)
+    if max_size <= 0:
+        raise ValueError('native D buffer size must be positive')
+    if len(buffer) > max_size:
+        del buffer[:-max_size]
+    context['native_d_buffer_num_seen'] = int(
+        context.get('native_d_buffer_num_seen', 0) + len(d_values)
+    )
 
 
 def _add_state_aware_directional_weights(targets):
@@ -1589,10 +1655,21 @@ def _run_native_startup_checks(args, context, models, optimizers):
         raise AssertionError('UNI parameters entered CPS optimizer')
     if Path(context['memory_path']).name != 'reference_memory_uni256.npz':
         raise AssertionError('Native mode must use reference_memory_uni256.npz')
+    if args.reference_mode == 'native_suppress_adaptive':
+        if int(args.native_d_buffer_size) <= 0:
+            raise AssertionError('Adaptive native D buffer size must be positive')
+        if not (0 <= int(args.native_d_buffer_min_size) <= int(args.native_d_buffer_size)):
+            raise AssertionError('Adaptive native buffer warm-up is invalid')
+        if context.get('native_d_buffer') is None:
+            raise AssertionError('Adaptive native D buffer was not initialized')
     print('UNI input shape       = [B,3,256,256]')
     print('UNI patch-token shape = [B,256,1024]')
     print('native grid           = 16x16')
     print('feature dim           = 1024')
+    if args.reference_mode == 'native_suppress_adaptive':
+        print('adaptive D buffer     = {} (warm-up {})'.format(
+            args.native_d_buffer_size, args.native_d_buffer_min_size
+        ))
 
 
 def _run_state_aware_startup_checks(args, cfg, context, models, optimizers, losses):
@@ -1701,6 +1778,7 @@ def train_one_epoch(
             'total_loss': 0.0, 'batches': 0.0,
             'sum_p_a_hc': 0.0, 'sum_p_b_hc': 0.0,
             'uni_fg_hc': 0.0, 'uni_bg_hc': 0.0,
+            'd_values': [], 'adaptive_weights': [],
         }
     mask_list = None
 
@@ -1838,6 +1916,19 @@ def train_one_epoch(
         optimizer2.step()
         global_step += 1
 
+        # Adaptive Native-S updates its scalar-only FIFO after the current
+        # batch has consumed the historical CDF.  No validation/E4 data can
+        # enter this buffer.
+        if (
+            _is_native_reference_mode(args)
+            and args.reference_mode == 'native_suppress_adaptive'
+        ):
+            contradiction_mask = reference_targets['contradiction']
+            d_values = reference_targets['d_token'][contradiction_mask].detach().cpu().tolist()
+            _update_native_d_buffer(
+                reference_context, d_values, args.native_d_buffer_size
+            )
+
         if reference_context is not None and args.cps_mode == 'state_aware':
             state_stats = _state_batch_stats(
                 reference_targets, unsup_prediction1, unsup_prediction2,
@@ -1874,7 +1965,13 @@ def train_one_epoch(
                 native_totals['sum_p_a_hc'] += float(reference_targets['p_a_token'][hc.unsqueeze(1)].sum().item())
                 native_totals['sum_p_b_hc'] += float(reference_targets['p_b_token'][hc.unsqueeze(1)].sum().item())
                 native_totals['uni_fg_hc'] += float((reference_targets['uni_fg'] & hc.unsqueeze(1)).sum().item())
-                native_totals['uni_bg_hc'] += float(((~reference_targets['uni_fg']) & hc.unsqueeze(1)).sum().item())
+            native_totals['uni_bg_hc'] += float(((~reference_targets['uni_fg']) & hc.unsqueeze(1)).sum().item())
+            if args.reference_mode == 'native_suppress_adaptive':
+                contradiction_mask = reference_targets['contradiction']
+                d_values = reference_targets['d_token'][contradiction_mask].detach().cpu().tolist()
+                weight_values = reference_targets['weight_token'][:, 0][contradiction_mask].detach().cpu().tolist()
+                native_totals['d_values'].extend(float(value) for value in d_values)
+                native_totals['adaptive_weights'].extend(float(value) for value in weight_values)
 
         metrics_writer.writerow(
             build_iteration_metrics(
@@ -2781,7 +2878,7 @@ def _state_aware_checkpoint_metadata(args, context, best_val_eval_lists, best_ep
 
 
 def _native_checkpoint_metadata(args, context, best_val_eval_lists, best_epochs):
-    return {
+    metadata = {
         'dataset_name': args.dataset_name, 'labeled_ratio': args.labeled_ratio,
         'seed': args.sd, 'input_mode': args.input_mode, 'network': args.network,
         'cps_mode': args.cps_mode, 'reference_mode': args.reference_mode,
@@ -2801,6 +2898,18 @@ def _native_checkpoint_metadata(args, context, best_val_eval_lists, best_epochs)
         'native_hc_target': 'UNI sign at token scale; BCE on undetached pooled probabilities',
         'test_evaluation_policy': 'final_frozen_only',
     }
+    if args.reference_mode == 'native_suppress_adaptive':
+        metadata.update({
+            'native_d_buffer': list(context.get('native_d_buffer', [])),
+            'native_d_buffer_num_seen': int(context.get('native_d_buffer_num_seen', 0)),
+            'native_d_buffer_size': int(args.native_d_buffer_size),
+            'native_d_buffer_min_size': int(args.native_d_buffer_min_size),
+            'native_adaptive_weight_definition': (
+                'warmup: gamma; ready: 1-(1-gamma)*mean(buffer<=D); '
+                'historical FIFO buffer only, updated after optimizer.step'
+            ),
+        })
+    return metadata
 
 
 def _write_state_aware_protocol_audit(
@@ -2972,18 +3081,27 @@ def train_model(
             'feature_dim': 1024,
             'reference_memory': str(Path(args.uni_reference_memory).resolve()) if args.uni_reference_memory else 'fixed_uni256',
             'native_suppress_gamma': args.native_suppress_gamma,
+            'native_d_buffer_size': args.native_d_buffer_size,
+            'native_d_buffer_min_size': args.native_d_buffer_min_size,
             'native_hc_thresh': args.native_hc_thresh,
             'lambda_native_ref': args.lambda_native_ref,
             'contradiction_gate': 'detach pooled pA/pB; agreement and UNI margin sign only; no GT',
             'loss_weight_expansion': 'nearest 16x16 -> student pixel resolution',
-            'hc_correction': 'BCE on undetached pooled probabilities and UNI token label',
+            'hc_correction': (
+                'BCE on undetached pooled probabilities and UNI token label'
+                if args.reference_mode == 'native_suppress_hc' else 'disabled'
+            ),
             'test_evaluation_policy': 'not evaluated during training',
             'command': ' '.join(sys.argv),
         }
         for root in (Path(trained_models_path), Path('outputs/native_scale_training')):
             root.mkdir(parents=True, exist_ok=True)
             (root / 'config_{}.json'.format(
-                'native_s' if args.reference_mode == 'native_suppress' else 'native_sc'
+                {
+                    'native_suppress': 'native_s',
+                    'native_suppress_hc': 'native_sc',
+                    'native_suppress_adaptive': 'native_adaptive_s',
+                }[args.reference_mode]
             )).write_text(json.dumps(native_config, indent=2, ensure_ascii=False), encoding='utf-8')
     reference_context = None
     state_epoch_writer = None
@@ -3024,6 +3142,9 @@ def train_model(
             reference_context['reference_build_rng_isolated'] = False
         reference_context['cfg'] = cfg
         reference_context['validation_reference_cache'] = None
+        if args.reference_mode == 'native_suppress_adaptive':
+            reference_context['native_d_buffer'] = []
+            reference_context['native_d_buffer_num_seen'] = 0
         if args.cps_mode == 'state_aware':
             reference_context['validation_reference_cache'] = _build_validation_reference_cache(
                 dataloaders['val'], reference_context, cfg, args,
@@ -3055,6 +3176,20 @@ def train_model(
                 raise RuntimeError('Resume protocol mismatch for {}: {} != {}'.format(key, resume_payload.get(key), value))
         model1.load_state_dict(resume_payload['appearance_state_dict'], strict=True)
         model2.load_state_dict(resume_payload['structure_state_dict'], strict=True)
+        if args.reference_mode == 'native_suppress_adaptive':
+            if 'native_d_buffer' not in resume_payload:
+                raise RuntimeError(
+                    'Adaptive Native-S resume checkpoint is missing native_d_buffer'
+                )
+            reference_context['native_d_buffer'] = [
+                float(value) for value in resume_payload['native_d_buffer']
+            ][-int(args.native_d_buffer_size):]
+            reference_context['native_d_buffer_num_seen'] = int(
+                resume_payload.get(
+                    'native_d_buffer_num_seen',
+                    len(reference_context['native_d_buffer']),
+                )
+            )
         logger.info('Resume student weights loaded strictly | epoch=%d', int(resume_payload['epoch']))
     if reference_context is not None and args.cps_mode == 'state_aware':
         _run_state_aware_startup_checks(
@@ -3172,7 +3307,11 @@ def train_model(
         if _is_native_reference_mode(args):
             native_root = Path('outputs/native_scale_training')
             native_root.mkdir(parents=True, exist_ok=True)
-            mode_tag = 'native_s' if args.reference_mode == 'native_suppress' else 'native_sc'
+            mode_tag = {
+                'native_suppress': 'native_s',
+                'native_suppress_hc': 'native_sc',
+                'native_suppress_adaptive': 'native_adaptive_s',
+            }[args.reference_mode]
             native_training_file = stack.enter_context(open(
                 native_root / 'training_{}.csv'.format(mode_tag),
                 'a' if args.resume else 'w', newline='', encoding='utf-8'
@@ -3563,6 +3702,52 @@ def train_model(
                 agreement_count = native['agreement_tokens']
                 contradiction_count = native['contradiction_tokens']
                 hc_count = native['hc_tokens']
+                d_values = np.asarray(native.get('d_values', []), dtype=np.float64)
+                adaptive_weights = np.asarray(
+                    native.get('adaptive_weights', []), dtype=np.float64
+                )
+                adaptive_stats = {
+                    'buffer_size': len(reference_context.get('native_d_buffer', [])) if reference_context is not None else None,
+                    'buffer_num_seen': int(reference_context.get('native_d_buffer_num_seen', 0)) if reference_context is not None else None,
+                    'mean_D_contradiction': float(d_values.mean()) if d_values.size else None,
+                    'median_D_contradiction': float(np.median(d_values)) if d_values.size else None,
+                    'D_p10': float(np.percentile(d_values, 10)) if d_values.size else None,
+                    'D_p25': float(np.percentile(d_values, 25)) if d_values.size else None,
+                    'D_p50': float(np.percentile(d_values, 50)) if d_values.size else None,
+                    'D_p75': float(np.percentile(d_values, 75)) if d_values.size else None,
+                    'D_p90': float(np.percentile(d_values, 90)) if d_values.size else None,
+                    'mean_adaptive_weight': float(adaptive_weights.mean()) if adaptive_weights.size else None,
+                    'median_adaptive_weight': float(np.median(adaptive_weights)) if adaptive_weights.size else None,
+                    'weight_p10': float(np.percentile(adaptive_weights, 10)) if adaptive_weights.size else None,
+                    'weight_p25': float(np.percentile(adaptive_weights, 25)) if adaptive_weights.size else None,
+                    'weight_p50': float(np.percentile(adaptive_weights, 50)) if adaptive_weights.size else None,
+                    'weight_p75': float(np.percentile(adaptive_weights, 75)) if adaptive_weights.size else None,
+                    'weight_p90': float(np.percentile(adaptive_weights, 90)) if adaptive_weights.size else None,
+                    'fraction_weight_0.50_0.60': float(((adaptive_weights >= .5) & (adaptive_weights < .6)).mean()) if adaptive_weights.size else None,
+                    'fraction_weight_0.60_0.70': float(((adaptive_weights >= .6) & (adaptive_weights < .7)).mean()) if adaptive_weights.size else None,
+                    'fraction_weight_0.70_0.80': float(((adaptive_weights >= .7) & (adaptive_weights < .8)).mean()) if adaptive_weights.size else None,
+                    'fraction_weight_0.80_0.90': float(((adaptive_weights >= .8) & (adaptive_weights < .9)).mean()) if adaptive_weights.size else None,
+                    'fraction_weight_0.90_1.00': float(((adaptive_weights >= .9) & (adaptive_weights <= 1.0)).mean()) if adaptive_weights.size else None,
+                }
+                if adaptive_weights.size:
+                    if not np.isfinite(adaptive_weights).all() or not np.all((adaptive_weights >= .5) & (adaptive_weights <= 1.0)):
+                        raise AssertionError('Adaptive epoch weights escaped [0.5,1] or became non-finite')
+                    if args.reference_mode == 'native_suppress_adaptive' and len(reference_context.get('native_d_buffer', [])) >= args.native_d_buffer_min_size:
+                        edges = np.quantile(d_values, [0.25, .5, .75])
+                        q_weights = [
+                            adaptive_weights[d_values <= edges[0]],
+                            adaptive_weights[(d_values > edges[0]) & (d_values <= edges[1])],
+                            adaptive_weights[(d_values > edges[1]) & (d_values <= edges[2])],
+                            adaptive_weights[d_values > edges[2]],
+                        ]
+                        q_means = [float(x.mean()) if x.size else None for x in q_weights]
+                        adaptive_stats.update({
+                            'D_Q1_mean_weight': q_means[0], 'D_Q2_mean_weight': q_means[1],
+                            'D_Q3_mean_weight': q_means[2], 'D_Q4_mean_weight': q_means[3],
+                        })
+                        finite_q = [x for x in q_means if x is not None]
+                        if len(finite_q) == 4 and not all(finite_q[i] >= finite_q[i + 1] - 1e-6 for i in range(3)):
+                            raise AssertionError('Adaptive D quartiles are not ordered by decreasing weight')
                 native_training_writer.writerow({
                     'experiment': args.reference_mode,
                     'epoch': epoch + 1,
@@ -3582,6 +3767,7 @@ def train_model(
                     'mean_pB_token_on_HC': _safe_mean(native['sum_p_b_hc'], hc_count * 1.0),
                     'UNI_FG_HC_count': int(native['uni_fg_hc']),
                     'UNI_BG_HC_count': int(native['uni_bg_hc']),
+                    **adaptive_stats,
                 })
                 native_training_file.flush()
 
@@ -3813,14 +3999,26 @@ def parse_args():
         help=(
             'Additional frozen UNI reference behavior. none preserves vanilla '
             'CPS; pixel_legacy preserves the existing state-aware reference '
-            'path; native_suppress and native_suppress_hc are the two native '
-            '16x16 diagnostics.'
+            'path; native_suppress and native_suppress_hc preserve the existing '
+            'native modes; native_suppress_adaptive adds training-only '
+            'empirical-CDF D weighting.'
         ),
     )
     parser.add_argument(
-        '--native-suppress-gamma', dest='native_suppress_gamma',
+        '--native-suppress-gamma', '--native-suppress-min-weight',
+        dest='native_suppress_gamma',
         default=0.5, type=float,
-        help='Fixed CPS loss weight for native contradiction tokens.',
+        help='Fixed/warm-up minimum CPS loss weight for native contradiction tokens.',
+    )
+    parser.add_argument(
+        '--native-d-buffer-size', dest='native_d_buffer_size',
+        default=4096, type=int,
+        help='FIFO size for training-only positive native contradiction D values.',
+    )
+    parser.add_argument(
+        '--native-d-buffer-min-size', dest='native_d_buffer_min_size',
+        default=512, type=int,
+        help='Minimum historical D values before adaptive CDF weighting starts.',
     )
     parser.add_argument(
         '--native-hc-thresh', dest='native_hc_thresh',
@@ -3899,6 +4097,10 @@ def parse_args():
             parser.error('native reference modes require --uni-input-size 256')
         if not (0.0 < args.native_suppress_gamma <= 1.0):
             parser.error('--native-suppress-gamma must be in (0,1]')
+        if args.native_d_buffer_size <= 0:
+            parser.error('--native-d-buffer-size must be positive')
+        if not (0 <= args.native_d_buffer_min_size <= args.native_d_buffer_size):
+            parser.error('--native-d-buffer-min-size must be in [0, buffer-size]')
         if not (0.0 < args.native_hc_thresh <= 1.0):
             parser.error('--native-hc-thresh must be in (0,1]')
         if args.lambda_native_ref < 0.0:
@@ -3922,6 +4124,8 @@ def parse_args():
             args.path_trained_models = 'checkpoints/native_s_seed{}'.format(args.sd)
         elif args.reference_mode == 'native_suppress_hc':
             args.path_trained_models = 'checkpoints/native_sc_seed{}'.format(args.sd)
+        elif args.reference_mode == 'native_suppress_adaptive':
+            args.path_trained_models = 'checkpoints/native_adaptive_s_seed{}'.format(args.sd)
         elif args.cps_mode == 'state_aware':
             args.path_trained_models = (
                 'checkpoints/semi_{}_seed_{}_rgbstain_state_aware'.format(
@@ -3941,6 +4145,8 @@ def parse_args():
             args.path_seg_results = 'seg_pred/native_s_seed{}'.format(args.sd)
         elif args.reference_mode == 'native_suppress_hc':
             args.path_seg_results = 'seg_pred/native_sc_seed{}'.format(args.sd)
+        elif args.reference_mode == 'native_suppress_adaptive':
+            args.path_seg_results = 'seg_pred/native_adaptive_s_seed{}'.format(args.sd)
         elif args.cps_mode == 'state_aware':
             args.path_seg_results = (
                 'seg_pred/semi_{}_seed_{}_rgbstain_state_aware'.format(
