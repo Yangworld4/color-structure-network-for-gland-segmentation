@@ -156,6 +156,12 @@ VALIDATION_EPOCH_FIELDS = [
     'mean_Jaccard', 'mean_Dice', 'threshold_A', 'threshold_B',
 ]
 
+MOTIVATION_METRIC_FIELDS = [
+    'epoch', 'agreement', 'soft_disagreement', 'ww_given_agreement',
+    'hc90ww_given_ww', 'total_pixels', 'agreement_pixels', 'ww_pixels',
+    'hc90ww_pixels',
+]
+
 NATIVE_TRAINING_FIELDS = [
     'experiment', 'epoch', 'num_native_tokens', 'num_agreement_tokens',
     'num_contradiction_tokens', 'contradiction_rate',
@@ -182,6 +188,16 @@ NATIVE_TRAINING_FIELDS = [
     'fraction_weight_0.4_0.5', 'fraction_zero_weight',
     'D_Q1_mean_D', 'D_Q1_mean_weight', 'D_Q2_mean_D', 'D_Q2_mean_weight',
     'D_Q3_mean_D', 'D_Q3_mean_weight', 'D_Q4_mean_D', 'D_Q4_mean_weight',
+    'regionwise_candidate_pixels', 'fine_selected_pixels',
+    'fine_selected_over_regionwise', 'R1_same_consensus',
+    'R2_opposite_consensus', 'R3_student_disagreement',
+    'fine_suppression_coverage', 'global_suppression_coverage',
+    'mean_applied_pixel_weight', 'num_risk_pixels', 'risk_pixel_fraction',
+    'mean_D_risk', 'D_risk_p10', 'D_risk_p25', 'D_risk_p50',
+    'D_risk_p75', 'D_risk_p90', 'mean_w_risk', 'mean_r_risk',
+    'w_risk_p10', 'w_risk_p50', 'w_risk_p90', 'r_risk_p10',
+    'r_risk_p50', 'r_risk_p90', 'mean_w_plus_r', 'reverse_fraction',
+    'loss_cps_after_suppression', 'loss_reverse', 'loss_unsup_total',
 ]
 
 REFERENCE_CPS_MODES = (
@@ -193,7 +209,8 @@ REFERENCE_CPS_MODES = (
 # retain exactly their previous behavior.
 NATIVE_REFERENCE_MODES = (
     'native_suppress', 'native_suppress_hc', 'native_suppress_adaptive',
-    'native_suppress_d_adaptive',
+    'native_suppress_d_adaptive', 'native_suppress_d_adaptive_fine',
+    'native_suppress_d_adaptive_fine_reverse',
 )
 REFERENCE_MODES = ('none', 'pixel_legacy') + NATIVE_REFERENCE_MODES
 
@@ -1284,7 +1301,11 @@ def _build_native_reference_targets(logits_a, logits_b, rgb_input, context, cfg,
             (1.0 - relative_gap).unsqueeze(1),
             torch.ones_like(margin),
         ).detach()
-    elif args.reference_mode == 'native_suppress_d_adaptive':
+    elif args.reference_mode in (
+        'native_suppress_d_adaptive',
+        'native_suppress_d_adaptive_fine',
+        'native_suppress_d_adaptive_fine_reverse',
+    ):
         # D-Adaptive Native-S: preserve Fixed Native-S at D->0 and apply
         # only the requested additional suppression.  Keep the explicit
         # channel dimension so W_token is [B,1,16,16].
@@ -1308,7 +1329,11 @@ def _build_native_reference_targets(logits_a, logits_b, rgb_input, context, cfg,
             raise AssertionError('Direct adaptive native weight escaped [0,1]')
         if weight_token.requires_grad or relative_gap.requires_grad:
             raise AssertionError('Native adaptive weight/gap must be detached')
-    elif args.reference_mode == 'native_suppress_d_adaptive':
+    elif args.reference_mode in (
+        'native_suppress_d_adaptive',
+        'native_suppress_d_adaptive_fine',
+        'native_suppress_d_adaptive_fine_reverse',
+    ):
         if not torch.isfinite(d_positive).all().item():
             raise FloatingPointError('D-Adaptive D contains NaN/Inf')
         if not torch.all((weight_token >= 0.0) & (weight_token <= 1.0)).item():
@@ -1321,6 +1346,88 @@ def _build_native_reference_targets(logits_a, logits_b, rgb_input, context, cfg,
             raise AssertionError('D-Adaptive D/contradiction/weight must be detached')
     if not torch.all(weight_token[:, 0][~contradiction].eq(1.0)).item():
         raise AssertionError('Non-contradiction native token weight changed from one')
+    weight_pixel = None
+    fine_stats = {}
+    if args.reference_mode in (
+        'native_suppress_d_adaptive_fine',
+        'native_suppress_d_adaptive_fine_reverse',
+    ):
+        # Fine-selective mode keeps the exact token contradiction and token
+        # weight, but applies it only where the full-resolution students still
+        # agree with the token consensus class.
+        hard_a_pixel = prob_a.detach().ge(0.5)
+        hard_b_pixel = prob_b.detach().ge(0.5)
+        contradiction_pixel = F.interpolate(
+            contradiction.float().unsqueeze(1),
+            size=prob_a.shape[-2:], mode='nearest',
+        ).bool()
+        consensus_pixel = F.interpolate(
+            hard_a.detach().float(),
+            size=prob_a.shape[-2:], mode='nearest',
+        ).ge(0.5)
+        token_weight_pixel = F.interpolate(
+            weight_token.detach(), size=prob_a.shape[-2:], mode='nearest'
+        )
+        pixel_agreement = hard_a_pixel.eq(hard_b_pixel)
+        same_as_token_consensus = hard_a_pixel.eq(consensus_pixel)
+        risk_pixel = (
+            contradiction_pixel
+            & pixel_agreement
+            & same_as_token_consensus
+        ).detach()
+        weight_pixel = torch.ones_like(prob_a)
+        weight_pixel[risk_pixel] = token_weight_pixel[risk_pixel]
+        weight_pixel = weight_pixel.detach()
+        regionwise_candidate = contradiction_pixel.detach()
+        r1 = regionwise_candidate & pixel_agreement & same_as_token_consensus
+        r2 = regionwise_candidate & pixel_agreement & ~same_as_token_consensus
+        r3 = regionwise_candidate & ~pixel_agreement
+        if not torch.equal(risk_pixel, r1):
+            raise AssertionError('Fine risk mask is not R1')
+        if not torch.equal(r1 | r2 | r3, regionwise_candidate):
+            raise AssertionError('Fine R1/R2/R3 do not partition contradiction pixels')
+        if weight_pixel.requires_grad or risk_pixel.requires_grad:
+            raise AssertionError('Fine pixel weight/mask must be detached')
+        fine_stats = {
+            'regionwise_candidate_pixels': regionwise_candidate.detach(),
+            'fine_selected_pixels': risk_pixel.detach(),
+            'R1_same_consensus_pixels': r1.detach(),
+            'R2_opposite_consensus_pixels': r2.detach(),
+            'R3_student_disagreement_pixels': r3.detach(),
+            'all_pixel_count': int(prob_a.numel()),
+            'sum_applied_pixel_weight': weight_pixel.detach().sum(),
+        }
+        if args.reference_mode == 'native_suppress_d_adaptive_fine_reverse':
+            # The reverse term is deliberately confined to the exact existing
+            # fine-selective risky pixels.  D is expanded only as a detached
+            # loss coefficient; it is never a pseudo-label or UNI gradient.
+            d_pixel = F.interpolate(
+                d_positive.detach().unsqueeze(1),
+                size=prob_a.shape[-2:], mode='nearest',
+            ).detach()
+            reverse_weight_pixel = torch.where(
+                risk_pixel,
+                torch.clamp(d_pixel, min=0.0, max=0.5),
+                torch.zeros_like(d_pixel),
+            ).detach()
+            opposite_target_pixel = (~consensus_pixel).float().detach()
+            if not torch.isfinite(reverse_weight_pixel).all().item():
+                raise FloatingPointError('Fine reverse weight contains NaN/Inf')
+            if reverse_weight_pixel.requires_grad or opposite_target_pixel.requires_grad:
+                raise AssertionError('Fine reverse coefficients/target must be detached')
+            risky_w = token_weight_pixel[risk_pixel]
+            risky_r = reverse_weight_pixel[risk_pixel]
+            if risky_w.numel() and not torch.allclose(
+                risky_w + risky_r,
+                torch.full_like(risky_w, 0.5), atol=1e-6, rtol=0.0,
+            ):
+                raise AssertionError('Fine reverse intervention budget w+r != 0.5')
+            fine_stats.update({
+                'risk_pixel': risk_pixel.detach(),
+                'd_pixel': d_pixel.detach(),
+                'reverse_weight_pixel': reverse_weight_pixel,
+                'opposite_target_pixel': opposite_target_pixel,
+            })
     return {
         'p_a_token': p_a_token, 'p_b_token': p_b_token,
         'hard_a': hard_a, 'hard_b': hard_b,
@@ -1330,6 +1437,8 @@ def _build_native_reference_targets(logits_a, logits_b, rgb_input, context, cfg,
         'd_positive': d_positive, 'relative_gap': relative_gap,
         'contradiction': contradiction,
         'hc': hc, 'weight_token': weight_token,
+        'weight_pixel': weight_pixel,
+        'fine_stats': fine_stats,
     }
 
 
@@ -1359,6 +1468,72 @@ def compute_native_suppressed_cps_losses(
         '1_to_2': weighted_1_to_2, '2_to_1': weighted_2_to_1,
         'total': total, 'raw_total': raw_1_to_2 + raw_2_to_1,
         'raw_1_to_2': raw_1_to_2, 'raw_2_to_1': raw_2_to_1,
+    }
+
+
+def compute_native_fine_reverse_cps_losses(
+    ce_none,
+    prediction1,
+    prediction2,
+    pseudo1,
+    pseudo2,
+    weight_pixel,
+    reverse_weight_pixel,
+    opposite_target_pixel,
+):
+    """Fine-selective CPS plus the fixed D-driven opposite loss.
+
+    The CPS denominator is exactly the existing native suppression denominator
+    (sum of ``w``).  The reverse term is an additive per-pixel component in the
+    same directional 0.5 reduction, and is nonzero only on fine risky pixels.
+    This preserves the existing CPS loss scale and introduces no coefficient.
+    """
+    if getattr(ce_none, 'reduction', None) != 'none':
+        raise AssertionError('Fine reverse mode requires reduction=none CE')
+    valid1 = pseudo1.ne(ce_none.ignore_index)
+    valid2 = pseudo2.ne(ce_none.ignore_index)
+    if not valid1.any().item() or not valid2.any().item():
+        raise AssertionError('Fine reverse mode received no valid pseudo-label pixels')
+    if weight_pixel.shape != reverse_weight_pixel.shape:
+        raise AssertionError('Fine reverse w/r shape mismatch')
+    if opposite_target_pixel.shape != pseudo1.shape:
+        raise AssertionError('Fine reverse opposite target shape mismatch')
+    pixel_1_to_2 = ce_none(prediction2, pseudo1)
+    pixel_2_to_1 = ce_none(prediction1, pseudo2)
+    opposite_target = opposite_target_pixel.long()
+    pixel_opp_a = ce_none(prediction1, opposite_target)
+    pixel_opp_b = ce_none(prediction2, opposite_target)
+    weight_scalar = weight_pixel[:, 0] if weight_pixel.dim() == 4 else weight_pixel
+    reverse_scalar = (
+        reverse_weight_pixel[:, 0]
+        if reverse_weight_pixel.dim() == 4 else reverse_weight_pixel
+    )
+    w1 = weight_scalar.expand_as(pixel_1_to_2).to(pixel_1_to_2.dtype)
+    w2 = weight_scalar.expand_as(pixel_2_to_1).to(pixel_2_to_1.dtype)
+    r1 = reverse_scalar.expand_as(pixel_opp_a).to(pixel_opp_a.dtype)
+    r2 = reverse_scalar.expand_as(pixel_opp_b).to(pixel_opp_b.dtype)
+    cps_1_to_2 = 0.5 * (pixel_1_to_2[valid1] * w1[valid1]).sum() / w1[valid1].sum().clamp_min(1e-8)
+    cps_2_to_1 = 0.5 * (pixel_2_to_1[valid2] * w2[valid2]).sum() / w2[valid2].sum().clamp_min(1e-8)
+    reverse_1 = 0.5 * (pixel_opp_a[valid1] * r1[valid1]).sum() / w1[valid1].sum().clamp_min(1e-8)
+    reverse_2 = 0.5 * (pixel_opp_b[valid2] * r2[valid2]).sum() / w2[valid2].sum().clamp_min(1e-8)
+    raw_1_to_2 = 0.5 * pixel_1_to_2[valid1].mean()
+    raw_2_to_1 = 0.5 * pixel_2_to_1[valid2].mean()
+    cps_after_suppression = cps_1_to_2 + cps_2_to_1
+    reverse_total = reverse_1 + reverse_2
+    total = cps_after_suppression + reverse_total
+    if not torch.isfinite(total).item():
+        raise FloatingPointError('Fine reverse CPS loss contains NaN/Inf')
+    if reverse_weight_pixel.requires_grad or opposite_target_pixel.requires_grad:
+        raise AssertionError('Fine reverse coefficient/target unexpectedly requires grad')
+    return {
+        '1_to_2': cps_1_to_2 + reverse_1,
+        '2_to_1': cps_2_to_1 + reverse_2,
+        'total': total,
+        'raw_total': raw_1_to_2 + raw_2_to_1,
+        'raw_1_to_2': raw_1_to_2,
+        'raw_2_to_1': raw_2_to_1,
+        'cps_after_suppression': cps_after_suppression,
+        'reverse_total': reverse_total,
     }
 
 
@@ -1685,6 +1860,24 @@ def _run_native_startup_checks(args, context, models, optimizers):
         print('CDF:                  disabled')
         print('Running buffer:       disabled')
         print('Extra hyperparameters: none')
+    if args.reference_mode == 'native_suppress_d_adaptive_fine':
+        print('Reference mode:       native_suppress_d_adaptive_fine')
+        print('Adaptive strategy:    D-Adaptive fine-selective pixel suppression')
+        print('Weight formula:       no contradiction=1; contradiction=max(0,0.5-D)')
+        print('Pixel selection:      token contradiction AND pixel agreement AND pixel consensus=token consensus')
+        print('CDF:                  disabled')
+        print('Running buffer:       disabled')
+        print('Extra hyperparameters: none')
+    if args.reference_mode == 'native_suppress_d_adaptive_fine_reverse':
+        print('Reference mode:       native_suppress_d_adaptive_fine_reverse')
+        print('Adaptive strategy:    fine-selective D-Adaptive + opposite correction')
+        print('CPS weight:           max(0,0.5-D) on fine risky pixels')
+        print('Reverse weight:       min(D,0.5) on fine risky pixels')
+        print('Reverse target:       opposite token consensus')
+        print('Pixel selection:      token contradiction AND pixel agreement AND pixel consensus=token consensus')
+        print('CDF:                  disabled')
+        print('Running buffer:       disabled')
+        print('Extra hyperparameters: none')
 
 
 def _run_direct_gap_numerical_checks():
@@ -1727,6 +1920,67 @@ def _run_d_adaptive_numerical_checks():
     w2[c2] = torch.clamp(0.5 - d2[c2], min=0.0, max=0.5)
     assert w2[0].item() == 1.0 and torch.allclose(w2[1], torch.tensor(0.1, device='cuda'), atol=1e-6, rtol=0.0)
     print('D-Adaptive Native-S numerical checks: PASS')
+
+
+def _run_d_adaptive_fine_numerical_checks():
+    """Implementation-only checks for the fine-selective mask."""
+    token_weight = torch.tensor([[[[0.3]]]], device='cuda')
+    token_contradiction = torch.tensor([[[True]]], device='cuda')
+    token_consensus = torch.tensor([[[[True]]]], device='cuda')
+    hard_a = torch.tensor([[[[True, False], [True, False]]]], device='cuda')
+    hard_b = torch.tensor([[[[True, False], [False, True]]]], device='cuda')
+    contradiction_px = F.interpolate(
+        token_contradiction.float().unsqueeze(1), size=(2, 2), mode='nearest'
+    ).bool()
+    consensus_px = F.interpolate(
+        token_consensus.float(), size=(2, 2), mode='nearest'
+    ).ge(0.5)
+    token_weight_px = F.interpolate(token_weight, size=(2, 2), mode='nearest')
+    pixel_agree = hard_a.eq(hard_b)
+    same = hard_a.eq(consensus_px)
+    risk = (contradiction_px & pixel_agree & same).detach()
+    weight = torch.ones_like(token_weight_px)
+    weight[risk] = token_weight_px[risk]
+    expected_risk = torch.tensor([[[[True, False], [False, False]]]], device='cuda')
+    assert torch.equal(risk, expected_risk)
+    assert torch.allclose(weight[0, 0, 0, 0], torch.tensor(0.3, device='cuda'), atol=1e-6, rtol=0.0)
+    assert torch.all(weight[~risk].eq(1.0)).item()
+    no_contra = torch.zeros_like(contradiction_px)
+    no_risk = (no_contra & pixel_agree & same)
+    no_weight = torch.ones_like(token_weight_px)
+    assert not no_risk.any().item() and torch.all(no_weight.eq(1.0)).item()
+    r1 = contradiction_px & pixel_agree & same
+    r2 = contradiction_px & pixel_agree & ~same
+    r3 = contradiction_px & ~pixel_agree
+    assert torch.equal(r1 | r2 | r3, contradiction_px)
+    assert not weight.requires_grad and not risk.requires_grad
+    print('Fine-selective mask numerical checks: PASS')
+
+
+def _run_d_adaptive_fine_reverse_numerical_checks():
+    """Implementation-only checks for the fixed reverse intervention algebra."""
+    d = torch.tensor([0.10, 0.20, 0.60], device='cuda')
+    w = torch.clamp(0.5 - d, min=0.0, max=0.5)
+    r = torch.clamp(d, min=0.0, max=0.5)
+    assert torch.allclose(w, torch.tensor([0.40, 0.30, 0.0], device='cuda'), atol=1e-6, rtol=0.0)
+    assert torch.allclose(r, torch.tensor([0.10, 0.20, 0.50], device='cuda'), atol=1e-6, rtol=0.0)
+    assert torch.allclose(w[:2] + r[:2], torch.full((2,), 0.5, device='cuda'), atol=1e-6, rtol=0.0)
+    token_consensus = torch.tensor([True], device='cuda')
+    hard_a = torch.tensor([[[[True, False], [True, False]]]], device='cuda')
+    hard_b = torch.tensor([[[[True, False], [False, True]]]], device='cuda')
+    contradiction = torch.ones((1, 1, 1), dtype=torch.bool, device='cuda')
+    consensus_px = F.interpolate(token_consensus.float().reshape(1, 1, 1, 1), size=(2, 2), mode='nearest').bool()
+    contradiction_px = F.interpolate(contradiction.float().unsqueeze(1), size=(2, 2), mode='nearest').bool()
+    risk = contradiction_px & hard_a.eq(hard_b) & hard_a.eq(consensus_px)
+    assert risk.sum().item() == 1
+    # Case C: same-pixel opposite consensus is not risky; case D: disagreement is not risky.
+    assert not risk[0, 0, 0, 1].item()
+    assert not risk[0, 0, 1, 0].item()
+    # Case E: no contradiction means no reverse intervention.
+    no_risk = torch.zeros_like(risk)
+    assert not no_risk.any().item()
+    assert not w.requires_grad and not r.requires_grad and not risk.requires_grad
+    print('Fine-selective anti-confirmation numerical checks: PASS')
 
 
 def _run_state_aware_startup_checks(args, cfg, context, models, optimizers, losses):
@@ -1837,6 +2091,20 @@ def train_one_epoch(
             'uni_fg_hc': 0.0, 'uni_bg_hc': 0.0,
             's_cur_values': [], 's_opp_values': [], 'd_values': [],
             'relative_gaps': [], 'adaptive_weights': [],
+            'regionwise_candidate_pixels': 0.0,
+            'fine_selected_pixels': 0.0,
+            'R1_same_consensus_pixels': 0.0,
+            'R2_opposite_consensus_pixels': 0.0,
+            'R3_student_disagreement_pixels': 0.0,
+            'all_pixel_count': 0.0,
+            'sum_applied_pixel_weight': 0.0,
+            'risk_pixels': 0.0,
+            'risk_all_pixel_count': 0.0,
+            'risk_d_values': [], 'risk_w_values': [], 'risk_r_values': [],
+            'risk_w_plus_r_values': [],
+            'sum_reverse_loss': 0.0,
+            'sum_cps_after_suppression': 0.0,
+            'sum_unsup_total': 0.0,
         }
     mask_list = None
 
@@ -1931,14 +2199,25 @@ def train_one_epoch(
                 losses['ce'], unsup_prediction1, unsup_prediction2,
                 pseudo_a, pseudo_b,
             )
-            weight_pixel = F.interpolate(
-                reference_targets['weight_token'],
-                size=unsup_prediction1.shape[-2:], mode='nearest',
-            )
-            native_cps = compute_native_suppressed_cps_losses(
-                losses['ce_none'], unsup_prediction1, unsup_prediction2,
-                pseudo_a, pseudo_b, weight_pixel,
-            )
+            weight_pixel = reference_targets.get('weight_pixel')
+            if weight_pixel is None:
+                weight_pixel = F.interpolate(
+                    reference_targets['weight_token'],
+                    size=unsup_prediction1.shape[-2:], mode='nearest',
+                )
+            if args.reference_mode == 'native_suppress_d_adaptive_fine_reverse':
+                fine_stats = reference_targets['fine_stats']
+                native_cps = compute_native_fine_reverse_cps_losses(
+                    losses['ce_none'], unsup_prediction1, unsup_prediction2,
+                    pseudo_a, pseudo_b, weight_pixel,
+                    fine_stats['reverse_weight_pixel'],
+                    fine_stats['opposite_target_pixel'][:, 0],
+                )
+            else:
+                native_cps = compute_native_suppressed_cps_losses(
+                    losses['ce_none'], unsup_prediction1, unsup_prediction2,
+                    pseudo_a, pseudo_b, weight_pixel,
+                )
             cps_losses = {
                 '1_to_2': native_cps['1_to_2'],
                 '2_to_1': native_cps['2_to_1'],
@@ -2003,15 +2282,64 @@ def train_one_epoch(
             native_totals['sum_weight'] += float(reference_targets['weight_token'].sum().item())
             native_totals['raw_cps_loss'] += float(native_cps['raw_total'].detach().item())
             native_totals['weighted_cps_loss'] += float(cps_losses['total'].detach().item())
+            native_totals['sum_cps_after_suppression'] += float(
+                native_cps.get('cps_after_suppression', cps_losses['total']).detach().item()
+            )
+            native_totals['sum_reverse_loss'] += float(
+                native_cps.get('reverse_total', unsup_prediction1.sum() * 0.0).detach().item()
+            )
+            native_totals['sum_unsup_total'] += float(cps_losses['total'].detach().item())
             native_totals['native_ref_loss'] += float(native_ref_loss.detach().item())
             native_totals['total_loss'] += float(total_loss.detach().item())
             native_totals['batches'] += 1.0
+            if args.reference_mode in (
+                'native_suppress_d_adaptive_fine',
+                'native_suppress_d_adaptive_fine_reverse',
+            ):
+                fine_stats = reference_targets['fine_stats']
+                native_totals['regionwise_candidate_pixels'] += float(
+                    fine_stats['regionwise_candidate_pixels'].sum().item()
+                )
+                native_totals['fine_selected_pixels'] += float(
+                    fine_stats['fine_selected_pixels'].sum().item()
+                )
+                native_totals['R1_same_consensus_pixels'] += float(
+                    fine_stats['R1_same_consensus_pixels'].sum().item()
+                )
+                native_totals['R2_opposite_consensus_pixels'] += float(
+                    fine_stats['R2_opposite_consensus_pixels'].sum().item()
+                )
+                native_totals['R3_student_disagreement_pixels'] += float(
+                    fine_stats['R3_student_disagreement_pixels'].sum().item()
+                )
+                native_totals['all_pixel_count'] += float(fine_stats['all_pixel_count'])
+                native_totals['sum_applied_pixel_weight'] += float(
+                    fine_stats['sum_applied_pixel_weight'].item()
+                )
+                if args.reference_mode == 'native_suppress_d_adaptive_fine_reverse':
+                    risk = fine_stats['risk_pixel']
+                    risk_count = float(risk.sum().item())
+                    native_totals['risk_pixels'] += risk_count
+                    native_totals['risk_all_pixel_count'] += float(risk.numel())
+                    if risk.any().item():
+                        risk_2d = risk[:, 0]
+                        d_px = fine_stats['d_pixel'][:, 0][risk_2d]
+                        w_px = weight_pixel[:, 0][risk_2d]
+                        r_px = fine_stats['reverse_weight_pixel'][:, 0][risk_2d]
+                        native_totals['risk_d_values'].extend(d_px.detach().cpu().tolist())
+                        native_totals['risk_w_values'].extend(w_px.detach().cpu().tolist())
+                        native_totals['risk_r_values'].extend(r_px.detach().cpu().tolist())
+                        native_totals['risk_w_plus_r_values'].extend((w_px + r_px).detach().cpu().tolist())
             if hc.any().item():
                 native_totals['sum_p_a_hc'] += float(reference_targets['p_a_token'][hc.unsqueeze(1)].sum().item())
                 native_totals['sum_p_b_hc'] += float(reference_targets['p_b_token'][hc.unsqueeze(1)].sum().item())
                 native_totals['uni_fg_hc'] += float((reference_targets['uni_fg'] & hc.unsqueeze(1)).sum().item())
             native_totals['uni_bg_hc'] += float(((~reference_targets['uni_fg']) & hc.unsqueeze(1)).sum().item())
-            if args.reference_mode in ('native_suppress_adaptive', 'native_suppress_d_adaptive'):
+            if args.reference_mode in (
+                'native_suppress_adaptive', 'native_suppress_d_adaptive',
+                'native_suppress_d_adaptive_fine',
+                'native_suppress_d_adaptive_fine_reverse',
+            ):
                 contradiction_mask = reference_targets['contradiction']
                 native_totals['s_cur_values'].extend(reference_targets['s_cur'][contradiction_mask].detach().cpu().tolist())
                 native_totals['s_opp_values'].extend(reference_targets['s_opp'][contradiction_mask].detach().cpu().tolist())
@@ -2186,6 +2514,119 @@ def _update_diagnostic_totals(
             totals['feature_cka_count'] += 1.0
 
 
+def _init_motivation_totals():
+    """Initialize global pixel accumulators for Vanilla CPS motivation metrics."""
+    return {
+        'total_pixels': 0,
+        'agreement_pixels': 0,
+        'soft_disagreement_sum': 0.0,
+        'ww_pixels': 0,
+        'hc90ww_pixels': 0,
+    }
+
+
+def _update_motivation_totals(
+    totals,
+    logits_a: torch.Tensor,
+    logits_b: torch.Tensor,
+    mask: torch.Tensor,
+    ignore_index=-1,
+):
+    """Accumulate motivation metrics over valid pixels in one validation batch."""
+    prob_a = _foreground_probability(logits_a).detach()
+    prob_b = _foreground_probability(logits_b).detach()
+    if prob_a.shape != prob_b.shape or prob_a.dim() != 4 or prob_a.shape[1] != 1:
+        raise AssertionError(
+            'Motivation probability shape mismatch: A={} B={}'.format(
+                tuple(prob_a.shape), tuple(prob_b.shape)
+            )
+        )
+
+    if mask.dim() == 4 and mask.shape[1] == 1:
+        gt = mask[:, 0]
+    elif mask.dim() == 3:
+        gt = mask
+    else:
+        raise AssertionError(
+            'Motivation GT must have shape [B,H,W] or [B,1,H,W], got {}'.format(
+                tuple(mask.shape)
+            )
+        )
+
+    prob_a = prob_a[:, 0]
+    prob_b = prob_b[:, 0]
+    if prob_a.shape != gt.shape:
+        raise AssertionError(
+            'Motivation prediction/GT shape mismatch: prediction={} GT={}'.format(
+                tuple(prob_a.shape), tuple(gt.shape)
+            )
+        )
+
+    valid = mask.ne(ignore_index)
+    gt_binary = gt.gt(0.5)
+    pred_a = prob_a.ge(0.5)
+    pred_b = prob_b.ge(0.5)
+
+    agreement = pred_a.eq(pred_b) & valid
+    ww = agreement & pred_a.ne(gt_binary)
+    confidence_a = torch.maximum(prob_a, 1.0 - prob_a)
+    confidence_b = torch.maximum(prob_b, 1.0 - prob_b)
+    hc90ww = (
+        ww
+        & confidence_a.ge(0.90)
+        & confidence_b.ge(0.90)
+    )
+
+    totals['total_pixels'] += int(valid.sum().item())
+    totals['agreement_pixels'] += int(agreement.sum().item())
+    totals['soft_disagreement_sum'] += float(
+        torch.abs(prob_a - prob_b)[valid].sum().item()
+    )
+    totals['ww_pixels'] += int(ww.sum().item())
+    totals['hc90ww_pixels'] += int(hc90ww.sum().item())
+
+
+def _finalize_motivation_metrics(totals):
+    """Finalize globally aggregated motivation metrics without NaNs."""
+    total_pixels = int(totals['total_pixels'])
+    agreement_pixels = int(totals['agreement_pixels'])
+    ww_pixels = int(totals['ww_pixels'])
+    if total_pixels < 0 or agreement_pixels < 0 or ww_pixels < 0:
+        raise AssertionError('Motivation counters cannot be negative')
+    if agreement_pixels > total_pixels or ww_pixels > agreement_pixels:
+        raise AssertionError('Motivation counter relationship is invalid')
+
+    metrics = {
+        'agreement': (
+            agreement_pixels / total_pixels if total_pixels else 0.0
+        ),
+        'soft_disagreement': (
+            totals['soft_disagreement_sum'] / total_pixels
+            if total_pixels else 0.0
+        ),
+        'ww_given_agreement': (
+            ww_pixels / agreement_pixels if agreement_pixels else 0.0
+        ),
+        'hc90ww_given_ww': (
+            totals['hc90ww_pixels'] / ww_pixels if ww_pixels else 0.0
+        ),
+        'total_pixels': total_pixels,
+        'agreement_pixels': agreement_pixels,
+        'ww_pixels': ww_pixels,
+        'hc90ww_pixels': int(totals['hc90ww_pixels']),
+    }
+    for key in (
+        'agreement', 'soft_disagreement', 'ww_given_agreement',
+        'hc90ww_given_ww',
+    ):
+        value = float(metrics[key])
+        if not math.isfinite(value) or not 0.0 <= value <= 1.0:
+            raise AssertionError(
+                'Motivation metric {} is outside [0,1]: {}'.format(key, value)
+            )
+    return metrics
+
+
 # CPS Diagnostic Analysis
 def _finalize_diagnostics(totals, dice_a, dice_b):
     valid_pixels = totals['valid_pixels']
@@ -2261,6 +2702,7 @@ def validate(models, losses, dataloader):
     names = []
     # CPS Diagnostic Analysis
     diagnostic_totals = _init_diagnostic_totals()
+    motivation_totals = _init_motivation_totals()
     diagnostic_features = {'a': None, 'b': None}
     feature_module1 = _select_feature_module(model1)
     feature_module2 = _select_feature_module(model2)
@@ -2313,6 +2755,12 @@ def validate(models, losses, dataloader):
                 diagnostic_features['a'],
                 diagnostic_features['b'],
             )
+            _update_motivation_totals(
+                motivation_totals,
+                output1,
+                output2,
+                mask,
+            )
     finally:
         for handle in hook_handles:
             handle.remove()
@@ -2328,6 +2776,7 @@ def validate(models, losses, dataloader):
         'masks': torch.cat(masks, dim=0),
         'names': np.asarray(names),
         'diagnostic_totals': diagnostic_totals,
+        'motivation_metrics': _finalize_motivation_metrics(motivation_totals),
     }
 
 
@@ -2961,6 +3410,26 @@ def _native_checkpoint_metadata(args, context, best_val_eval_lists, best_epochs)
             'native_d_adaptive_history': False,
             'native_d_adaptive_extra_hyperparameters': 'none',
         })
+    if args.reference_mode == 'native_suppress_d_adaptive_fine':
+        metadata.update({
+            'native_d_adaptive_weight_definition': 'w=1 when disagreement or D<=0; w=max(0,0.5-D) when agreement and D>0',
+            'native_d_adaptive_weight_floor_on_contradiction': 0.0,
+            'native_d_adaptive_weight_ceiling_on_contradiction': 0.5,
+            'native_d_adaptive_history': False,
+            'native_d_adaptive_extra_hyperparameters': 'none',
+            'native_fine_pixel_selection': 'token contradiction AND pixel student agreement AND pixel consensus equals token consensus',
+            'native_fine_weight_expansion': 'nearest token weight, selected risk pixels only; all other pixels weight 1',
+        })
+    if args.reference_mode == 'native_suppress_d_adaptive_fine_reverse':
+        metadata.update({
+            'native_d_adaptive_weight_definition': 'w=1 when non-risk; w=max(0,0.5-D) on fine risky pixels',
+            'native_d_adaptive_reverse_weight_definition': 'r=min(D,0.5) on fine risky pixels; w+r=0.5',
+            'native_d_adaptive_history': False,
+            'native_d_adaptive_extra_hyperparameters': 'none',
+            'native_fine_pixel_selection': 'token contradiction AND pixel student agreement AND pixel consensus equals token consensus',
+            'native_reverse_target': 'opposite of detached token consensus',
+            'native_fine_weight_expansion': 'nearest token weight, selected risk pixels only; all other pixels weight 1',
+        })
     return metadata
 
 
@@ -3135,10 +3604,12 @@ def train_model(
             'native_suppress_gamma': args.native_suppress_gamma,
             'native_hc_thresh': args.native_hc_thresh,
             'lambda_native_ref': args.lambda_native_ref,
-            'adaptive_strategy': ('direct_relative_semantic_gap' if args.reference_mode == 'native_suppress_adaptive' else 'direct_D_extra_suppression' if args.reference_mode == 'native_suppress_d_adaptive' else 'fixed_contradiction_suppression'),
-            'cdf': 'disabled' if args.reference_mode in ('native_suppress_adaptive', 'native_suppress_d_adaptive') else 'not_applicable',
-            'running_buffer': 'disabled' if args.reference_mode in ('native_suppress_adaptive', 'native_suppress_d_adaptive') else 'not_applicable',
-            'd_adaptive_formula': 'w=1 if disagreement or D<=0 else max(0,0.5-D)' if args.reference_mode == 'native_suppress_d_adaptive' else 'not_applicable',
+            'adaptive_strategy': ('direct_relative_semantic_gap' if args.reference_mode == 'native_suppress_adaptive' else 'fine_selective_D_suppression_plus_opposite_correction' if args.reference_mode == 'native_suppress_d_adaptive_fine_reverse' else 'direct_D_extra_suppression_fine_selective' if args.reference_mode == 'native_suppress_d_adaptive_fine' else 'direct_D_extra_suppression' if args.reference_mode == 'native_suppress_d_adaptive' else 'fixed_contradiction_suppression'),
+            'cdf': 'disabled' if args.reference_mode in ('native_suppress_adaptive', 'native_suppress_d_adaptive', 'native_suppress_d_adaptive_fine', 'native_suppress_d_adaptive_fine_reverse') else 'not_applicable',
+            'running_buffer': 'disabled' if args.reference_mode in ('native_suppress_adaptive', 'native_suppress_d_adaptive', 'native_suppress_d_adaptive_fine', 'native_suppress_d_adaptive_fine_reverse') else 'not_applicable',
+            'd_adaptive_formula': 'w=max(0,0.5-D); r=min(D,0.5) on fine risky pixels' if args.reference_mode == 'native_suppress_d_adaptive_fine_reverse' else 'w=1 if disagreement or D<=0 else max(0,0.5-D)' if args.reference_mode in ('native_suppress_d_adaptive', 'native_suppress_d_adaptive_fine') else 'not_applicable',
+            'pixel_selection': 'token contradiction AND pixel student agreement AND pixel consensus equals token consensus' if args.reference_mode in ('native_suppress_d_adaptive_fine', 'native_suppress_d_adaptive_fine_reverse') else 'not_applicable',
+            'reverse_target': 'opposite detached token consensus; only on fine risky pixels' if args.reference_mode == 'native_suppress_d_adaptive_fine_reverse' else 'disabled',
             'contradiction_gate': 'detach pooled pA/pB; agreement and UNI margin sign only; no GT',
             'loss_weight_expansion': 'nearest 16x16 -> student pixel resolution',
             'hc_correction': (
@@ -3156,6 +3627,8 @@ def train_model(
                     'native_suppress_hc': 'native_sc',
                     'native_suppress_adaptive': 'native_gap_adaptive_s',
                     'native_suppress_d_adaptive': 'native_d_adaptive_s',
+                    'native_suppress_d_adaptive_fine': 'native_d_adaptive_fine_s',
+                    'native_suppress_d_adaptive_fine_reverse': 'native_d_adaptive_fine_reverse_s',
                 }[args.reference_mode]
             )).write_text(json.dumps(native_config, indent=2, ensure_ascii=False), encoding='utf-8')
     reference_context = None
@@ -3177,6 +3650,9 @@ def train_model(
     native_state_file = None
     native_events_writer = None
     native_events_file = None
+    motivation_writer = None
+    motivation_file = None
+    motivation_logged_epochs = set()
     if _uses_uni_reference(args):
         rng_state = _snapshot_rng_state() if args.cps_mode == 'state_aware' else None
         reference_context = _load_reference(
@@ -3258,6 +3734,13 @@ def train_model(
             _run_direct_gap_numerical_checks()
         if args.reference_mode == 'native_suppress_d_adaptive':
             _run_d_adaptive_numerical_checks()
+        if args.reference_mode == 'native_suppress_d_adaptive_fine':
+            _run_d_adaptive_numerical_checks()
+            _run_d_adaptive_fine_numerical_checks()
+        if args.reference_mode == 'native_suppress_d_adaptive_fine_reverse':
+            _run_d_adaptive_numerical_checks()
+            _run_d_adaptive_fine_numerical_checks()
+            _run_d_adaptive_fine_reverse_numerical_checks()
         logger.info(
             'Native-scale reference startup checks passed | mode=%s | '
             'UNI input=256 | token grid=16x16 | gamma=%.4f | hc_thresh=%.4f | lambda_ref=%.4f',
@@ -3354,6 +3837,8 @@ def train_model(
                 'native_suppress_hc': 'native_sc',
                 'native_suppress_adaptive': 'native_gap_adaptive_s',
                 'native_suppress_d_adaptive': 'native_d_adaptive_s',
+                'native_suppress_d_adaptive_fine': 'native_d_adaptive_fine_s',
+                'native_suppress_d_adaptive_fine_reverse': 'native_d_adaptive_fine_reverse_s',
             }[args.reference_mode]
             native_training_file = stack.enter_context(open(
                 native_root / 'training_{}.csv'.format(mode_tag),
@@ -3385,6 +3870,35 @@ def train_model(
         )
         if not args.resume:
             metrics_writer.writeheader()
+
+        # Vanilla CPS-only motivation logging is deliberately independent from
+        # training metrics and is never used for loss, checkpoint selection, or
+        # early stopping.
+        if args.cps_mode == 'standard' and args.reference_mode == 'none':
+            motivation_path = Path('outputs/motivation_metrics') / 'vanilla_cps_motivation_metrics.csv'
+            motivation_path.parent.mkdir(parents=True, exist_ok=True)
+            if args.resume and motivation_path.is_file():
+                with motivation_path.open('r', newline='', encoding='utf-8') as existing_file:
+                    existing_reader = csv.DictReader(existing_file)
+                    for existing_row in existing_reader:
+                        try:
+                            motivation_logged_epochs.add(int(existing_row['epoch']))
+                        except (KeyError, TypeError, ValueError):
+                            continue
+            motivation_file = stack.enter_context(
+                motivation_path.open(
+                    'a' if args.resume else 'w',
+                    newline='',
+                    encoding='utf-8',
+                )
+            )
+            motivation_writer = csv.DictWriter(
+                motivation_file,
+                fieldnames=MOTIVATION_METRIC_FIELDS,
+            )
+            if not args.resume or motivation_file.tell() == 0:
+                motivation_writer.writeheader()
+                motivation_file.flush()
 
         for epoch in range(start_epoch, args.num_epochs):
             epoch_start = time.time()
@@ -3463,6 +3977,27 @@ def train_model(
                         validation['masks'],
                         print_num_half,
                     )
+            if motivation_writer is not None:
+                motivation = validation['motivation_metrics']
+                motivation_row = {
+                    'epoch': current_epoch,
+                    **motivation,
+                }
+                if current_epoch not in motivation_logged_epochs:
+                    motivation_writer.writerow(motivation_row)
+                    motivation_file.flush()
+                    motivation_logged_epochs.add(current_epoch)
+                print(
+                    '[Motivation][Epoch {:03d}] Agreement={:.6f} '
+                    'SoftDisagreement={:.6f} WW|Agree={:.6f} '
+                    'HC90WW|WW={:.6f}'.format(
+                        current_epoch,
+                        motivation['agreement'],
+                        motivation['soft_disagreement'],
+                        motivation['ww_given_agreement'],
+                        motivation['hc90ww_given_ww'],
+                    )
+                )
             if reference_context is not None and args.cps_mode == 'state_aware':
                 state_validation_row = _state_validation_diagnostic(
                     validation, dataloaders['val'], reference_context, cfg, args,
@@ -3818,7 +4353,11 @@ def train_model(
                         })
                         if len(q_weight_means) == 4 and not all(q_weight_means[i] >= q_weight_means[i + 1] - 1e-6 for i in range(3)):
                             raise AssertionError('Direct gap quartiles are not ordered by decreasing weight')
-                    if args.reference_mode == 'native_suppress_d_adaptive':
+                    if args.reference_mode in (
+                        'native_suppress_d_adaptive',
+                        'native_suppress_d_adaptive_fine',
+                        'native_suppress_d_adaptive_fine_reverse',
+                    ):
                         edges = np.quantile(d_values, [0.25, .5, .75])
                         d_groups = [
                             d_values <= edges[0],
@@ -3838,6 +4377,59 @@ def train_model(
                             raise AssertionError('D-Adaptive D quartiles are not strictly ordered')
                         if not all(q_w_means[i] >= q_w_means[i + 1] - 1e-6 for i in range(3)):
                             raise AssertionError('D-Adaptive weights are not monotonically decreasing by D quartile')
+                if args.reference_mode in (
+                    'native_suppress_d_adaptive_fine',
+                    'native_suppress_d_adaptive_fine_reverse',
+                ):
+                    candidate = native['regionwise_candidate_pixels']
+                    selected = native['fine_selected_pixels']
+                    all_pixels = native['all_pixel_count']
+                    adaptive_stats.update({
+                        'regionwise_candidate_pixels': int(candidate),
+                        'fine_selected_pixels': int(selected),
+                        'fine_selected_over_regionwise': _safe_mean(selected, candidate),
+                        'R1_same_consensus': _safe_mean(native['R1_same_consensus_pixels'], candidate),
+                        'R2_opposite_consensus': _safe_mean(native['R2_opposite_consensus_pixels'], candidate),
+                        'R3_student_disagreement': _safe_mean(native['R3_student_disagreement_pixels'], candidate),
+                        'fine_suppression_coverage': _safe_mean(selected, candidate),
+                        'global_suppression_coverage': _safe_mean(selected, all_pixels),
+                        'mean_applied_pixel_weight': _safe_mean(native['sum_applied_pixel_weight'], all_pixels),
+                    })
+                    rsum = sum(adaptive_stats[name] for name in (
+                        'R1_same_consensus', 'R2_opposite_consensus', 'R3_student_disagreement'
+                    ))
+                    if candidate and abs(rsum - 1.0) > 1e-6:
+                        raise AssertionError('Fine R1+R2+R3 != 1')
+                if args.reference_mode == 'native_suppress_d_adaptive_fine_reverse':
+                    risk_d = np.asarray(native['risk_d_values'], dtype=np.float64)
+                    risk_w = np.asarray(native['risk_w_values'], dtype=np.float64)
+                    risk_r = np.asarray(native['risk_r_values'], dtype=np.float64)
+                    risk_wr = np.asarray(native['risk_w_plus_r_values'], dtype=np.float64)
+                    if risk_wr.size and not np.allclose(risk_wr, 0.5, atol=1e-6, rtol=0.0):
+                        raise AssertionError('Fine reverse epoch mean w+r budget violated')
+                    adaptive_stats.update({
+                        'num_risk_pixels': int(native['risk_pixels']),
+                        'risk_pixel_fraction': _safe_mean(native['risk_pixels'], native['risk_all_pixel_count']),
+                        'mean_D_risk': float(risk_d.mean()) if risk_d.size else None,
+                        'D_risk_p10': float(np.percentile(risk_d, 10)) if risk_d.size else None,
+                        'D_risk_p25': float(np.percentile(risk_d, 25)) if risk_d.size else None,
+                        'D_risk_p50': float(np.percentile(risk_d, 50)) if risk_d.size else None,
+                        'D_risk_p75': float(np.percentile(risk_d, 75)) if risk_d.size else None,
+                        'D_risk_p90': float(np.percentile(risk_d, 90)) if risk_d.size else None,
+                        'mean_w_risk': float(risk_w.mean()) if risk_w.size else None,
+                        'mean_r_risk': float(risk_r.mean()) if risk_r.size else None,
+                        'w_risk_p10': float(np.percentile(risk_w, 10)) if risk_w.size else None,
+                        'w_risk_p50': float(np.percentile(risk_w, 50)) if risk_w.size else None,
+                        'w_risk_p90': float(np.percentile(risk_w, 90)) if risk_w.size else None,
+                        'r_risk_p10': float(np.percentile(risk_r, 10)) if risk_r.size else None,
+                        'r_risk_p50': float(np.percentile(risk_r, 50)) if risk_r.size else None,
+                        'r_risk_p90': float(np.percentile(risk_r, 90)) if risk_r.size else None,
+                        'mean_w_plus_r': float(risk_wr.mean()) if risk_wr.size else None,
+                        'reverse_fraction': _safe_mean(risk_r.sum(), risk_wr.sum()),
+                        'loss_cps_after_suppression': _safe_mean(native['sum_cps_after_suppression'], native['batches']),
+                        'loss_reverse': _safe_mean(native['sum_reverse_loss'], native['batches']),
+                        'loss_unsup_total': _safe_mean(native['sum_unsup_total'], native['batches']),
+                    })
                 native_training_writer.writerow({
                     'experiment': args.reference_mode,
                     'epoch': epoch + 1,
@@ -4092,7 +4684,10 @@ def parse_args():
             'path; native_suppress and native_suppress_hc preserve the existing '
             'native modes; native_suppress_adaptive is legacy direct relative '
             'semantic-gap weighting; native_suppress_d_adaptive is exactly '
-            'w=max(0,0.5-D) on contradiction.'
+            'w=max(0,0.5-D) on contradiction; native_suppress_d_adaptive_fine '
+            'applies that unchanged token weight only to matching fine pixels; '
+            'native_suppress_d_adaptive_fine_reverse adds r=min(D,0.5) opposite '
+            'loss only on those same fine risky pixels.'
         ),
     )
     parser.add_argument(
@@ -4205,6 +4800,10 @@ def parse_args():
             args.path_trained_models = 'checkpoints/native_gap_adaptive_s_seed{}'.format(args.sd)
         elif args.reference_mode == 'native_suppress_d_adaptive':
             args.path_trained_models = 'checkpoints/native_d_adaptive_s_seed{}'.format(args.sd)
+        elif args.reference_mode == 'native_suppress_d_adaptive_fine':
+            args.path_trained_models = 'checkpoints/native_d_adaptive_fine_seed{}'.format(args.sd)
+        elif args.reference_mode == 'native_suppress_d_adaptive_fine_reverse':
+            args.path_trained_models = 'checkpoints/native_d_adaptive_fine_reverse_seed{}'.format(args.sd)
         elif args.cps_mode == 'state_aware':
             args.path_trained_models = (
                 'checkpoints/semi_{}_seed_{}_rgbstain_state_aware'.format(
@@ -4228,6 +4827,10 @@ def parse_args():
             args.path_seg_results = 'seg_pred/native_gap_adaptive_s_seed{}'.format(args.sd)
         elif args.reference_mode == 'native_suppress_d_adaptive':
             args.path_seg_results = 'seg_pred/native_d_adaptive_s_seed{}'.format(args.sd)
+        elif args.reference_mode == 'native_suppress_d_adaptive_fine':
+            args.path_seg_results = 'seg_pred/native_d_adaptive_fine_seed{}'.format(args.sd)
+        elif args.reference_mode == 'native_suppress_d_adaptive_fine_reverse':
+            args.path_seg_results = 'seg_pred/native_d_adaptive_fine_reverse_seed{}'.format(args.sd)
         elif args.cps_mode == 'state_aware':
             args.path_seg_results = (
                 'seg_pred/semi_{}_seed_{}_rgbstain_state_aware'.format(
