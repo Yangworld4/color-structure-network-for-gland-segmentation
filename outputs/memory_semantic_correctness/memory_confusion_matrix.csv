@@ -1,0 +1,7 @@
+subset,gt_class,predicted_class,count
+ALL,FG,FG,1287
+ALL,FG,BG,66
+ALL,FG,tie,0
+ALL,BG,FG,176
+ALL,BG,BG,1752
+ALL,BG,tie,0

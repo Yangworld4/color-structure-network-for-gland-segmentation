@@ -974,14 +974,16 @@ def _load_reference(args, cfg, logger, manifest_dir=None, use_manifests=False):
     uni, weights_path, config_path = _load_uni(args)
     memory_built = False
     if not memory_path.is_file():
-        if _is_native_reference_mode(args):
-            raise FileNotFoundError(
-                'Native reference modes require the fixed UNI-256 memory: {}'.format(memory_path)
-            )
-        if args.cps_mode == 'state_aware' and not args.uni_build_reference_memory:
+        if (
+            (_is_native_reference_mode(args) or args.cps_mode == 'state_aware')
+            and not args.uni_build_reference_memory
+        ):
+            mode_name = 'Native' if _is_native_reference_mode(args) else 'state-aware'
             raise RuntimeError(
-                'State-aware mode requires --uni_build_reference_memory when '
-                'reference memory is absent: {}'.format(memory_path)
+                '{} reference memory is absent; use --uni_build_reference_memory '
+                'to build it from the current labeled split: {}'.format(
+                    mode_name, memory_path
+                )
             )
         if manifest_dir is None:
             raise RuntimeError(
@@ -1842,8 +1844,6 @@ def _run_native_startup_checks(args, context, models, optimizers):
     }
     if any(id(parameter) in optimizer_ids for parameter in context['uni'].parameters()):
         raise AssertionError('UNI parameters entered CPS optimizer')
-    if Path(context['memory_path']).name != 'reference_memory_uni256.npz':
-        raise AssertionError('Native mode must use reference_memory_uni256.npz')
     print('UNI input shape       = [B,3,256,256]')
     print('UNI patch-token shape = [B,256,1024]')
     print('native grid           = 16x16')
@@ -2731,9 +2731,6 @@ def validate(models, losses, dataloader):
             diagnostic_features['b'] = None
             output1 = model1(input1)[0]
             output2 = model2(input2)[0]
-            scores1.append(output1)
-            scores2.append(output2)
-            masks.append(mask)
             names.extend(batch['ID'])
             loss1 += compute_supervised_loss(
                 losses['ce'],
@@ -2755,6 +2752,14 @@ def validate(models, losses, dataloader):
                 diagnostic_features['a'],
                 diagnostic_features['b'],
             )
+            # Validation metrics need the complete epoch logits, but they do
+            # not need to remain on GPU after the current batch.  Keeping the
+            # cache on CPU avoids an unnecessary validation-set-sized GPU
+            # allocation while preserving the exact logits and downstream
+            # evaluator behavior.
+            scores1.append(output1.detach().cpu())
+            scores2.append(output2.detach().cpu())
+            masks.append(mask.detach().cpu())
             _update_motivation_totals(
                 motivation_totals,
                 output1,
@@ -3573,16 +3578,9 @@ def train_model(
         if args.resume and not os.path.isfile(os.path.join(trained_models_path, 'resume_checkpoint.pth')):
             raise RuntimeError('Requested resume but resume_checkpoint.pth is missing: {}'.format(trained_models_path))
     if _is_native_reference_mode(args):
-        default_native_memory = Path(
-            'checkpoints/glas_labeled10_seed24/reference_memory_uni256.npz'
-        ).resolve()
         if args.uni_reference_memory is None:
-            args.uni_reference_memory = str(default_native_memory)
-        if Path(args.uni_reference_memory).resolve() != default_native_memory:
-            raise RuntimeError(
-                'Native reference modes require the fixed UNI-256 memory: {}'.format(
-                    default_native_memory
-                )
+            args.uni_reference_memory = str(
+                Path(trained_models_path) / 'reference_memory_uni256.npz'
             )
     elif _is_reference_mode(args.cps_mode) and args.uni_reference_memory is None:
         args.uni_reference_memory = str(Path(trained_models_path) / 'reference_memory.npz')
@@ -3871,34 +3869,32 @@ def train_model(
         if not args.resume:
             metrics_writer.writeheader()
 
-        # Vanilla CPS-only motivation logging is deliberately independent from
-        # training metrics and is never used for loss, checkpoint selection, or
-        # early stopping.
-        if args.cps_mode == 'standard' and args.reference_mode == 'none':
-            motivation_path = Path('outputs/motivation_metrics') / 'vanilla_cps_motivation_metrics.csv'
-            motivation_path.parent.mkdir(parents=True, exist_ok=True)
-            if args.resume and motivation_path.is_file():
-                with motivation_path.open('r', newline='', encoding='utf-8') as existing_file:
-                    existing_reader = csv.DictReader(existing_file)
-                    for existing_row in existing_reader:
-                        try:
-                            motivation_logged_epochs.add(int(existing_row['epoch']))
-                        except (KeyError, TypeError, ValueError):
-                            continue
-            motivation_file = stack.enter_context(
-                motivation_path.open(
-                    'a' if args.resume else 'w',
-                    newline='',
-                    encoding='utf-8',
-                )
+        # Motivation logging is independent from training metrics and is never
+        # used for loss, checkpoint selection, or early stopping.  Every CPS
+        # mode writes the same file inside its own checkpoint experiment path.
+        motivation_path = Path(trained_models_path) / 'vanilla_cps_motivation_metrics.csv'
+        if args.resume and motivation_path.is_file():
+            with motivation_path.open('r', newline='', encoding='utf-8') as existing_file:
+                existing_reader = csv.DictReader(existing_file)
+                for existing_row in existing_reader:
+                    try:
+                        motivation_logged_epochs.add(int(existing_row['epoch']))
+                    except (KeyError, TypeError, ValueError):
+                        continue
+        motivation_file = stack.enter_context(
+            motivation_path.open(
+                'a' if args.resume else 'w',
+                newline='',
+                encoding='utf-8',
             )
-            motivation_writer = csv.DictWriter(
-                motivation_file,
-                fieldnames=MOTIVATION_METRIC_FIELDS,
-            )
-            if not args.resume or motivation_file.tell() == 0:
-                motivation_writer.writeheader()
-                motivation_file.flush()
+        )
+        motivation_writer = csv.DictWriter(
+            motivation_file,
+            fieldnames=MOTIVATION_METRIC_FIELDS,
+        )
+        if not args.resume or motivation_file.tell() == 0:
+            motivation_writer.writeheader()
+            motivation_file.flush()
 
         for epoch in range(start_epoch, args.num_epochs):
             epoch_start = time.time()
@@ -4736,9 +4732,9 @@ def parse_args():
     parser.add_argument('--uni_k', default=5, type=int)
     parser.add_argument(
         '--reference-resolution', '--reference_resolution',
-        dest='reference_resolution', type=int, default=DEFAULT_REFERENCE_RESOLUTION,
+        dest='reference_resolution', type=int, default=None,
         choices=list(SUPPORTED_REFERENCE_RESOLUTIONS),
-        help='Frozen UNI reference input resolution; default 224 preserves R224 behavior.',
+        help='Frozen UNI reference input resolution; Native modes default to 256, legacy reference modes to 224.',
     )
     parser.add_argument(
         '--uni-input-size', dest='uni_input_size', type=int, default=None,
@@ -4763,9 +4759,17 @@ def parse_args():
 
     args = parser.parse_args()
     if args.uni_input_size is not None:
-        if args.reference_resolution != DEFAULT_REFERENCE_RESOLUTION and args.reference_resolution != args.uni_input_size:
+        if (
+            args.reference_resolution is not None
+            and args.reference_resolution != args.uni_input_size
+        ):
             parser.error('--uni-input-size conflicts with --reference-resolution')
         args.reference_resolution = int(args.uni_input_size)
+    elif args.reference_resolution is None:
+        args.reference_resolution = (
+            256 if args.reference_mode in NATIVE_REFERENCE_MODES
+            else DEFAULT_REFERENCE_RESOLUTION
+        )
     if args.reference_mode in NATIVE_REFERENCE_MODES:
         if args.cps_mode != 'standard':
             parser.error('native reference modes require --cps_mode standard')

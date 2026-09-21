@@ -27,8 +27,8 @@ python main.py \
     --sd 24
 
 python main.py \
-    --dataset_name RINGS      \
-    --path_dataset datasets/RINGS \
+    --dataset_name GlaS      \
+    --path_dataset datasets/GLaS \
     --path_trained_models checkpoints/semi_10_seed_24_rgbstain\
     --labeled_ratio 10 \
     --input_mode rgb_stain \
@@ -90,3 +90,26 @@ python -u main.py \
     --cps_mode state_aware \
     --uni_k 5
 
+
+
+  python main.py \
+    --dataset_name GlaS \
+    --path_dataset datasets/GLaS \
+    --path_trained_models checkpoints/native_d_adaptive_fine_reverse_seed24_20 \
+    --path_seg_results seg_pred/native_d_adaptive_fine_reverse_seed24_20 \
+    --labeled_ratio 20 \
+    --sd 24 \
+    --batch_size 2 \
+    --num_epochs 200 \
+    --network unet \
+    --input_mode rgb_stain \
+    --step_size 50 \
+    --lr 0.5 \
+    --gamma 0.5 \
+    --unsup_weight 5.0 \
+    --warm_up_duration 20 \
+    --momentum 0.9 \
+    --cps_mode standard \
+    --uni_build_reference_memory \
+    --reference-mode native_suppress_d_adaptive_fine_reverse \
+    --uni_k 5
