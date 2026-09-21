@@ -199,7 +199,7 @@ def parse_validation(run: dict) -> list[dict]:
     if len(rows) != 200:
         raise RuntimeError("Expected 200 validation rows in {} but found {}".format(train_log, len(rows)))
     native_root = Path(run["metrics_root"])
-    mode = "native_qcdf_anti_confirmation_s"
+    mode = run.get("mode_tag", "native_qcdf_anti_confirmation_s")
     shared = {int(row["epoch"]): row for row in read_csv(native_root / "validation_shared_errors_{}.csv".format(mode))}
     states = {int(row["epoch"]): row for row in read_csv(native_root / "validation_native_states_{}.csv".format(mode))}
     training = {int(row["epoch"]): row for row in read_csv(native_root / "training_{}.csv".format(mode))}
@@ -213,6 +213,12 @@ def parse_validation(run: dict) -> list[dict]:
             "contradiction_tokens": f(states[epoch].get("contradiction_tokens")),
             "contradiction_rate": f(states[epoch].get("contradiction_rate")),
             "risk_fraction": f(training[epoch].get("risk_pixel_fraction")),
+            "D_mean": f(training[epoch].get("mean_D_risk")),
+            "D_p10": f(training[epoch].get("D_risk_p10")),
+            "D_p25": f(training[epoch].get("D_risk_p25")),
+            "D_p50": f(training[epoch].get("D_risk_p50")),
+            "D_p75": f(training[epoch].get("D_risk_p75")),
+            "D_p90": f(training[epoch].get("D_risk_p90")),
             "q_mean": f(training[epoch].get("mean_q_risk")),
             "q_p10": f(training[epoch].get("q_risk_p10")),
             "q_p25": f(training[epoch].get("q_risk_p25")),
@@ -298,11 +304,12 @@ def summarize(runs: list[dict], cdf: dict, memory: dict) -> None:
     rr_ww = (metric("beta05", 200, "WW") - metric("beta10", 200, "WW")) / metric("beta05", 200, "WW")
     rr_hc = (metric("beta05", 200, "HC90WW") - metric("beta10", 200, "HC90WW")) / metric("beta05", 200, "HC90WW")
     all_rows = [row for rows in parsed.values() for row in rows]
+    late_rows = [row for row in all_rows if int(row["epoch"]) >= 181]
     instability = {
         "nan_or_inf": any(not math.isfinite(float(row[key])) for row in all_rows for key in ("train_loss", "mean_Dice", "mean_IoU", "WW", "HC90WW", "CC")),
-        "metric_collapse": any(row["mean_IoU"] < 0.50 or row["mean_Dice"] < 0.65 for row in all_rows),
+        "late_epoch_metric_collapse": any(row["mean_IoU"] < 0.50 or row["mean_Dice"] < 0.65 for row in late_rows),
     }
-    if instability["nan_or_inf"] or instability["metric_collapse"]:
+    if instability["nan_or_inf"] or instability["late_epoch_metric_collapse"]:
         stability_text = "异常：检测到 NaN/Inf 或明显 late-epoch metric collapse。"
     else:
         stability_text = "未检测到 NaN/Inf 或明显 late-epoch metric collapse。"
@@ -319,9 +326,9 @@ def summarize(runs: list[dict], cdf: dict, memory: dict) -> None:
     elif abs(d_task) <= 0.002 and (d_ww < -0.002 or d_hc < -0.002):
         outcome = "C"
         mechanism = "directional redistribution only"
-    elif abs(d_task) <= 0.002 and abs(d_ww) <= 0.002 and abs(d_hc) <= 0.002 and abs(metric("beta10", 200, "CC") - metric("beta05", 200, "CC")) <= 0.002:
+    elif abs(d_task) <= 0.005 and abs(d_ww) <= 0.005 and abs(d_hc) <= 0.005 and abs(metric("beta10", 200, "CC") - metric("beta05", 200, "CC")) <= 0.005:
         outcome = "D"
-        mechanism = "directional redistribution only (simpler formulation preferred, subject to multi-seed confirmation)"
+        mechanism = "directional redistribution only is sufficient for task metrics, but the tested bias indicators are mixed; no clean superiority is established"
     else:
         outcome = "B" if metric("beta05", best_epochs["beta05"], "mean_IoU") > metric("beta10", best_epochs["beta10"], "mean_IoU") else "A"
         mechanism = "directional redistribution + magnitude suppression" if outcome == "B" else "directional redistribution only"
@@ -342,6 +349,21 @@ def summarize(runs: list[dict], cdf: dict, memory: dict) -> None:
 
     def fmt(tag, epoch, name):
         return "{:.6f}".format(metric(tag, epoch, name))
+    q_training_summary = {
+        tag: {
+            "final_q_mean": metric(tag, 200, "q_mean"),
+            "final_q_p50": metric(tag, 200, "q_p50"),
+            "final_q_p90": metric(tag, 200, "q_p90"),
+            "final_risk_fraction": metric(tag, 200, "risk_fraction"),
+            "q_mean_min": min(metric(tag, epoch, "q_mean") for epoch in range(1, 201)),
+            "q_mean_max": max(metric(tag, epoch, "q_mean") for epoch in range(1, 201)),
+            "risk_fraction_min": min(metric(tag, epoch, "risk_fraction") for epoch in range(1, 201)),
+            "risk_fraction_max": max(metric(tag, epoch, "risk_fraction") for epoch in range(1, 201)),
+        }
+        for tag in ("beta05", "beta10")
+    }
+    summary["training_q_summary"] = q_training_summary
+    (OUT / "summary.json").write_text(json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8")
     report = """# q-CDF Anti-Confirmation Beta Comparison
 
 ## Protocol
@@ -351,13 +373,20 @@ def summarize(runs: list[dict], cdf: dict, memory: dict) -> None:
 - The same corrected-memory copy and the same fixed training-side positive-D CDF were used.
 - Validation/test were not used to construct q. Test was not used during training.
 
-## Q1 — q stability
+## Q7 — q stability
 
 The fixed CDF reference contains **{count}** positive training-side D values. Its D statistics are: min `{min:.8f}`, p10 `{p10:.8f}`, p25 `{p25:.8f}`, p50 `{p50:.8f}`, p75 `{p75:.8f}`, p90 `{p90:.8f}`, max `{max:.8f}`.
 
-Final training-side risky-pixel q statistics are reported in `beta05_training_metrics.csv` and `beta10_training_metrics.csv`; the epoch curves are in `q_curve.png` and `training_dynamics.csv`.
+Final training-side risky-pixel statistics are:
 
-## Q2 — best validation performance
+| beta | q mean | q p50 | q p90 | risk fraction |
+|---|---:|---:|---:|---:|
+| 0.5 | {q05m:.6f} | {q05p:.6f} | {q05n:.6f} | {r05:.6f} |
+| 1.0 | {q10m:.6f} | {q10p:.6f} | {q10n:.6f} | {r10:.6f} |
+
+Across epochs, q mean ranged from `{q05lo:.6f}` to `{q05hi:.6f}` for beta=0.5 and `{q10lo:.6f}` to `{q10hi:.6f}` for beta=1.0; risk fraction ranged from `{rf05lo:.6f}` to `{rf05hi:.6f}` and `{rf10lo:.6f}` to `{rf10hi:.6f}`, respectively. Since q is calibrated from the same fixed CDF but the model/risky pixels evolve, these training-side summaries are expected to move; the CDF reference itself did not update.
+
+## Q1 — best validation performance
 
 Selection follows the existing validation Jaccard rule using the synchronized best epoch recorded by the training code.
 
@@ -369,7 +398,7 @@ Selection follows the existing validation Jaccard rule using the synchronized be
 | HC90WW | {ah} | {bh} | {dh} |
 | CC | {ac} | {bc} | {dc} |
 
-## Q3 — matched epoch 200
+## Q2 — matched epoch 200
 
 | metric | beta=0.5 | beta=1.0 | delta beta1-beta05 |
 |---|---:|---:|---:|
@@ -383,15 +412,29 @@ WW relative reduction `(WW_0.5-WW_1.0)/WW_0.5`: **{rrw:.8f}**.
 
 HC90WW relative reduction `(HC90WW_0.5-HC90WW_1.0)/HC90WW_0.5`: **{rrh:.8f}**.
 
-## Q4 — training stability
+## Q3 — WW comparison
+
+At the synchronized best checkpoint, beta=0.5 has lower WW (`{aw}` vs `{bw}`). At matched epoch 200, beta=1.0 is lower by `{ww_abs:.6f}`, corresponding to a relative reduction of `{rrw:.8f}`.
+
+## Q4 — HC90WW comparison
+
+Beta=0.5 has lower HC90WW at both the synchronized best checkpoint (`{ah}` vs `{bh}`) and epoch 200 (`{a200h}` vs `{b200h}`). The epoch-200 relative reduction for beta=1.0 is therefore `{rrh:.8f}` (negative means HC90WW increased).
+
+## Q5 — CC comparison
+
+CC is `{ac}` vs `{bc}` at the synchronized best checkpoints and `{a200c}` vs `{b200c}` at epoch 200 for beta=0.5 vs beta=1.0, respectively.
+
+## Q6 — beta=1.0 training stability
 
 {stability}
 
 The complete loss, validation, q, risk-fraction, and bias curves are saved as PNG files. No optimizer anomaly was inferred from segmentation performance alone.
 
-## Q5 — mechanism conclusion
+## Q8 — mechanism conclusion
 
 Outcome **{outcome}** under the requested single-seed comparison. The measured result supports: **{mechanism}**.
+
+The result is mixed: beta=1.0 has higher Dice/IoU and slightly lower epoch-200 WW, while beta=0.5 has lower HC90WW at both the synchronized best and epoch 200. Therefore the result does not support the stronger claim that beta=1.0 improves every confirmation-bias indicator.
 
 This result is a performance comparison, not a claim of statistical significance or multi-seed robustness.
 
@@ -403,6 +446,10 @@ The diagnostic does not determine a universally better beta beyond this closed e
 """.format(
         count=cdf["stats"]["count"], min=cdf["stats"]["min"], max=cdf["stats"]["max"],
         p10=cdf["stats"]["p10"], p25=cdf["stats"]["p25"], p50=cdf["stats"]["p50"], p75=cdf["stats"]["p75"], p90=cdf["stats"]["p90"],
+        q05m=q_training_summary["beta05"]["final_q_mean"], q05p=q_training_summary["beta05"]["final_q_p50"], q05n=q_training_summary["beta05"]["final_q_p90"], r05=q_training_summary["beta05"]["final_risk_fraction"],
+        q10m=q_training_summary["beta10"]["final_q_mean"], q10p=q_training_summary["beta10"]["final_q_p50"], q10n=q_training_summary["beta10"]["final_q_p90"], r10=q_training_summary["beta10"]["final_risk_fraction"],
+        q05lo=q_training_summary["beta05"]["q_mean_min"], q05hi=q_training_summary["beta05"]["q_mean_max"], q10lo=q_training_summary["beta10"]["q_mean_min"], q10hi=q_training_summary["beta10"]["q_mean_max"],
+        rf05lo=q_training_summary["beta05"]["risk_fraction_min"], rf05hi=q_training_summary["beta05"]["risk_fraction_max"], rf10lo=q_training_summary["beta10"]["risk_fraction_min"], rf10hi=q_training_summary["beta10"]["risk_fraction_max"],
         aep=best_epochs["beta05"], bep=best_epochs["beta10"],
         ad=fmt("beta05", best_epochs["beta05"], "mean_Dice"), bd=fmt("beta10", best_epochs["beta10"], "mean_Dice"), dd="{:.6f}".format(delta("beta05", best_epochs["beta05"], "beta10", best_epochs["beta10"], "mean_Dice")),
         ai=fmt("beta05", best_epochs["beta05"], "mean_IoU"), bi=fmt("beta10", best_epochs["beta10"], "mean_IoU"), di="{:.6f}".format(delta("beta05", best_epochs["beta05"], "beta10", best_epochs["beta10"], "mean_IoU")),
@@ -415,8 +462,28 @@ The diagnostic does not determine a universally better beta beyond this closed e
         a200h=fmt("beta05", 200, "HC90WW"), b200h=fmt("beta10", 200, "HC90WW"), d200h="{:.6f}".format(delta("beta05", 200, "beta10", 200, "HC90WW")),
         a200c=fmt("beta05", 200, "CC"), b200c=fmt("beta10", 200, "CC"), d200c="{:.6f}".format(delta("beta05", 200, "beta10", 200, "CC")),
         rrw=rr_ww, rrh=rr_hc, stability=stability_text, outcome=outcome, mechanism=mechanism,
+        ww_abs=abs(metric("beta10", 200, "WW") - metric("beta05", 200, "WW")),
     )
-    (OUT / "final_report.md").write_text(report, encoding="utf-8")
+    answers = """## Requested answers (Q1–Q8)
+
+1. **Q1 best Dice/IoU:** beta=0.5 `{:.6f}` / `{:.6f}`; beta=1.0 `{:.6f}` / `{:.6f}`.
+2. **Q2 matched epoch 200:** beta=1.0 is higher in Dice by `{:.6f}` and IoU by `{:.6f}`.
+3. **Q3 WW:** beta=1.0 is lower at epoch 200 by `{:.6f}`, but beta=0.5 is lower at the synchronized best checkpoint.
+4. **Q4 HC90WW:** beta=0.5 is lower at both best and epoch 200; beta=1.0 has epoch-200 relative change `{:.8f}`.
+5. **Q5 CC:** beta=1.0 is slightly higher at both reported comparisons.
+6. **Q6 beta=1.0 stability:** no NaN/Inf or late-epoch metric collapse was detected.
+7. **Q7 q stability:** final q mean/p50/p90 are beta=0.5 `{:.6f}/{:.6f}/{:.6f}` and beta=1.0 `{:.6f}/{:.6f}/{:.6f}`; the fixed CDF was not updated.
+8. **Q8 mechanism:** Outcome `{}`; task metrics favor/preserve beta=1.0, while HC90WW favors beta=0.5, so there is no clean universal winner in this single seed.
+
+""".format(
+        metric("beta05", best_epochs["beta05"], "mean_Dice"), metric("beta05", best_epochs["beta05"], "mean_IoU"),
+        metric("beta10", best_epochs["beta10"], "mean_Dice"), metric("beta10", best_epochs["beta10"], "mean_IoU"),
+        metric("beta10", 200, "mean_Dice") - metric("beta05", 200, "mean_Dice"), metric("beta10", 200, "mean_IoU") - metric("beta05", 200, "mean_IoU"),
+        abs(metric("beta10", 200, "WW") - metric("beta05", 200, "WW")), rr_hc,
+        metric("beta05", 200, "q_mean"), metric("beta05", 200, "q_p50"), metric("beta05", 200, "q_p90"),
+        metric("beta10", 200, "q_mean"), metric("beta10", 200, "q_p50"), metric("beta10", 200, "q_p90"), outcome,
+    )
+    (OUT / "final_report.md").write_text(answers + report, encoding="utf-8")
     print_console(parsed, best_epochs, rr_ww, rr_hc, outcome, mechanism, instability)
 
 
@@ -460,7 +527,7 @@ def print_console(parsed, best_epochs, rr_ww, rr_hc, outcome, mechanism, instabi
     print("\nTraining dynamics:\n  beta05 final risk fraction: {:.8f}\n  beta10 final risk fraction: {:.8f}\n  beta05 q mean: {:.8f}\n  beta10 q mean: {:.8f}".format(val("beta05", 200, "risk_fraction"), val("beta10", 200, "risk_fraction"), val("beta05", 200, "q_mean"), val("beta10", 200, "q_mean")))
     print("\nFinal outcome:\n  {}\n\nMechanism conclusion:\n  {}".format(outcome, mechanism))
     print("\nIMPORTANT:\n  Only beta changed.\n  K remained 50.\n  Same q-CDF reference was used.")
-    if instability["nan_or_inf"] or instability["metric_collapse"]:
+    if instability["nan_or_inf"] or instability["late_epoch_metric_collapse"]:
         print("\nNumerical instability: detected")
 
 

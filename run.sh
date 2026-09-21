@@ -70,35 +70,13 @@ python -u main.py \
     --cps_mode standard 
 
 
-python -u main.py \
+python main.py \
     --dataset_name GlaS \
     --path_dataset datasets/GLaS \
-    --path_trained_models checkpoints/semi_10_seed_4_rgbstain_state_aware_ce \
-    --path_seg_results seg_pred/semi_10_seed_4_rgbstain_state_aware_ce \
+    --path_trained_models checkpoints/k50_margin_calibrated_reverse_1337 \
+    --path_seg_results seg_pred/k50_margin_calibrated_reverse_1337 \
     --labeled_ratio 10 \
-    --sd 24 \
-    --batch_size 2 \
-    --num_epochs 200 \
-    --network unet \
-    --input_mode rgb_stain \
-    --step_size 50 \
-    --lr 0.5 \
-    --gamma 0.5 \
-    --unsup_weight 5.0 \
-    --momentum 0.9 \
-    --uni_build_reference_memory \
-    --cps_mode state_aware \
-    --uni_k 5
-
-
-
-  python main.py \
-    --dataset_name GlaS \
-    --path_dataset datasets/GLaS \
-    --path_trained_models checkpoints/topk50_native_d_adaptive_fine_reverse_seed24_20 \
-    --path_seg_results seg_pred/topk50_native_d_adaptive_fine_reverse_seed24_20 \
-    --labeled_ratio 20 \
-    --sd 24 \
+    --sd 1337 \
     --batch_size 2 \
     --num_epochs 200 \
     --network unet \
@@ -109,7 +87,6 @@ python -u main.py \
     --unsup_weight 5.0 \
     --warm_up_duration 20 \
     --momentum 0.9 \
-    --cps_mode standard \
-    --uni_build_reference_memory \
-    --reference-mode native_suppress_d_adaptive_fine_reverse \
-    --uni_k 50
+    --cps_mode native_fine_margin_calibrated_reverse \
+    --uni_k 50 \
+    --uni_build_reference_memory

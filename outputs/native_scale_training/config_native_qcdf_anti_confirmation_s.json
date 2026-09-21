@@ -13,14 +13,14 @@
   "native_hc_thresh": 0.9,
   "lambda_native_ref": 0.5,
   "adaptive_strategy": "q_cdf_directional_mixture_with_beta_budget",
-  "cdf": "fixed training-side empirical CDF; beta=0.5",
+  "cdf": "fixed training-side empirical CDF; beta=1.0",
   "running_buffer": "not_applicable",
-  "d_adaptive_formula": "q=F_train(D); w_cps=beta*(1-q); w_opp=beta*q on fine risky pixels; beta=0.5",
+  "d_adaptive_formula": "q=F_train(D); w_cps=beta*(1-q); w_opp=beta*q on fine risky pixels; beta=1.0",
   "pixel_selection": "token contradiction AND pixel student agreement AND pixel consensus equals token consensus",
   "reverse_target": "opposite detached token consensus; q-CDF mixture only on fine risky pixels",
   "contradiction_gate": "detach pooled pA/pB; agreement and UNI margin sign only; no GT",
   "loss_weight_expansion": "nearest 16x16 -> student pixel resolution",
   "hc_correction": "disabled",
   "test_evaluation_policy": "not evaluated during training",
-  "command": "main.py --dataset_name GlaS --path_dataset datasets/GLaS --path_trained_models checkpoints/qcdf_k50_beta05 --path_seg_results seg_pred/qcdf_k50_beta05 --labeled_ratio 10 --sd 24 --batch_size 2 --num_epochs 200 --network unet --input_mode rgb_stain --step_size 50 --lr 0.5 --gamma 0.5 --unsup_weight 5.0 --warm_up_duration 20 --momentum 0.9 --cps_mode standard --reference-mode native_qcdf_anti_confirmation --uni_k 50 --reference-memory /data/mission/models/Exp/DUAL/outputs/qcdf_beta_comparison/reference_memory_qcdf_k50.npz --anti-confirm-q-cdf /data/mission/models/Exp/DUAL/outputs/qcdf_beta_comparison/sorted_positive_d_reference.npz --anti-confirm-beta 0.5 --native-metrics-dir /data/mission/models/Exp/DUAL/outputs/qcdf_beta_comparison/runs/beta05/native_metrics"
+  "command": "main.py --dataset_name GlaS --path_dataset datasets/GLaS --path_trained_models checkpoints/qcdf_k50_beta10 --path_seg_results seg_pred/qcdf_k50_beta10 --labeled_ratio 10 --sd 24 --batch_size 2 --num_epochs 200 --network unet --input_mode rgb_stain --step_size 50 --lr 0.5 --gamma 0.5 --unsup_weight 5.0 --warm_up_duration 20 --momentum 0.9 --cps_mode standard --reference-mode native_qcdf_anti_confirmation --uni_k 50 --reference-memory /data/mission/models/Exp/DUAL/outputs/qcdf_beta_comparison/reference_memory_qcdf_k50.npz --anti-confirm-q-cdf /data/mission/models/Exp/DUAL/outputs/qcdf_beta_comparison/sorted_positive_d_reference.npz --anti-confirm-beta 1.0 --native-metrics-dir /data/mission/models/Exp/DUAL/outputs/qcdf_beta_comparison/runs/beta10/native_metrics"
 }

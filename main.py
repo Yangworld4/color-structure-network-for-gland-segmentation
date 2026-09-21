@@ -88,74 +88,6 @@ def _reference_size(reference_resolution):
     _reference_grid(resolution)
     return (resolution, resolution)
 
-STATE_METRIC_FIELDS = [
-    'epoch', 'total_unlabeled_pixels', 'agreement_pixels', 'agreement_rate',
-    'disagreement_pixels', 'disagreement_rate', 'agreement_conflict_pixels',
-    'agreement_conflict_rate', 'mean_r_agreement', 'mean_r_agreement_conflict',
-    'fg_consensus_pixels', 'bg_consensus_pixels', 'fg_consensus_mean_r',
-    'bg_consensus_mean_r', 'agreement_target_mass_shift_sum',
-    'agreement_target_mass_shift_mean', 'potential_reverse_A_rate',
-    'potential_reverse_B_rate', 'potential_reverse_any_rate',
-    'potential_reverse_both_rate', 'disagreement_A_supported_pixels',
-    'disagreement_B_supported_pixels', 'mean_s_A_disagreement',
-    'mean_s_B_disagreement', 'mean_w_A_disagreement', 'mean_w_B_disagreement',
-    'mean_min_teacher_weight', 'mean_max_teacher_weight',
-    'mean_suppressed_direction_weight', 'directional_attenuation_sum',
-    'directional_attenuation_mean', 'routing_tie_pixels', 'routing_tie_rate',
-    'original_cps_loss_counterfactual', 'agreement_soft_correction_cps_component',
-    'disagreement_original_cps_component', 'disagreement_routed_cps_component',
-    'state_aware_cps_loss', 'cps_loss_delta_vs_original', 'supervised_loss_A',
-    'supervised_loss_B', 'total_loss', 'learning_rate',
-]
-
-STATE_ITER_METRIC_FIELDS = [
-    'iteration', 'global_step', 'epoch', 'agreement_rate', 'agreement_mean_r',
-    'disagreement_rate', 'mean_w_A', 'mean_w_B', 'mean_suppressed_weight',
-    'original_cps_loss', 'state_aware_cps_loss', 'loss_delta',
-]
-
-STATE_VALIDATION_FIELDS = [
-    'epoch', 'valid_pixels', 'CC', 'WW', 'AC', 'BC', 'D',
-    'absolute_WW_rate', 'HC90_WW_all', 'HC95_WW_all', 'mean_r_CC',
-    'mean_r_WW', 'WW_reverse_A', 'WW_reverse_B', 'WW_any_reverse',
-    'WW_both_reverse', 'CC_harm_A', 'CC_harm_B', 'CC_any_harm',
-    'CC_both_harm', 'shared_FP', 'shared_FN', 'A_correct_B_wrong',
-    'B_correct_A_wrong', 'routing_correct', 'routing_wrong', 'routing_tie',
-    'routing_accuracy_non_tie', 'mean_w_correct_teacher',
-    'mean_w_wrong_teacher', 'helpful_retention', 'harmful_reduction',
-    'routing_weight_gap', 'GT_FG_routing_accuracy', 'GT_BG_routing_accuracy',
-    'A_correct_routing_accuracy', 'B_correct_routing_accuracy',
-    'HC90_routing_accuracy', 'HC95_routing_accuracy', 'helpful_gradient_mass',
-    'harmful_gradient_mass', 'routed_helpful_gradient_mass',
-    'routed_harmful_gradient_mass', 'net_gradient_selective_gain',
-    'val_dice_student1', 'val_dice_student2', 'val_jaccard_student1',
-    'val_jaccard_student2',
-    'agreement_rate', 'cc_all_rate', 'ww_all_rate', 'd_all_rate',
-    'ww_over_agreement', 'HC90_WW_over_WW', 'HC95_WW_over_WW',
-    'WW_reference_direction_correct', 'CC_reference_harmful_direction',
-    'WW_potential_reverse_A', 'WW_potential_reverse_B',
-    'WW_potential_reverse_any', 'WW_potential_reverse_both',
-    'WW_correct_but_insufficient', 'HC90_ref_correct', 'HC95_ref_correct',
-    'D_routing_accuracy', 'A_correct_given_D', 'B_correct_given_D',
-    'best_fixed_branch_accuracy', 'routing_gain_over_best_fixed',
-    'strong_wrong_routing_005', 'strong_wrong_routing_010',
-    'strong_wrong_routing_020', 'mean_reference_abs_margin',
-]
-
-TRAINING_EPOCH_FIELDS = [
-    'epoch', 'learning_rate', 'unsup_weight', 'train_sup_loss_A',
-    'train_sup_loss_B', 'train_unsup_A_to_B', 'train_unsup_B_to_A',
-    'train_total_A', 'train_total_B', 'train_total', 'Agreement_rate_train',
-    'Disagreement_rate_train', 'mean_r_agreement_train', 'mean_w_A_train',
-    'mean_w_B_train', 'mean_reference_abs_margin_train',
-    'epoch_time_seconds', 'peak_cuda_memory_MiB', 'peak_cuda_reserved_MiB',
-]
-
-VALIDATION_EPOCH_FIELDS = [
-    'epoch', 'Jaccard_A', 'Jaccard_B', 'Dice_A', 'Dice_B',
-    'mean_Jaccard', 'mean_Dice', 'threshold_A', 'threshold_B',
-]
-
 MOTIVATION_METRIC_FIELDS = [
     'epoch', 'agreement', 'soft_disagreement', 'ww_given_agreement',
     'hc90ww_given_ww', 'total_pixels', 'agreement_pixels', 'ww_pixels',
@@ -201,35 +133,33 @@ NATIVE_TRAINING_FIELDS = [
     'mean_q_risk', 'q_risk_p10', 'q_risk_p25', 'q_risk_p50',
     'q_risk_p75', 'q_risk_p90', 'mean_CPS_weight_risk',
     'mean_opposite_weight_risk', 'risk_budget', 'risk_weight_sum_max_error',
-    'loss_risk_qcdf',
+    'loss_risk_severity',
 ]
 
-REFERENCE_CPS_MODES = (
-    'state_aware',
+# Native UNI methods are selected directly through --cps_mode.
+MARGIN_CALIBRATED_MODES = (
+    'native_fine_margin_suppression',
+    'native_fine_margin_reverse',
+    'native_fine_margin_calibrated_reverse',
 )
-
-# ``cps_mode`` remains the legacy CPS/state-aware selector.  The independent
-# reference-mode selector below is deliberately additive so existing commands
-# retain exactly their previous behavior.
-NATIVE_REFERENCE_MODES = (
-    'native_suppress', 'native_suppress_hc', 'native_suppress_adaptive',
-    'native_suppress_d_adaptive', 'native_suppress_d_adaptive_fine',
-    'native_suppress_d_adaptive_fine_reverse',
-    'native_qcdf_anti_confirmation',
-)
-REFERENCE_MODES = ('none', 'pixel_legacy') + NATIVE_REFERENCE_MODES
-
-
-def _is_reference_mode(cps_mode):
-    return cps_mode in REFERENCE_CPS_MODES
+NATIVE_REFERENCE_MODES = MARGIN_CALIBRATED_MODES
+NATIVE_MODE_TAGS = {
+    'native_fine_margin_suppression': 'native_fine_margin_suppression_s',
+    'native_fine_margin_reverse': 'native_fine_margin_reverse_s',
+    'native_fine_margin_calibrated_reverse': 'native_fine_margin_calibrated_reverse_s',
+}
 
 
 def _uses_uni_reference(args):
-    return _is_reference_mode(args.cps_mode) or getattr(args, 'reference_mode', 'none') in REFERENCE_MODES[1:]
+    return getattr(args, 'cps_mode', 'standard') in NATIVE_REFERENCE_MODES
 
 
 def _is_native_reference_mode(args):
-    return getattr(args, 'reference_mode', 'none') in NATIVE_REFERENCE_MODES
+    return getattr(args, 'cps_mode', 'standard') in NATIVE_REFERENCE_MODES
+
+
+def _is_margin_calibrated_mode(args):
+    return getattr(args, 'cps_mode', 'standard') in MARGIN_CALIBRATED_MODES
 
 def init_seeds(seed):
     torch.manual_seed(seed)
@@ -682,9 +612,6 @@ def _experiment_name(args, split_sup_mark, split_unsup_mark):
     experiment_name += '-cps_mode={}'.format(
         getattr(args, 'cps_mode', 'standard')
     )
-    reference_mode = getattr(args, 'reference_mode', 'none')
-    if reference_mode != 'none':
-        experiment_name += '-reference_mode={}'.format(reference_mode)
     return experiment_name
 
 
@@ -789,7 +716,7 @@ def build_training_components(args, cfg):
         'ce': CrossEntropyLoss().cuda(),
         'dice': DiceLoss().cuda(),
     }
-    if args.cps_mode == 'state_aware' or _is_native_reference_mode(args):
+    if _is_native_reference_mode(args):
         losses['ce_none'] = CrossEntropyLoss(reduction='none').cuda()
 
     optimizer1, scheduler1 = _build_optimizer_and_scheduler(model1, args)
@@ -975,6 +902,227 @@ def _build_reference_memory(
     )
 
 
+def _build_margin_calibration_train_loo(
+    args,
+    cfg,
+    manifest_dir,
+    use_manifests,
+    uni,
+    memory_path,
+    records_path,
+    logger,
+):
+    """Build a fixed train-only LOO margin calibration for ``args.uni_k``.
+
+    This runs once before student training.  It uses only labeled training
+    images, reproduces the immutable memory anchor selection, and excludes
+    each query image from its own FG/BG retrieval memory.
+    """
+    records_path = Path(records_path).expanduser().resolve()
+    summary_path = records_path.with_name('summary.json')
+    if records_path.exists() or summary_path.exists():
+        raise RuntimeError(
+            'Incomplete or conflicting margin calibration exists: {} / {}'.format(
+                records_path, summary_path
+            )
+        )
+    k = int(args.uni_k)
+    if k < 1:
+        raise ValueError('--uni_k must be positive for margin calibration')
+    dataset = _reference_memory_dataset(args, cfg, manifest_dir, use_manifests)
+    loader = DataLoader(
+        dataset,
+        batch_size=args.batch_size,
+        shuffle=False,
+        num_workers=8,
+        pin_memory=True,
+    )
+    image_ids = []
+    features = []
+    occupancy = []
+    with torch.inference_mode():
+        for batch in loader:
+            rgb = _reconstruct_rgb(
+                _get_rgb_view(batch).cuda(non_blocking=True), cfg
+            )
+            gt = batch['mask'].cuda(non_blocking=True).float().unsqueeze(1)
+            tokens = _uni_dense_features(uni, rgb, 256)
+            occ = F.adaptive_avg_pool2d(gt, (16, 16)).flatten(1)
+            features.append(tokens.detach().cpu().numpy().astype(np.float32))
+            occupancy.append(occ.detach().cpu().numpy().astype(np.float32))
+            image_ids.extend(str(value) for value in batch['ID'])
+    features = np.concatenate(features, axis=0)
+    occupancy = np.concatenate(occupancy, axis=0)
+    if features.shape != (len(image_ids), 256, 1024):
+        raise RuntimeError('Unexpected train calibration feature shape: {}'.format(features.shape))
+
+    rng = np.random.default_rng(REFERENCE_MEMORY_SEED)
+    per_image = []
+    cap = int(REFERENCE_MEMORY_PER_IMAGE_PER_CLASS)
+    fallback_count = 0
+    for image_index in range(len(image_ids)):
+        selected = {}
+        row = occupancy[image_index]
+        for cls, threshold, descending in (
+            (1, REFERENCE_MEMORY_ANCHOR_FG, True),
+            (0, REFERENCE_MEMORY_ANCHOR_BG, False),
+        ):
+            if cls == 1:
+                candidates = np.flatnonzero(row >= threshold)
+                order = np.argsort(-row, kind='stable')
+            else:
+                candidates = np.flatnonzero(row <= threshold)
+                order = np.argsort(row, kind='stable')
+            if not len(candidates):
+                fallback_count += 1
+                fallback_size = max(
+                    1,
+                    min(cap, int(math.ceil(len(row) * REFERENCE_MEMORY_FALLBACK_FRACTION))),
+                )
+                candidates = order[:fallback_size]
+            if len(candidates) > cap:
+                candidates = np.sort(rng.choice(candidates, cap, replace=False))
+            selected[cls] = np.asarray(candidates, dtype=np.int64)
+        per_image.append(selected)
+
+    records = []
+    fg_count = 0
+    bg_count = 0
+    for held_out, image_id in enumerate(image_ids):
+        fg_parts = [features[index, per_image[index][1]] for index in range(len(image_ids)) if index != held_out]
+        bg_parts = [features[index, per_image[index][0]] for index in range(len(image_ids)) if index != held_out]
+        fg_memory = np.concatenate(fg_parts, axis=0)
+        bg_memory = np.concatenate(bg_parts, axis=0)
+        if len(fg_memory) < k or len(bg_memory) < k:
+            raise RuntimeError(
+                'Train-only LOO memory is smaller than --uni_k={} for image {}'.format(k, image_id)
+            )
+        pure_fg = occupancy[held_out] >= REFERENCE_MEMORY_ANCHOR_FG
+        pure_bg = occupancy[held_out] <= REFERENCE_MEMORY_ANCHOR_BG
+        query_indices = np.flatnonzero(pure_fg | pure_bg)
+        if not len(query_indices):
+            continue
+        query = torch.from_numpy(features[held_out, query_indices]).cuda(non_blocking=True)
+        fg_tensor = torch.from_numpy(fg_memory).cuda(non_blocking=True)
+        bg_tensor = torch.from_numpy(bg_memory).cuda(non_blocking=True)
+        with torch.inference_mode():
+            score_fg = torch.topk(query @ fg_tensor.t(), k=k, dim=1).values.mean(dim=1).cpu().numpy()
+            score_bg = torch.topk(query @ bg_tensor.t(), k=k, dim=1).values.mean(dim=1).cpu().numpy()
+        labels = pure_fg[query_indices].astype(np.int64)
+        for token_id, label, s_fg, s_bg in zip(query_indices, labels, score_fg, score_bg):
+            delta = float(s_fg - s_bg)
+            records.append({
+                'image_id': image_id,
+                'token_id': int(token_id),
+                'gt_class': 'FG' if int(label) == 1 else 'BG',
+                'S_FG': float(s_fg),
+                'S_BG': float(s_bg),
+                'delta': delta,
+            })
+            if int(label) == 1:
+                fg_count += 1
+            else:
+                bg_count += 1
+    if not fg_count or not bg_count:
+        raise RuntimeError('Train-only margin calibration has an empty FG or BG class')
+    records_path.parent.mkdir(parents=True, exist_ok=True)
+    with records_path.open('w', newline='', encoding='utf-8') as handle:
+        writer = csv.DictWriter(handle, fieldnames=list(records[0].keys()))
+        writer.writeheader()
+        writer.writerows(records)
+    summary = {
+        'selected_k': k,
+        'selection_protocol': 'image-level leave-one-image-out',
+        'validation_used': False,
+        'test_used': False,
+        'source_dataset': str(args.dataset_name),
+        'source_labeled_ratio': int(args.labeled_ratio),
+        'source_memory': str(Path(memory_path).resolve()),
+        'reference_resolution': 256,
+        'token_grid': 16,
+        'feature_dim': 1024,
+        'fg_token_count': fg_count,
+        'bg_token_count': bg_count,
+        'fallback_count': fallback_count,
+        'calibration_source': 'labeled train-only image-level LOO with frozen UNI and current reference memory selection',
+    }
+    summary_path.write_text(json.dumps(summary, indent=2, ensure_ascii=False), encoding='utf-8')
+    logger.info(
+        'Train-only margin calibration built | K=%d | FG=%d BG=%d | path=%s',
+        k, fg_count, bg_count, records_path,
+    )
+
+
+def _load_margin_calibration(args, logger):
+    """Load fixed labeled-train-only image-level LOO calibration at ``--uni_k``."""
+    records_path = Path(args.margin_calibration_records).expanduser().resolve()
+    summary_path = records_path.with_name('summary.json')
+    if not records_path.is_file():
+        raise FileNotFoundError('Margin calibration records not found: {}'.format(records_path))
+    if not summary_path.is_file():
+        raise FileNotFoundError('Margin calibration summary not found: {}'.format(summary_path))
+    summary = json.loads(summary_path.read_text(encoding='utf-8'))
+    expected_k = int(args.uni_k)
+    if int(summary.get('selected_k', -1)) != expected_k:
+        raise RuntimeError(
+            'Margin calibration selected_k={} does not match --uni_k={}'.format(
+                summary.get('selected_k'), expected_k
+            )
+        )
+    if summary.get('selection_protocol') != 'image-level leave-one-image-out':
+        raise RuntimeError('Margin calibration is not image-level LOO')
+    if bool(summary.get('validation_used', True)) or bool(summary.get('test_used', True)):
+        raise RuntimeError('Margin calibration summary reports validation/test usage')
+    values = {'FG': [], 'BG': []}
+    with records_path.open(newline='', encoding='utf-8') as handle:
+        for row in csv.DictReader(handle):
+            gt_class = str(row.get('gt_class', '')).strip().upper()
+            if gt_class not in values:
+                raise RuntimeError('Unexpected calibration gt_class: {}'.format(gt_class))
+            magnitude = abs(float(row['delta']))
+            if not math.isfinite(magnitude):
+                raise RuntimeError('Non-finite calibration |Delta|')
+            values[gt_class].append(magnitude)
+    if not values['FG'] or not values['BG']:
+        raise RuntimeError('Calibration requires non-empty FG and BG records')
+    median_fg = float(np.median(np.asarray(values['FG'], dtype=np.float64)))
+    median_bg = float(np.median(np.asarray(values['BG'], dtype=np.float64)))
+    tau = 0.5 * (median_fg + median_bg)
+    if not math.isfinite(tau) or tau <= 0.0:
+        raise RuntimeError('Margin calibration tau must be finite and >0: {}'.format(tau))
+    stats = {
+        'source': 'labeled train-only image-level LOO token records at requested --uni_k',
+        'records_path': str(records_path), 'summary_path': str(summary_path),
+        'validation_used': False, 'test_used': False, 'K': expected_k,
+        'fg_token_count': len(values['FG']), 'bg_token_count': len(values['BG']),
+        'fg_mean_abs_delta': float(np.mean(values['FG'])),
+        'fg_median_abs_delta': median_fg,
+        'fg_p10_abs_delta': float(np.percentile(values['FG'], 10)),
+        'fg_p25_abs_delta': float(np.percentile(values['FG'], 25)),
+        'fg_p75_abs_delta': float(np.percentile(values['FG'], 75)),
+        'fg_p90_abs_delta': float(np.percentile(values['FG'], 90)),
+        'bg_mean_abs_delta': float(np.mean(values['BG'])),
+        'bg_median_abs_delta': median_bg,
+        'bg_p10_abs_delta': float(np.percentile(values['BG'], 10)),
+        'bg_p25_abs_delta': float(np.percentile(values['BG'], 25)),
+        'bg_p75_abs_delta': float(np.percentile(values['BG'], 75)),
+        'bg_p90_abs_delta': float(np.percentile(values['BG'], 90)),
+        'tau': tau,
+        'tau_definition': 'class-balanced typical semantic separation magnitude of the train-only UNI Memory reference',
+    }
+    tau_path = records_path.with_name('tau_calibration.json')
+    stats['tau_calibration_path'] = str(tau_path)
+    tau_path.write_text(json.dumps(stats, indent=2, ensure_ascii=False), encoding='utf-8')
+    logger.info(
+        'Margin calibration loaded | records=%s | FG=%d BG=%d | m_FG=%.8f | m_BG=%.8f | tau=%.8f',
+        records_path, stats['fg_token_count'], stats['bg_token_count'], median_fg, median_bg, tau,
+    )
+    print('Margin calibration | FG tokens={} | BG tokens={} | m_FG={:.8f} | m_BG={:.8f} | tau={:.8f}'.format(
+        stats['fg_token_count'], stats['bg_token_count'], median_fg, median_bg, tau
+    ))
+    return stats
+
+
 def _load_reference(args, cfg, logger, manifest_dir=None, use_manifests=False):
     """Load the immutable UNI model and class-balanced token memory."""
     reference_resolution = int(getattr(args, 'reference_resolution', DEFAULT_REFERENCE_RESOLUTION))
@@ -984,14 +1132,12 @@ def _load_reference(args, cfg, logger, manifest_dir=None, use_manifests=False):
     memory_built = False
     if not memory_path.is_file():
         if (
-            (_is_native_reference_mode(args) or args.cps_mode == 'state_aware')
-            and not args.uni_build_reference_memory
+            _is_native_reference_mode(args) and not args.uni_build_reference_memory
         ):
-            mode_name = 'Native' if _is_native_reference_mode(args) else 'state-aware'
             raise RuntimeError(
-                '{} reference memory is absent; use --uni_build_reference_memory '
+                'Native reference memory is absent; use --uni_build_reference_memory '
                 'to build it from the current labeled split: {}'.format(
-                    mode_name, memory_path
+                    memory_path
                 )
             )
         if manifest_dir is None:
@@ -1013,6 +1159,11 @@ def _load_reference(args, cfg, logger, manifest_dir=None, use_manifests=False):
             reference_resolution=reference_resolution,
         )
         memory_built = True
+    elif _is_native_reference_mode(args):
+        logger.info(
+            'Reference memory exists; reusing without rebuilding | path=%s',
+            memory_path,
+        )
     if not memory_path.is_file():
         raise FileNotFoundError('Reference memory not found: {}'.format(memory_path))
 
@@ -1107,27 +1258,21 @@ def _load_reference(args, cfg, logger, manifest_dir=None, use_manifests=False):
         args.labeled_ratio,
     )
     logger.info('%s UNI implementation=models/uni.py', mode_label)
-    q_cdf_values = None
-    q_cdf_path = None
-    if args.reference_mode == 'native_qcdf_anti_confirmation':
-        q_cdf_path = Path(args.anti_confirm_q_cdf).expanduser().resolve()
-        if not q_cdf_path.is_file():
-            raise FileNotFoundError('q-CDF reference not found: {}'.format(q_cdf_path))
-        with np.load(str(q_cdf_path), allow_pickle=False) as q_reference:
-            if 'sorted_positive_d' not in q_reference.files:
-                raise RuntimeError(
-                    'q-CDF reference must contain sorted_positive_d: {}'.format(q_cdf_path)
-                )
-            q_cdf_np = np.asarray(q_reference['sorted_positive_d'], dtype=np.float32)
-        if q_cdf_np.ndim != 1 or q_cdf_np.size == 0 or not np.all(np.isfinite(q_cdf_np)):
-            raise RuntimeError('Invalid q-CDF reference: {}'.format(q_cdf_path))
-        if np.any(q_cdf_np <= 0) or np.any(q_cdf_np[1:] < q_cdf_np[:-1]):
-            raise RuntimeError('q-CDF reference must be sorted positive D values')
-        q_cdf_values = torch.from_numpy(q_cdf_np).cuda(non_blocking=True)
-        logger.info(
-            '%s q-CDF loaded | path=%s | count=%d | D_min=%.8f | D_max=%.8f',
-            mode_label, q_cdf_path, q_cdf_np.size, float(q_cdf_np[0]), float(q_cdf_np[-1]),
-        )
+    margin_calibration = None
+    if args.reference_mode in MARGIN_CALIBRATED_MODES:
+        calibration_records = Path(args.margin_calibration_records).expanduser().resolve()
+        if not calibration_records.is_file():
+            _build_margin_calibration_train_loo(
+                args,
+                cfg,
+                manifest_dir,
+                use_manifests,
+                uni,
+                memory_path,
+                calibration_records,
+                logger,
+            )
+        margin_calibration = _load_margin_calibration(args, logger)
     return {
         'uni': uni,
         'memory_fg': memory_fg,
@@ -1149,8 +1294,7 @@ def _load_reference(args, cfg, logger, manifest_dir=None, use_manifests=False):
         'memory_build_requested': bool(getattr(args, 'uni_build_reference_memory', False)),
         'memory_build_source': 'labeled_{} GT only'.format(args.labeled_ratio),
         'hard_reference_threshold_used': False,
-        'q_cdf_values': q_cdf_values,
-        'q_cdf_path': str(q_cdf_path) if q_cdf_path is not None else None,
+        'margin_calibration': margin_calibration,
     }
 
 
@@ -1178,11 +1322,6 @@ def _topk_scores(query, memory, k):
     return similarity.topk(min(int(k), int(memory.shape[0])), dim=1, largest=True).values.mean(dim=1)
 
 
-def _reference_margin(tokens, context, k):
-    score_fg, score_bg = _reference_scores(tokens, context, k)
-    return score_fg - score_bg
-
-
 def _reference_scores(tokens, context, k):
     """Return direct UNI FG/BG top-k similarity evidence at token scale."""
     flat = tokens.reshape(-1, tokens.shape[-1])
@@ -1202,96 +1341,6 @@ def _reconstruct_rgb(image_rgb, cfg):
 
 def _safe_mean(total, count):
     return float(total) / float(count) if count else float('nan')
-
-
-def _reference_weights_from_margin(pseudo_a, pseudo_b, margin):
-    """Compute reference conflict strength without changing CPS targets."""
-    if pseudo_a.shape != pseudo_b.shape or pseudo_a.shape != margin.shape:
-        raise ValueError(
-            'Reference tensor shape mismatch: A={} B={} margin={}'.format(
-                tuple(pseudo_a.shape), tuple(pseudo_b.shape), tuple(margin.shape)
-            )
-        )
-    agreement = pseudo_a.eq(pseudo_b)
-    disagreement = ~agreement
-    consensus_fg = agreement & pseudo_a.eq(1)
-    consensus_bg = agreement & pseudo_a.eq(0)
-    signed_support = torch.where(pseudo_a.eq(1), margin, -margin)
-    conflict = torch.zeros_like(margin)
-    conflict[agreement] = torch.clamp(
-        -signed_support[agreement], min=0.0, max=1.0
-    )
-    weight = torch.ones_like(margin)
-    weight[agreement] = 1.0 - conflict[agreement]
-    conflict_pixels = agreement & conflict.gt(0.0)
-    if not torch.isfinite(weight).all().item():
-        raise FloatingPointError('Reference weight contains NaN/Inf')
-    if not torch.all(weight[disagreement].eq(1.0)).item():
-        raise AssertionError('Reference changed a disagreement pixel weight')
-    if not torch.all(weight[agreement & signed_support.ge(0.0)].eq(1.0)).item():
-        raise AssertionError('Reference changed an agreement pixel with s>=0')
-    contradicted = agreement & signed_support.lt(0.0)
-    if contradicted.any().item():
-        contradicted_weight = weight[contradicted]
-        if not torch.all(
-            (contradicted_weight >= 0.0) & (contradicted_weight <= 1.0)
-        ).item():
-            raise AssertionError('Reference contradicted weight escaped [0,1]')
-        # For a negative support whose magnitude is below float32 resolution,
-        # the mathematically strict ``1 - r < 1`` can round back to 1.  Keep
-        # the exact prescribed formula and enforce strict attenuation only
-        # where the computed float32 conflict is representable at unit scale.
-        representable = conflict[contradicted].gt(torch.finfo(weight.dtype).eps)
-        if representable.any().item() and not torch.all(
-            contradicted_weight[representable].lt(1.0)
-        ).item():
-            raise AssertionError('Reference contradiction was not attenuated')
-    return {
-        'pseudo_a': pseudo_a,
-        'pseudo_b': pseudo_b,
-        'agreement': agreement,
-        'disagreement': disagreement,
-        'fg_consensus': consensus_fg,
-        'bg_consensus': consensus_bg,
-        'signed_support': signed_support,
-        'conflict': conflict,
-        'conflict_pixels_mask': conflict_pixels,
-        'fg_conflict_mask': conflict_pixels & consensus_fg,
-        'bg_conflict_mask': conflict_pixels & consensus_bg,
-        'weight': weight,
-    }
-
-
-def _build_reference_weights(logits_a, logits_b, rgb_input, context, cfg, args):
-    """Compute immutable UNI evidence and reference conflict weights."""
-    if logits_a.shape[1] != 2 or logits_b.shape[1] != 2:
-        raise RuntimeError('UNI reference weighting requires two-class CPS logits')
-    pseudo_a = logits_a.detach().argmax(dim=1)
-    pseudo_b = logits_b.detach().argmax(dim=1)
-    original_pseudo_a = pseudo_a.clone()
-    original_pseudo_b = pseudo_b.clone()
-    with torch.inference_mode():
-        tokens = _uni_dense_features(
-            context['uni'], _reconstruct_rgb(rgb_input, cfg),
-            context.get('reference_resolution', DEFAULT_REFERENCE_RESOLUTION),
-        )
-        actual_grid = int(math.sqrt(int(tokens.shape[1])))
-        if actual_grid != context['token_grid']:
-            raise RuntimeError('UNI token grid changed during training')
-        margin_tokens = _reference_margin(tokens, context, args.uni_k)
-        margin = F.interpolate(
-            margin_tokens.reshape(-1, 1, actual_grid, actual_grid),
-            size=logits_a.shape[-2:],
-            mode='bilinear',
-            align_corners=False,
-        )[:, 0]
-        result = _reference_weights_from_margin(pseudo_a, pseudo_b, margin)
-    if not torch.equal(result['pseudo_a'], original_pseudo_a):
-        raise AssertionError('Reference modified pseudo_A')
-    if not torch.equal(result['pseudo_b'], original_pseudo_b):
-        raise AssertionError('Reference modified pseudo_B')
-    result['margin'] = margin
-    return result
 
 
 def _build_native_reference_targets(logits_a, logits_b, rgb_input, context, cfg, args):
@@ -1337,72 +1386,22 @@ def _build_native_reference_targets(logits_a, logits_b, rgb_input, context, cfg,
     s_opp = torch.where(hard_a[:, 0], score_bg[:, 0], score_fg[:, 0]).detach()
     d_positive = torch.clamp(s_opp - s_cur, min=0.0).detach()
     contradiction = (agreement[:, 0] & d_positive.gt(0.0)).detach()
-    hc = (contradiction & conf_a[:, 0].ge(float(args.native_hc_thresh)) & conf_b[:, 0].ge(float(args.native_hc_thresh))).detach()
+    # High-confidence correction is no longer a training method.  Keep this
+    # fixed diagnostic count for mechanism reporting only.
+    hc = (contradiction & conf_a[:, 0].ge(0.9) & conf_b[:, 0].ge(0.9)).detach()
     relative_gap = torch.clamp(
         d_positive / (s_opp.abs() + s_cur.abs() + 1e-6), 0.0, 1.0
     ).detach()
-    if args.reference_mode == 'native_qcdf_anti_confirmation':
-        # q-CDF mode does not use this legacy token weight for the loss; keep
-        # it neutral so the unchanged fine-risk selector can be reused.
-        weight_token = torch.ones_like(margin).detach()
-    elif args.reference_mode == 'native_suppress_adaptive':
-        weight_token = torch.where(
-            agreement,
-            (1.0 - relative_gap).unsqueeze(1),
-            torch.ones_like(margin),
-        ).detach()
-    elif args.reference_mode in (
-        'native_suppress_d_adaptive',
-        'native_suppress_d_adaptive_fine',
-        'native_suppress_d_adaptive_fine_reverse',
-    ):
-        # D-Adaptive Native-S: preserve Fixed Native-S at D->0 and apply
-        # only the requested additional suppression.  Keep the explicit
-        # channel dimension so W_token is [B,1,16,16].
-        weight_token = torch.where(
-            contradiction.unsqueeze(1),
-            torch.clamp(0.5 - d_positive, min=0.0, max=0.5).unsqueeze(1),
-            torch.ones_like(margin),
-        ).detach()
-    else:
-        weight_token = torch.where(
-            contradiction,
-            torch.full_like(margin, float(args.native_suppress_gamma)),
-            torch.ones_like(margin),
-        ).detach()
+    # Margin-calibrated severity uses a neutral token weight; q is applied
+    # only in the fine-selective directional mixture below.
+    weight_token = torch.ones_like(margin).detach()
     if not torch.isfinite(weight_token).all().item():
         raise FloatingPointError('Native token weight contains NaN/Inf')
-    if args.reference_mode == 'native_suppress_adaptive':
-        if not torch.all((relative_gap >= 0.0) & (relative_gap <= 1.0)).item():
-            raise AssertionError('Direct relative semantic gap escaped [0,1]')
-        if not torch.all((weight_token >= 0.0) & (weight_token <= 1.0)).item():
-            raise AssertionError('Direct adaptive native weight escaped [0,1]')
-        if weight_token.requires_grad or relative_gap.requires_grad:
-            raise AssertionError('Native adaptive weight/gap must be detached')
-    elif args.reference_mode in (
-        'native_suppress_d_adaptive',
-        'native_suppress_d_adaptive_fine',
-        'native_suppress_d_adaptive_fine_reverse',
-    ):
-        if not torch.isfinite(d_positive).all().item():
-            raise FloatingPointError('D-Adaptive D contains NaN/Inf')
-        if not torch.all((weight_token >= 0.0) & (weight_token <= 1.0)).item():
-            raise AssertionError('D-Adaptive weight escaped [0,1]')
-        if contradiction.any().item() and not torch.all(
-            weight_token[:, 0][contradiction] <= 0.5
-        ).item():
-            raise AssertionError('D-Adaptive contradiction weight exceeded 0.5')
-        if weight_token.requires_grad or d_positive.requires_grad or contradiction.requires_grad:
-            raise AssertionError('D-Adaptive D/contradiction/weight must be detached')
     if not torch.all(weight_token[:, 0][~contradiction].eq(1.0)).item():
         raise AssertionError('Non-contradiction native token weight changed from one')
     weight_pixel = None
     fine_stats = {}
-    if args.reference_mode in (
-        'native_suppress_d_adaptive_fine',
-        'native_suppress_d_adaptive_fine_reverse',
-        'native_qcdf_anti_confirmation',
-    ):
+    if args.reference_mode in MARGIN_CALIBRATED_MODES:
         # Fine-selective mode keeps the exact token contradiction and token
         # weight, but applies it only where the full-resolution students still
         # agree with the token consensus class.
@@ -1448,44 +1447,16 @@ def _build_native_reference_targets(logits_a, logits_b, rgb_input, context, cfg,
             'all_pixel_count': int(prob_a.numel()),
             'sum_applied_pixel_weight': weight_pixel.detach().sum(),
         }
-        if args.reference_mode == 'native_suppress_d_adaptive_fine_reverse':
-            # The reverse term is deliberately confined to the exact existing
-            # fine-selective risky pixels.  D is expanded only as a detached
-            # loss coefficient; it is never a pseudo-label or UNI gradient.
-            d_pixel = F.interpolate(
-                d_positive.detach().unsqueeze(1),
-                size=prob_a.shape[-2:], mode='nearest',
-            ).detach()
-            reverse_weight_pixel = torch.where(
-                risk_pixel,
-                torch.clamp(d_pixel, min=0.0, max=0.5),
-                torch.zeros_like(d_pixel),
-            ).detach()
-            opposite_target_pixel = (~consensus_pixel).float().detach()
-            if not torch.isfinite(reverse_weight_pixel).all().item():
-                raise FloatingPointError('Fine reverse weight contains NaN/Inf')
-            if reverse_weight_pixel.requires_grad or opposite_target_pixel.requires_grad:
-                raise AssertionError('Fine reverse coefficients/target must be detached')
-            risky_w = token_weight_pixel[risk_pixel]
-            risky_r = reverse_weight_pixel[risk_pixel]
-            if risky_w.numel() and not torch.allclose(
-                risky_w + risky_r,
-                torch.full_like(risky_w, 0.5), atol=1e-6, rtol=0.0,
-            ):
-                raise AssertionError('Fine reverse intervention budget w+r != 0.5')
-            fine_stats.update({
-                'risk_pixel': risk_pixel.detach(),
-                'd_pixel': d_pixel.detach(),
-                'reverse_weight_pixel': reverse_weight_pixel,
-                'opposite_target_pixel': opposite_target_pixel,
-            })
-        elif args.reference_mode == 'native_qcdf_anti_confirmation':
-            if context.get('q_cdf_values') is None:
-                raise RuntimeError('q-CDF mode has no loaded q_cdf_values')
-            q_values = context['q_cdf_values']
-            q_token = torch.searchsorted(
-                q_values, d_positive.reshape(-1), right=True
-            ).to(d_positive.dtype).reshape_as(d_positive) / float(q_values.numel())
+        if args.reference_mode in MARGIN_CALIBRATED_MODES:
+            calibration = context.get('margin_calibration')
+            if not calibration:
+                raise RuntimeError('Margin-calibrated mode has no fixed tau calibration')
+            tau = torch.as_tensor(
+                float(calibration['tau']), device=d_positive.device,
+                dtype=d_positive.dtype,
+            )
+            # q=D/(D+tau), with eps only for numerical stability.
+            q_token = d_positive / (d_positive + tau + 1e-6)
             q_token = q_token.clamp(0.0, 1.0).detach()
             q_pixel = F.interpolate(
                 q_token.unsqueeze(1), size=prob_a.shape[-2:], mode='nearest'
@@ -1513,103 +1484,7 @@ def _build_native_reference_targets(logits_a, logits_b, rgb_input, context, cfg,
         'fine_stats': fine_stats,
     }
 
-
-def compute_native_suppressed_cps_losses(
-    ce_none, prediction1, prediction2, pseudo1, pseudo2, weight_pixel,
-):
-    """Original hard-pseudo CPS with a native-token scalar loss weight."""
-    if getattr(ce_none, 'reduction', None) != 'none':
-        raise AssertionError('Native suppression requires reduction=none CE')
-    valid1 = pseudo1.ne(ce_none.ignore_index)
-    valid2 = pseudo2.ne(ce_none.ignore_index)
-    if not valid1.any().item() or not valid2.any().item():
-        raise AssertionError('Native suppression received no valid pseudo-label pixels')
-    pixel_1_to_2 = ce_none(prediction2, pseudo1)
-    pixel_2_to_1 = ce_none(prediction1, pseudo2)
-    weight_scalar = weight_pixel[:, 0] if weight_pixel.dim() == 4 else weight_pixel
-    w1 = weight_scalar.expand_as(pixel_1_to_2).to(pixel_1_to_2.dtype)
-    w2 = weight_scalar.expand_as(pixel_2_to_1).to(pixel_2_to_1.dtype)
-    weighted_1_to_2 = 0.5 * (pixel_1_to_2[valid1] * w1[valid1]).sum() / w1[valid1].sum().clamp_min(1e-8)
-    weighted_2_to_1 = 0.5 * (pixel_2_to_1[valid2] * w2[valid2]).sum() / w2[valid2].sum().clamp_min(1e-8)
-    raw_1_to_2 = 0.5 * pixel_1_to_2[valid1].mean()
-    raw_2_to_1 = 0.5 * pixel_2_to_1[valid2].mean()
-    total = weighted_1_to_2 + weighted_2_to_1
-    if not torch.isfinite(total).item():
-        raise FloatingPointError('Native suppression CPS loss contains NaN/Inf')
-    return {
-        '1_to_2': weighted_1_to_2, '2_to_1': weighted_2_to_1,
-        'total': total, 'raw_total': raw_1_to_2 + raw_2_to_1,
-        'raw_1_to_2': raw_1_to_2, 'raw_2_to_1': raw_2_to_1,
-    }
-
-
-def compute_native_fine_reverse_cps_losses(
-    ce_none,
-    prediction1,
-    prediction2,
-    pseudo1,
-    pseudo2,
-    weight_pixel,
-    reverse_weight_pixel,
-    opposite_target_pixel,
-):
-    """Fine-selective CPS plus the fixed D-driven opposite loss.
-
-    The CPS denominator is exactly the existing native suppression denominator
-    (sum of ``w``).  The reverse term is an additive per-pixel component in the
-    same directional 0.5 reduction, and is nonzero only on fine risky pixels.
-    This preserves the existing CPS loss scale and introduces no coefficient.
-    """
-    if getattr(ce_none, 'reduction', None) != 'none':
-        raise AssertionError('Fine reverse mode requires reduction=none CE')
-    valid1 = pseudo1.ne(ce_none.ignore_index)
-    valid2 = pseudo2.ne(ce_none.ignore_index)
-    if not valid1.any().item() or not valid2.any().item():
-        raise AssertionError('Fine reverse mode received no valid pseudo-label pixels')
-    if weight_pixel.shape != reverse_weight_pixel.shape:
-        raise AssertionError('Fine reverse w/r shape mismatch')
-    if opposite_target_pixel.shape != pseudo1.shape:
-        raise AssertionError('Fine reverse opposite target shape mismatch')
-    pixel_1_to_2 = ce_none(prediction2, pseudo1)
-    pixel_2_to_1 = ce_none(prediction1, pseudo2)
-    opposite_target = opposite_target_pixel.long()
-    pixel_opp_a = ce_none(prediction1, opposite_target)
-    pixel_opp_b = ce_none(prediction2, opposite_target)
-    weight_scalar = weight_pixel[:, 0] if weight_pixel.dim() == 4 else weight_pixel
-    reverse_scalar = (
-        reverse_weight_pixel[:, 0]
-        if reverse_weight_pixel.dim() == 4 else reverse_weight_pixel
-    )
-    w1 = weight_scalar.expand_as(pixel_1_to_2).to(pixel_1_to_2.dtype)
-    w2 = weight_scalar.expand_as(pixel_2_to_1).to(pixel_2_to_1.dtype)
-    r1 = reverse_scalar.expand_as(pixel_opp_a).to(pixel_opp_a.dtype)
-    r2 = reverse_scalar.expand_as(pixel_opp_b).to(pixel_opp_b.dtype)
-    cps_1_to_2 = 0.5 * (pixel_1_to_2[valid1] * w1[valid1]).sum() / w1[valid1].sum().clamp_min(1e-8)
-    cps_2_to_1 = 0.5 * (pixel_2_to_1[valid2] * w2[valid2]).sum() / w2[valid2].sum().clamp_min(1e-8)
-    reverse_1 = 0.5 * (pixel_opp_a[valid1] * r1[valid1]).sum() / w1[valid1].sum().clamp_min(1e-8)
-    reverse_2 = 0.5 * (pixel_opp_b[valid2] * r2[valid2]).sum() / w2[valid2].sum().clamp_min(1e-8)
-    raw_1_to_2 = 0.5 * pixel_1_to_2[valid1].mean()
-    raw_2_to_1 = 0.5 * pixel_2_to_1[valid2].mean()
-    cps_after_suppression = cps_1_to_2 + cps_2_to_1
-    reverse_total = reverse_1 + reverse_2
-    total = cps_after_suppression + reverse_total
-    if not torch.isfinite(total).item():
-        raise FloatingPointError('Fine reverse CPS loss contains NaN/Inf')
-    if reverse_weight_pixel.requires_grad or opposite_target_pixel.requires_grad:
-        raise AssertionError('Fine reverse coefficient/target unexpectedly requires grad')
-    return {
-        '1_to_2': cps_1_to_2 + reverse_1,
-        '2_to_1': cps_2_to_1 + reverse_2,
-        'total': total,
-        'raw_total': raw_1_to_2 + raw_2_to_1,
-        'raw_1_to_2': raw_1_to_2,
-        'raw_2_to_1': raw_2_to_1,
-        'cps_after_suppression': cps_after_suppression,
-        'reverse_total': reverse_total,
-    }
-
-
-def compute_native_qcdf_anti_confirmation_losses(
+def compute_native_margin_calibrated_anti_confirmation_losses(
     ce_none,
     prediction1,
     prediction2,
@@ -1618,48 +1493,60 @@ def compute_native_qcdf_anti_confirmation_losses(
     risk_pixel,
     q_pixel,
     opposite_target_pixel,
-    beta,
+    mode,
 ):
-    """q-CDF directional mixture with a fixed risky intervention budget.
+    """Margin-calibrated ablations on fine-selective risk pixels.
 
     Non-risk pixels retain standard CPS.  On the exact fine-selective risk
-    mask, current CPS and detached opposite-target CE are mixed by q and then
-    multiplied by beta.  The reduction remains the full-image CPS reduction,
-    so beta=1 is redistribution only and beta=0.5 is redistribution plus
-    overall risky-gradient suppression.
+    mask, the three modes are:
+
+    * suppression-only: ``(1-q) * L_CPS``;
+    * reverse-only: ``L_CPS + q * L_opp``;
+    * full: ``(1-q) * L_CPS + q * L_opp``.
     """
     if getattr(ce_none, 'reduction', None) != 'none':
-        raise AssertionError('q-CDF mode requires reduction=none CE')
-    if float(beta) not in (0.5, 1.0):
-        raise AssertionError('q-CDF beta must be 0.5 or 1.0')
+        raise AssertionError('Margin-calibrated mode requires reduction=none CE')
     if risk_pixel.shape != pseudo1.shape or q_pixel.shape != pseudo1.shape:
-        raise AssertionError('q-CDF pixel tensors must match pseudo-label shape')
+        raise AssertionError('Severity pixel tensors must match pseudo-label shape')
     if opposite_target_pixel.shape != pseudo1.shape:
-        raise AssertionError('q-CDF opposite target shape mismatch')
+        raise AssertionError('Severity opposite target shape mismatch')
     valid1 = pseudo1.ne(ce_none.ignore_index)
     valid2 = pseudo2.ne(ce_none.ignore_index)
     if not valid1.any().item() or not valid2.any().item():
-        raise AssertionError('q-CDF mode received no valid pseudo-label pixels')
+        raise AssertionError('Margin-calibrated mode received no valid pseudo-label pixels')
     if not torch.all((q_pixel >= 0.0) & (q_pixel <= 1.0)).item():
-        raise AssertionError('q-CDF q escaped [0,1]')
+        raise AssertionError('Margin-calibrated q escaped [0,1]')
     current_a = ce_none(prediction1, pseudo2)
     current_b = ce_none(prediction2, pseudo1)
     opposite_target = opposite_target_pixel.long().detach()
     opposite_a = ce_none(prediction1, opposite_target)
     opposite_b = ce_none(prediction2, opposite_target)
-    mix_a = (1.0 - q_pixel) * current_a + q_pixel * opposite_a
-    mix_b = (1.0 - q_pixel) * current_b + q_pixel * opposite_b
-    effective_a = torch.where(risk_pixel, float(beta) * mix_a, current_a)
-    effective_b = torch.where(risk_pixel, float(beta) * mix_b, current_b)
+    if mode == 'native_fine_margin_suppression':
+        cps_weight = 1.0 - q_pixel
+        opposite_weight = torch.zeros_like(q_pixel)
+    elif mode == 'native_fine_margin_reverse':
+        cps_weight = torch.ones_like(q_pixel)
+        opposite_weight = q_pixel
+    elif mode == 'native_fine_margin_calibrated_reverse':
+        cps_weight = 1.0 - q_pixel
+        opposite_weight = q_pixel
+    else:
+        raise ValueError('Unknown margin-calibrated ablation mode: {}'.format(mode))
+    risk_a = cps_weight * current_a + opposite_weight * opposite_a
+    risk_b = cps_weight * current_b + opposite_weight * opposite_b
+    effective_a = torch.where(risk_pixel, risk_a, current_a)
+    effective_b = torch.where(risk_pixel, risk_b, current_b)
     loss_a_to_b = 0.5 * effective_a[valid1].mean()
     loss_b_to_a = 0.5 * effective_b[valid2].mean()
     raw_a = 0.5 * current_a[valid1].mean()
     raw_b = 0.5 * current_b[valid2].mean()
-    mix_risk = 0.5 * (mix_a[risk_pixel].mean() + mix_b[risk_pixel].mean()) if risk_pixel.any().item() else prediction1.sum() * 0.0
-    risk_loss = float(beta) * mix_risk
+    risk_loss = (
+        0.5 * (risk_a[risk_pixel].mean() + risk_b[risk_pixel].mean())
+        if risk_pixel.any().item() else prediction1.sum() * 0.0
+    )
     total = loss_a_to_b + loss_b_to_a
     if not torch.isfinite(total).item():
-        raise FloatingPointError('q-CDF Anti-Confirmation CPS loss contains NaN/Inf')
+        raise FloatingPointError('Margin-calibrated Anti-Confirmation CPS loss contains NaN/Inf')
     return {
         '1_to_2': loss_a_to_b,
         '2_to_1': loss_b_to_a,
@@ -1668,305 +1555,18 @@ def compute_native_qcdf_anti_confirmation_losses(
         'raw_1_to_2': raw_a,
         'raw_2_to_1': raw_b,
         'risk_loss': risk_loss,
-        'risk_mix': mix_risk,
+        'risk_mix': risk_loss,
         'q_risk': q_pixel[risk_pixel].detach(),
         'risk_pixel_count': risk_pixel.sum().detach(),
-        'cps_weight_risk': (float(beta) * (1.0 - q_pixel))[risk_pixel].detach(),
-        'opposite_weight_risk': (float(beta) * q_pixel)[risk_pixel].detach(),
-    }
-
-
-def compute_native_hc_correction_loss(targets):
-    """Token-level BCE on pooled probabilities for HC contradiction tokens."""
-    p_a = targets['p_a_token']
-    p_b = targets['p_b_token']
-    hc = targets['hc']
-    if not hc.any().item():
-        return (p_a.sum() + p_b.sum()) * 0.0
-    target = targets['uni_fg'].float()
-    bce_a = F.binary_cross_entropy(p_a.clamp(1e-6, 1.0 - 1e-6), target, reduction='none')
-    bce_b = F.binary_cross_entropy(p_b.clamp(1e-6, 1.0 - 1e-6), target, reduction='none')
-    hc_mask = hc.unsqueeze(1)
-    return 0.5 * (bce_a[hc_mask].mean() + bce_b[hc_mask].mean())
-
-
-def _add_state_aware_directional_weights(targets):
-    """Add the frozen State-Aware D-routing quantities to reference targets."""
-    pseudo_a = targets['pseudo_a']
-    pseudo_b = targets['pseudo_b']
-    disagreement = targets['disagreement']
-    signed_a = (2.0 * pseudo_a.float() - 1.0) * targets['margin']
-    signed_b = (2.0 * pseudo_b.float() - 1.0) * targets['margin']
-    if disagreement.any().item() and not torch.allclose(
-        (signed_a + signed_b)[disagreement],
-        torch.zeros_like((signed_a + signed_b)[disagreement]),
-        atol=1e-5, rtol=1e-5,
-    ):
-        raise AssertionError('State-aware disagreement support is not antisymmetric')
-    r_a = torch.clamp(-signed_a, min=0.0, max=1.0)
-    r_b = torch.clamp(-signed_b, min=0.0, max=1.0)
-    w_a = 1.0 - r_a
-    w_b = 1.0 - r_b
-    for name, value in (('r_A', r_a), ('r_B', r_b), ('w_A', w_a), ('w_B', w_b)):
-        if not torch.isfinite(value).all().item() or not torch.all(
-            (value >= 0.0) & (value <= 1.0)
-        ).item():
-            raise AssertionError('{} escaped [0,1]'.format(name))
-    supported_weight = torch.where(signed_a > signed_b, w_a, w_b)
-    non_tie = disagreement & ((signed_a - signed_b).abs() > 1e-8)
-    if non_tie.any().item() and not torch.allclose(
-        supported_weight[non_tie], torch.ones_like(supported_weight[non_tie]),
-        atol=1e-6, rtol=0.0,
-    ):
-        raise AssertionError('Reference-supported teacher was not retained at weight 1')
-    targets.update({
-        'signed_support_a': signed_a, 'signed_support_b': signed_b,
-        'r_a': r_a, 'r_b': r_b, 'w_a': w_a, 'w_b': w_b,
-        'routing_tie': disagreement & ((signed_a - signed_b).abs() <= 1e-8),
-    })
-    return targets
-
-
-def _build_state_aware_reference_targets(
-    logits_a, logits_b, rgb_input, context, cfg, args,
-):
-    """Build frozen UNI evidence and the unchanged State-Aware weights."""
-    targets = _build_reference_weights(
-        logits_a, logits_b, rgb_input, context, cfg, args,
-    )
-    return _add_state_aware_directional_weights(targets)
-
-
-def _build_state_aware_reference_targets_from_margin(logits_a, logits_b, margin):
-    """Replay State-Aware mathematics from a cached dense validation margin."""
-    pseudo_a = logits_a.detach().argmax(dim=1)
-    pseudo_b = logits_b.detach().argmax(dim=1)
-    targets = _reference_weights_from_margin(pseudo_a, pseudo_b, margin)
-    targets['margin'] = margin
-    return _add_state_aware_directional_weights(targets)
-
-
-def compute_state_aware_cps_losses(ce_loss, prediction1, prediction2, targets):
-    """Soft Correction on agreement plus continuous attenuation on D.
-
-    Agreement-WW needs the existing opposite-target soft correction because no
-    correct candidate is present.  On disagreement, the correct candidate is
-    already one of the two teacher predictions, so this function only
-    attenuates the reference-opposed direction and never constructs an
-    opposite target.
-    """
-    if getattr(ce_loss, 'reduction', None) != 'none':
-        raise AssertionError('State-aware CPS requires CrossEntropyLoss(reduction=none)')
-    pseudo_a = targets['pseudo_a'].detach().clone()
-    pseudo_b = targets['pseudo_b'].detach().clone()
-    agreement = targets['agreement'].detach().clone()
-    disagreement = targets['disagreement'].detach().clone()
-    r_agreement = targets['conflict'].detach().clone()
-    w_a = targets['w_a'].detach().clone()
-    w_b = targets['w_b'].detach().clone()
-
-    current_a_to_b = ce_loss(prediction2, pseudo_a)
-    current_b_to_a = ce_loss(prediction1, pseudo_b)
-    # The opposite target is defined only on agreement.  On disagreement the
-    # target remains the original peer pseudo-label; no opposite target mass
-    # or Soft-Correction composition is applied to either direction.
-    opposite_target_a = pseudo_a.clone()
-    opposite_target_b = pseudo_b.clone()
-    opposite_target_a[agreement] = 1 - pseudo_a[agreement]
-    opposite_target_b[agreement] = 1 - pseudo_b[agreement]
-    opposite_a_to_b = ce_loss(prediction2, opposite_target_a)
-    opposite_b_to_a = ce_loss(prediction1, opposite_target_b)
-    agreement_a_to_b = (1.0 - r_agreement) * current_a_to_b + r_agreement * opposite_a_to_b
-    agreement_b_to_a = (1.0 - r_agreement) * current_b_to_a + r_agreement * opposite_b_to_a
-    pixel_a_to_b = torch.where(agreement, agreement_a_to_b, w_a * current_a_to_b)
-    pixel_b_to_a = torch.where(agreement, agreement_b_to_a, w_b * current_b_to_a)
-    valid = pseudo_a.ne(ce_loss.ignore_index)
-    if not valid.any().item():
-        raise AssertionError('State-aware CPS received no valid pixels')
-    loss_a_to_b = 0.5 * pixel_a_to_b[valid].mean()
-    loss_b_to_a = 0.5 * pixel_b_to_a[valid].mean()
-    total = loss_a_to_b + loss_b_to_a
-    if not torch.isfinite(total).item():
-        raise FloatingPointError('State-aware CPS loss contains NaN/Inf')
-    return {
-        '1_to_2': loss_a_to_b, '2_to_1': loss_b_to_a, 'total': total,
-        'pixel_loss_1_to_2': pixel_a_to_b.detach(),
-        'pixel_loss_2_to_1': pixel_b_to_a.detach(),
-        'current_loss_1_to_2': current_a_to_b.detach(),
-        'current_loss_2_to_1': current_b_to_a.detach(),
-        'agreement_loss_1_to_2': agreement_a_to_b.detach(),
-        'agreement_loss_2_to_1': agreement_b_to_a.detach(),
-        'disagreement_loss_1_to_2': (w_a * current_a_to_b).detach(),
-        'disagreement_loss_2_to_1': (w_b * current_b_to_a).detach(),
-        'valid_mask': valid.detach(), 'disagreement_mask': disagreement,
-    }
-
-
-def _state_batch_stats(
-    targets, logits_a, logits_b, original_losses, state_losses,
-    supervised_loss1, supervised_loss2, total_loss, supervised_pixels,
-):
-    valid = targets['pseudo_a'].ne(-1)
-    agreement = targets['agreement'] & valid
-    disagreement = targets['disagreement'] & valid
-    conflict = targets['conflict']
-    tie = targets['routing_tie'] & disagreement
-    s_a, s_b = targets['signed_support_a'], targets['signed_support_b']
-    w_a, w_b = targets['w_a'], targets['w_b']
-    stats = {
-        'unlabeled_pixels': int(valid.sum().item()),
-        'agreement_pixels': int(agreement.sum().item()),
-        'disagreement_pixels': int(disagreement.sum().item()),
-        'agreement_conflict_pixels': int((agreement & conflict.gt(0.0)).sum().item()),
-        'fg_consensus_pixels': int((agreement & targets['fg_consensus']).sum().item()),
-        'bg_consensus_pixels': int((agreement & targets['bg_consensus']).sum().item()),
-        'disagreement_A_supported_pixels': int((disagreement & s_a.gt(0.0)).sum().item()),
-        'disagreement_B_supported_pixels': int((disagreement & s_b.gt(0.0)).sum().item()),
-        'routing_tie_pixels': int(tie.sum().item()),
-        'sum_r_agreement': float(conflict[agreement].sum().item()),
-        'sum_r_agreement_conflict': float(conflict[agreement & conflict.gt(0.0)].sum().item()),
-        'sum_r_fg': float(conflict[agreement & targets['fg_consensus']].sum().item()),
-        'sum_r_bg': float(conflict[agreement & targets['bg_consensus']].sum().item()),
-        'sum_s_a_disagreement': float(s_a[disagreement].sum().item()),
-        'sum_s_b_disagreement': float(s_b[disagreement].sum().item()),
-        'sum_w_a_disagreement': float(w_a[disagreement].sum().item()),
-        'sum_w_b_disagreement': float(w_b[disagreement].sum().item()),
-        'sum_min_teacher_weight': float(torch.minimum(w_a, w_b)[disagreement].sum().item()),
-        'sum_max_teacher_weight': float(torch.maximum(w_a, w_b)[disagreement].sum().item()),
-        'sum_suppressed_direction_weight': float(torch.minimum(w_a, w_b)[disagreement].sum().item()),
-        'directional_attenuation_sum': float((2.0 - w_a - w_b)[disagreement].sum().item()),
-        'potential_reverse_A': 0, 'potential_reverse_B': 0,
-        'potential_reverse_any': 0, 'potential_reverse_both': 0,
-        'original_loss_pixel_sum': float(original_losses['total'].item()) * int(valid.sum().item()),
-        'state_loss_pixel_sum': float(state_losses['total'].item()) * int(valid.sum().item()),
-        'state_loss_1_to_2_pixel_sum': float(state_losses['1_to_2'].item()) * int(valid.sum().item()),
-        'state_loss_2_to_1_pixel_sum': float(state_losses['2_to_1'].item()) * int(valid.sum().item()),
-        'agreement_soft_pixel_sum': float((0.5 * (state_losses['agreement_loss_1_to_2'][agreement].sum() + state_losses['agreement_loss_2_to_1'][agreement].sum())).item()),
-        'disagreement_original_pixel_sum': float((0.5 * (state_losses['current_loss_1_to_2'][disagreement].sum() + state_losses['current_loss_2_to_1'][disagreement].sum())).item()),
-        'disagreement_routed_pixel_sum': float((0.5 * (state_losses['disagreement_loss_1_to_2'][disagreement].sum() + state_losses['disagreement_loss_2_to_1'][disagreement].sum())).item()),
-        'supervised_pixels': int(supervised_pixels),
-        'supervised_loss_A_pixel_sum': float(supervised_loss1.item()) * supervised_pixels,
-        'supervised_loss_B_pixel_sum': float(supervised_loss2.item()) * supervised_pixels,
-        'total_loss_pixel_sum': float(total_loss.item()) * supervised_pixels,
-        'learning_rate': 0.0,
-    }
-    # Reuse the existing agreement-only potential-reversal definition, without
-    # introducing any GT or student-confidence signal into training.
-    prob_a = torch.softmax(logits_a.detach(), dim=1)[:, 1]
-    prob_b = torch.softmax(logits_b.detach(), dim=1)[:, 1]
-    pseudo = targets['pseudo_a']
-    p_opp_a = torch.where(pseudo.eq(1), 1.0 - prob_a, prob_a)
-    p_opp_b = torch.where(pseudo.eq(1), 1.0 - prob_b, prob_b)
-    potential_a = agreement & (conflict > p_opp_a)
-    potential_b = agreement & (conflict > p_opp_b)
-    stats.update({
-        'potential_reverse_A': int(potential_a.sum().item()),
-        'potential_reverse_B': int(potential_b.sum().item()),
-        'potential_reverse_any': int((potential_a | potential_b).sum().item()),
-        'potential_reverse_both': int((potential_a & potential_b).sum().item()),
-    })
-    return stats
-
-
-def _state_new_epoch_totals(learning_rate):
-    totals = {field: 0.0 for field in (
-        'unlabeled_pixels', 'agreement_pixels', 'disagreement_pixels',
-        'agreement_conflict_pixels', 'fg_consensus_pixels', 'bg_consensus_pixels',
-        'disagreement_A_supported_pixels', 'disagreement_B_supported_pixels',
-        'routing_tie_pixels', 'potential_reverse_A', 'potential_reverse_B',
-        'potential_reverse_any', 'potential_reverse_both',
-        'sum_r_agreement', 'sum_r_agreement_conflict', 'sum_r_fg', 'sum_r_bg',
-        'sum_s_a_disagreement', 'sum_s_b_disagreement', 'sum_w_a_disagreement',
-        'sum_w_b_disagreement', 'sum_min_teacher_weight', 'sum_max_teacher_weight',
-        'sum_suppressed_direction_weight', 'directional_attenuation_sum',
-        'sum_abs_margin',
-        'original_loss_pixel_sum', 'state_loss_pixel_sum', 'agreement_soft_pixel_sum',
-        'state_loss_1_to_2_pixel_sum', 'state_loss_2_to_1_pixel_sum',
-        'disagreement_original_pixel_sum', 'disagreement_routed_pixel_sum',
-        'supervised_pixels', 'supervised_loss_A_pixel_sum',
-        'supervised_loss_B_pixel_sum', 'total_loss_pixel_sum',
-    )}
-    totals['learning_rate'] = float(learning_rate)
-    return totals
-
-
-def _state_update_epoch_totals(totals, stats):
-    for key, value in stats.items():
-        if key in totals and key != 'learning_rate':
-            totals[key] += value
-
-
-def _state_epoch_row(epoch, totals):
-    pixels = totals['unlabeled_pixels']
-    agreement = totals['agreement_pixels']
-    disagreement = totals['disagreement_pixels']
-    conflict = totals['agreement_conflict_pixels']
-    row = {
-        'epoch': epoch, 'total_unlabeled_pixels': int(pixels),
-        'agreement_pixels': int(agreement), 'agreement_rate': _safe_mean(agreement, pixels),
-        'disagreement_pixels': int(disagreement), 'disagreement_rate': _safe_mean(disagreement, pixels),
-        'agreement_conflict_pixels': int(conflict), 'agreement_conflict_rate': _safe_mean(conflict, agreement),
-        'mean_r_agreement': _safe_mean(totals['sum_r_agreement'], agreement),
-        'mean_r_agreement_conflict': _safe_mean(totals['sum_r_agreement_conflict'], conflict),
-        'fg_consensus_pixels': int(totals['fg_consensus_pixels']),
-        'bg_consensus_pixels': int(totals['bg_consensus_pixels']),
-        'fg_consensus_mean_r': _safe_mean(totals['sum_r_fg'], totals['fg_consensus_pixels']),
-        'bg_consensus_mean_r': _safe_mean(totals['sum_r_bg'], totals['bg_consensus_pixels']),
-        'agreement_target_mass_shift_sum': totals['sum_r_agreement'],
-        'agreement_target_mass_shift_mean': _safe_mean(totals['sum_r_agreement'], agreement),
-        'potential_reverse_A_rate': _safe_mean(totals['potential_reverse_A'], agreement),
-        'potential_reverse_B_rate': _safe_mean(totals['potential_reverse_B'], agreement),
-        'potential_reverse_any_rate': _safe_mean(totals['potential_reverse_any'], agreement),
-        'potential_reverse_both_rate': _safe_mean(totals['potential_reverse_both'], agreement),
-        'disagreement_A_supported_pixels': int(totals['disagreement_A_supported_pixels']),
-        'disagreement_B_supported_pixels': int(totals['disagreement_B_supported_pixels']),
-        'mean_s_A_disagreement': _safe_mean(totals['sum_s_a_disagreement'], disagreement),
-        'mean_s_B_disagreement': _safe_mean(totals['sum_s_b_disagreement'], disagreement),
-        'mean_w_A_disagreement': _safe_mean(totals['sum_w_a_disagreement'], disagreement),
-        'mean_w_B_disagreement': _safe_mean(totals['sum_w_b_disagreement'], disagreement),
-        'mean_min_teacher_weight': _safe_mean(totals['sum_min_teacher_weight'], disagreement),
-        'mean_max_teacher_weight': _safe_mean(totals['sum_max_teacher_weight'], disagreement),
-        'mean_suppressed_direction_weight': _safe_mean(totals['sum_suppressed_direction_weight'], disagreement),
-        'directional_attenuation_sum': totals['directional_attenuation_sum'],
-        'directional_attenuation_mean': _safe_mean(totals['directional_attenuation_sum'], disagreement),
-        'routing_tie_pixels': int(totals['routing_tie_pixels']),
-        'routing_tie_rate': _safe_mean(totals['routing_tie_pixels'], disagreement),
-        'original_cps_loss_counterfactual': _safe_mean(totals['original_loss_pixel_sum'], pixels),
-        'agreement_soft_correction_cps_component': _safe_mean(totals['agreement_soft_pixel_sum'], pixels),
-        'disagreement_original_cps_component': _safe_mean(totals['disagreement_original_pixel_sum'], pixels),
-        'disagreement_routed_cps_component': _safe_mean(totals['disagreement_routed_pixel_sum'], pixels),
-        'state_aware_cps_loss': _safe_mean(totals['state_loss_pixel_sum'], pixels),
-        'cps_loss_delta_vs_original': _safe_mean(totals['state_loss_pixel_sum'], pixels) - _safe_mean(totals['original_loss_pixel_sum'], pixels),
-        'supervised_loss_A': _safe_mean(totals['supervised_loss_A_pixel_sum'], totals['supervised_pixels']),
-        'supervised_loss_B': _safe_mean(totals['supervised_loss_B_pixel_sum'], totals['supervised_pixels']),
-        'total_loss': _safe_mean(totals['total_loss_pixel_sum'], totals['supervised_pixels']),
-        'learning_rate': totals['learning_rate'],
-    }
-    return row
-
-
-def _state_iter_row(epoch, iteration, global_step, stats, original_loss, state_loss):
-    d = stats['disagreement_pixels']
-    return {
-        'iteration': iteration, 'global_step': global_step, 'epoch': epoch,
-        'agreement_rate': _safe_mean(stats['agreement_pixels'], stats['unlabeled_pixels']),
-        'agreement_mean_r': _safe_mean(stats['sum_r_agreement'], stats['agreement_pixels']),
-        'disagreement_rate': _safe_mean(d, stats['unlabeled_pixels']),
-        'mean_w_A': _safe_mean(stats['sum_w_a_disagreement'], d),
-        'mean_w_B': _safe_mean(stats['sum_w_b_disagreement'], d),
-        'mean_suppressed_weight': _safe_mean(stats['sum_suppressed_direction_weight'], d),
-        'original_cps_loss': float(original_loss.item()),
-        'state_aware_cps_loss': float(state_loss.item()),
-        'loss_delta': float(state_loss.item() - original_loss.item()),
+        'cps_weight_risk': cps_weight[risk_pixel].detach(),
+        'opposite_weight_risk': opposite_weight[risk_pixel].detach(),
     }
 
 
 def _run_native_startup_checks(args, context, models, optimizers):
-    """Protocol checks for the two native-scale modes (no training smoke run)."""
+    """Protocol checks for the native-scale mode (no training smoke run)."""
     if not _is_native_reference_mode(args):
         raise AssertionError('Native startup check called for non-native mode')
-    if args.cps_mode != 'standard':
-        raise AssertionError('Native modes must retain standard CPS')
     if context['reference_resolution'] != 256 or context['token_grid'] != 16:
         raise AssertionError('Native UNI geometry must be 256/16x16')
     if context['feature_dim'] != 1024:
@@ -1987,49 +1587,27 @@ def _run_native_startup_checks(args, context, models, optimizers):
     print('UNI patch-token shape = [B,256,1024]')
     print('native grid           = 16x16')
     print('feature dim           = 1024')
-    if args.reference_mode == 'native_suppress_adaptive':
-        print('Reference mode:       native_suppress_adaptive')
-        print('Adaptive strategy:    direct_relative_semantic_gap')
-        print('CDF:                  disabled')
-        print('Running buffer:       disabled')
-    if args.reference_mode == 'native_suppress_d_adaptive':
-        print('Reference mode:       native_suppress_d_adaptive')
-        print('Adaptive strategy:    direct_D_extra_suppression')
-        print('Weight formula:       no contradiction=1; contradiction=max(0,0.5-D)')
-        print('CDF:                  disabled')
-        print('Running buffer:       disabled')
-        print('Extra hyperparameters: none')
-    if args.reference_mode == 'native_suppress_d_adaptive_fine':
-        print('Reference mode:       native_suppress_d_adaptive_fine')
-        print('Adaptive strategy:    D-Adaptive fine-selective pixel suppression')
-        print('Weight formula:       no contradiction=1; contradiction=max(0,0.5-D)')
-        print('Pixel selection:      token contradiction AND pixel agreement AND pixel consensus=token consensus')
-        print('CDF:                  disabled')
-        print('Running buffer:       disabled')
-        print('Extra hyperparameters: none')
-    if args.reference_mode == 'native_suppress_d_adaptive_fine_reverse':
-        print('Reference mode:       native_suppress_d_adaptive_fine_reverse')
-        print('Adaptive strategy:    fine-selective D-Adaptive + opposite correction')
-        print('CPS weight:           max(0,0.5-D) on fine risky pixels')
-        print('Reverse weight:       min(D,0.5) on fine risky pixels')
-        print('Reverse target:       opposite token consensus')
-        print('Pixel selection:      token contradiction AND pixel agreement AND pixel consensus=token consensus')
-        print('CDF:                  disabled')
-        print('Running buffer:       disabled')
-        print('Extra hyperparameters: none')
-    if args.reference_mode == 'native_qcdf_anti_confirmation':
-        print('Reference mode:       native_qcdf_anti_confirmation')
-        print('Adaptive strategy:    q-CDF Anti-Confirmation fine-selective mixture')
-        print('Weight formula:       beta*(1-q) CPS + beta*q opposite on risky pixels')
+    if _is_margin_calibrated_mode(args):
+        calibration = context.get('margin_calibration')
+        if not calibration:
+            raise AssertionError('Margin-calibrated mode has no calibration metadata')
+        print('Reference mode:       {}'.format(args.reference_mode))
+        if args.reference_mode == 'native_fine_margin_suppression':
+            print('Adaptive strategy:    labeled-train margin-calibrated suppression-only')
+            print('Weight formula:       (1-q) CPS on risky pixels; no opposite loss')
+        elif args.reference_mode == 'native_fine_margin_reverse':
+            print('Adaptive strategy:    labeled-train margin-calibrated reverse-only')
+            print('Weight formula:       CPS + q opposite on risky pixels')
+        else:
+            print('Adaptive strategy:    labeled-train margin-calibrated Anti-Confirmation')
+            print('Weight formula:       (1-q) CPS + q opposite on risky pixels')
+        print('Severity formula:     q=D/(D+tau+eps)')
         print('Opposite target:      1 - detached token consensus')
         print('Pixel selection:      token contradiction AND pixel agreement AND pixel consensus=token consensus')
-        print('CDF:                  fixed training-side empirical CDF')
-        print('CDF path:             {}'.format(args.anti_confirm_q_cdf))
-        print('Beta:                 {:.1f}'.format(args.anti_confirm_beta))
-        print('Running buffer:       disabled')
+        print('Calibration source:   labeled train-only image-level LOO K={}'.format(args.uni_k))
+        print('tau:                  {:.8f}'.format(float(calibration['tau'])))
+        print('Old CDF/bootstrap:    disabled')
         print('Extra hyperparameters: none')
-
-
 def _run_direct_gap_numerical_checks():
     """Batch-level algebra checks; no model forward or training is run."""
     s_cur = torch.tensor([0.2, 0.2, 0.6, 0.0], device='cuda')
@@ -2046,156 +1624,6 @@ def _run_direct_gap_numerical_checks():
     assert not weight.requires_grad
     print('Direct gap numerical checks: PASS')
 
-
-def _run_d_adaptive_numerical_checks():
-    """Exact algebra checks for the closed D-Adaptive Native-S formula."""
-    d = torch.tensor([-0.1, 0.0, 0.01, 0.10, 0.20, 0.50, 0.75], device='cuda')
-    agreement = torch.ones_like(d, dtype=torch.bool)
-    contradiction = agreement & d.gt(0.0)
-    weight = torch.ones_like(d)
-    weight[contradiction] = torch.clamp(0.5 - d[contradiction], min=0.0, max=0.5)
-    assert torch.isfinite(d).all().item() and torch.isfinite(weight).all().item()
-    assert torch.allclose(weight[2], torch.tensor(0.49, device='cuda'), atol=1e-6, rtol=0.0)
-    assert torch.allclose(weight[3], torch.tensor(0.40, device='cuda'), atol=1e-6, rtol=0.0)
-    assert torch.allclose(weight[4], torch.tensor(0.30, device='cuda'), atol=1e-6, rtol=0.0)
-    assert weight[5].item() == 0.0 and weight[6].item() == 0.0
-    assert weight[0].item() == 1.0 and weight[1].item() == 1.0
-    assert weight.min().item() >= 0.0 and weight.max().item() <= 1.0
-    assert not weight.requires_grad
-    # Explicit disagreement check: disagreement is always trusted at weight 1.
-    disagreement = torch.tensor([True, False], device='cuda')
-    d2 = torch.tensor([0.4, 0.4], device='cuda')
-    c2 = (~disagreement) & d2.gt(0.0)
-    w2 = torch.ones_like(d2)
-    w2[c2] = torch.clamp(0.5 - d2[c2], min=0.0, max=0.5)
-    assert w2[0].item() == 1.0 and torch.allclose(w2[1], torch.tensor(0.1, device='cuda'), atol=1e-6, rtol=0.0)
-    print('D-Adaptive Native-S numerical checks: PASS')
-
-
-def _run_d_adaptive_fine_numerical_checks():
-    """Implementation-only checks for the fine-selective mask."""
-    token_weight = torch.tensor([[[[0.3]]]], device='cuda')
-    token_contradiction = torch.tensor([[[True]]], device='cuda')
-    token_consensus = torch.tensor([[[[True]]]], device='cuda')
-    hard_a = torch.tensor([[[[True, False], [True, False]]]], device='cuda')
-    hard_b = torch.tensor([[[[True, False], [False, True]]]], device='cuda')
-    contradiction_px = F.interpolate(
-        token_contradiction.float().unsqueeze(1), size=(2, 2), mode='nearest'
-    ).bool()
-    consensus_px = F.interpolate(
-        token_consensus.float(), size=(2, 2), mode='nearest'
-    ).ge(0.5)
-    token_weight_px = F.interpolate(token_weight, size=(2, 2), mode='nearest')
-    pixel_agree = hard_a.eq(hard_b)
-    same = hard_a.eq(consensus_px)
-    risk = (contradiction_px & pixel_agree & same).detach()
-    weight = torch.ones_like(token_weight_px)
-    weight[risk] = token_weight_px[risk]
-    expected_risk = torch.tensor([[[[True, False], [False, False]]]], device='cuda')
-    assert torch.equal(risk, expected_risk)
-    assert torch.allclose(weight[0, 0, 0, 0], torch.tensor(0.3, device='cuda'), atol=1e-6, rtol=0.0)
-    assert torch.all(weight[~risk].eq(1.0)).item()
-    no_contra = torch.zeros_like(contradiction_px)
-    no_risk = (no_contra & pixel_agree & same)
-    no_weight = torch.ones_like(token_weight_px)
-    assert not no_risk.any().item() and torch.all(no_weight.eq(1.0)).item()
-    r1 = contradiction_px & pixel_agree & same
-    r2 = contradiction_px & pixel_agree & ~same
-    r3 = contradiction_px & ~pixel_agree
-    assert torch.equal(r1 | r2 | r3, contradiction_px)
-    assert not weight.requires_grad and not risk.requires_grad
-    print('Fine-selective mask numerical checks: PASS')
-
-
-def _run_d_adaptive_fine_reverse_numerical_checks():
-    """Implementation-only checks for the fixed reverse intervention algebra."""
-    d = torch.tensor([0.10, 0.20, 0.60], device='cuda')
-    w = torch.clamp(0.5 - d, min=0.0, max=0.5)
-    r = torch.clamp(d, min=0.0, max=0.5)
-    assert torch.allclose(w, torch.tensor([0.40, 0.30, 0.0], device='cuda'), atol=1e-6, rtol=0.0)
-    assert torch.allclose(r, torch.tensor([0.10, 0.20, 0.50], device='cuda'), atol=1e-6, rtol=0.0)
-    assert torch.allclose(w[:2] + r[:2], torch.full((2,), 0.5, device='cuda'), atol=1e-6, rtol=0.0)
-    token_consensus = torch.tensor([True], device='cuda')
-    hard_a = torch.tensor([[[[True, False], [True, False]]]], device='cuda')
-    hard_b = torch.tensor([[[[True, False], [False, True]]]], device='cuda')
-    contradiction = torch.ones((1, 1, 1), dtype=torch.bool, device='cuda')
-    consensus_px = F.interpolate(token_consensus.float().reshape(1, 1, 1, 1), size=(2, 2), mode='nearest').bool()
-    contradiction_px = F.interpolate(contradiction.float().unsqueeze(1), size=(2, 2), mode='nearest').bool()
-    risk = contradiction_px & hard_a.eq(hard_b) & hard_a.eq(consensus_px)
-    assert risk.sum().item() == 1
-    # Case C: same-pixel opposite consensus is not risky; case D: disagreement is not risky.
-    assert not risk[0, 0, 0, 1].item()
-    assert not risk[0, 0, 1, 0].item()
-    # Case E: no contradiction means no reverse intervention.
-    no_risk = torch.zeros_like(risk)
-    assert not no_risk.any().item()
-    assert not w.requires_grad and not r.requires_grad and not risk.requires_grad
-    print('Fine-selective anti-confirmation numerical checks: PASS')
-
-
-def _run_state_aware_startup_checks(args, cfg, context, models, optimizers, losses):
-    """Static algebra and protocol assertions for the new CPS state."""
-    if args.cps_mode != 'state_aware':
-        raise AssertionError('State-aware startup check called for another mode')
-    if not context.get('reference_build_rng_isolated', False):
-        raise AssertionError('Reference build RNG isolation was not recorded')
-    if context['weights_sha256'] != EXPECTED_UNI_SHA256:
-        raise AssertionError('State-aware UNI SHA256 mismatch')
-    if context['memory_fg_count'] <= 0 or context['memory_bg_count'] <= 0:
-        raise AssertionError('State-aware reference memory is empty')
-    if (context['feature_dim'], context['token_grid']) != (1024, _reference_grid(args.reference_resolution)):
-        raise AssertionError('State-aware reference geometry mismatch')
-    if args.uni_k < 1:
-        raise AssertionError('Requested state-aware UNI Top-K must be positive')
-    if max(context['memory_fg_norm_error'], context['memory_bg_norm_error']) > 1e-4:
-        raise AssertionError('State-aware reference memory is not L2 normalized')
-    if context['hard_reference_threshold_used']:
-        raise AssertionError('State-aware mode must not use hard reference thresholds')
-    if any(parameter.requires_grad for parameter in context['uni'].parameters()):
-        raise AssertionError('State-aware UNI parameters are not frozen')
-    optimizer_ids = {
-        id(parameter)
-        for optimizer in optimizers
-        for group in optimizer.param_groups
-        for parameter in group['params']
-    }
-    if any(id(parameter) in optimizer_ids for parameter in context['uni'].parameters()):
-        raise AssertionError('State-aware UNI entered optimizer')
-
-    pa = torch.tensor([[[0, 0, 1, 1, 0]]], device='cuda', dtype=torch.long)
-    pb = torch.tensor([[[0, 1, 1, 0, 1]]], device='cuda', dtype=torch.long)
-    margin = torch.tensor([[[0.2, -0.3, 0.4, -0.6, 0.1]]], device='cuda')
-    targets = _reference_weights_from_margin(pa, pb, margin)
-    assert torch.equal(targets['disagreement'], pa.ne(pb))
-    signed_a = (2.0 * pa.float() - 1.0) * margin
-    signed_b = (2.0 * pb.float() - 1.0) * margin
-    assert torch.allclose((signed_a + signed_b)[targets['disagreement']], torch.zeros_like((signed_a + signed_b)[targets['disagreement']]))
-    r_a, r_b = torch.clamp(-signed_a, 0.0, 1.0), torch.clamp(-signed_b, 0.0, 1.0)
-    w_a, w_b = 1.0 - r_a, 1.0 - r_b
-    targets.update({
-        'signed_support_a': signed_a, 'signed_support_b': signed_b,
-        'r_a': r_a, 'r_b': r_b, 'w_a': w_a, 'w_b': w_b,
-        'routing_tie': targets['disagreement'] & ((signed_a - signed_b).abs() <= 1e-8),
-    })
-    assert torch.all((r_a >= 0.0) & (r_a <= 1.0) & (r_b >= 0.0) & (r_b <= 1.0))
-    assert torch.all((w_a >= 0.0) & (w_a <= 1.0) & (w_b >= 0.0) & (w_b <= 1.0))
-    non_tie = targets['disagreement'] & ~targets['routing_tie']
-    supported = torch.where(signed_a > signed_b, w_a, w_b)
-    assert torch.allclose(supported[non_tie], torch.ones_like(supported[non_tie]), atol=1e-6, rtol=0.0)
-
-    logits_a = torch.tensor([[[[1.0, -0.2, 0.4, 0.1, 0.3]], [[-0.1, 0.4, 0.2, 0.6, -0.3]]]], device='cuda', requires_grad=True)
-    logits_b = torch.tensor([[[[0.1, 0.8, -0.2, 0.7, 0.2]], [[0.6, -0.3, 0.5, -0.4, 0.9]]]], device='cuda', requires_grad=True)
-    state = compute_state_aware_cps_losses(losses['ce_none'], logits_a, logits_b, targets)
-    standard = compute_standard_cps_losses(losses['ce'], logits_a, logits_b, pa, pb)
-    zero_targets = dict(targets)
-    zero_targets.update({'conflict': torch.zeros_like(margin), 'w_a': torch.ones_like(margin), 'w_b': torch.ones_like(margin)})
-    zero_state = compute_state_aware_cps_losses(losses['ce_none'], logits_a, logits_b, zero_targets)
-    assert torch.allclose(zero_state['total'], standard['total'], atol=1e-7, rtol=1e-7)
-    assert torch.isfinite(state['total']).item()
-    assert torch.equal(state['disagreement_loss_1_to_2'][targets['disagreement']], state['current_loss_1_to_2'][targets['disagreement']] * w_a[targets['disagreement']])
-    assert torch.equal(state['disagreement_loss_2_to_1'][targets['disagreement']], state['current_loss_2_to_1'][targets['disagreement']] * w_b[targets['disagreement']])
-
-
 def train_one_epoch(
     args,
     epoch,
@@ -2207,8 +1635,6 @@ def train_one_epoch(
     metrics_writer,
     metrics_file,
     reference_context=None,
-    state_iter_writer=None,
-    state_iter_file=None,
 ):
     model1, model2 = models
     optimizer1, optimizer2 = optimizers
@@ -2226,11 +1652,6 @@ def train_one_epoch(
     pbar = range(num_train_batches)
     score_list1 = None
     score_list2 = None
-    state_totals = (
-        _state_new_epoch_totals(optimizer1.param_groups[0]['lr'])
-        if reference_context is not None and args.cps_mode == 'state_aware'
-        else None
-    )
     native_totals = None
     if _is_native_reference_mode(args):
         native_totals = {
@@ -2252,12 +1673,8 @@ def train_one_epoch(
             'sum_applied_pixel_weight': 0.0,
             'risk_pixels': 0.0,
             'risk_all_pixel_count': 0.0,
-            'risk_d_values': [], 'risk_w_values': [], 'risk_r_values': [],
-            'risk_w_plus_r_values': [],
-            'sum_reverse_loss': 0.0,
-            'sum_cps_after_suppression': 0.0,
             'sum_unsup_total': 0.0,
-            'q_values': [], 'q_cps_weights': [], 'q_opp_weights': [],
+            'q_values': [], 'q_d_values': [], 'q_cps_weights': [], 'q_opp_weights': [],
             'q_weight_sum_errors': [], 'q_risk_loss': 0.0,
         }
     mask_list = None
@@ -2328,21 +1745,7 @@ def train_one_epoch(
         unsup_prediction2 = model2(unsup_input2)[0]
         
         native_ref_loss = unsup_prediction1.sum() * 0.0
-        if args.cps_mode in REFERENCE_CPS_MODES:
-            reference_targets = _build_state_aware_reference_targets(
-                unsup_prediction1, unsup_prediction2, unsup_input1,
-                reference_context, reference_context['cfg'], args,
-            )
-            with torch.no_grad():
-                original_cps_losses = compute_standard_cps_losses(
-                    losses['ce'], unsup_prediction1, unsup_prediction2,
-                    reference_targets['pseudo_a'], reference_targets['pseudo_b'],
-                )
-            cps_losses = compute_state_aware_cps_losses(
-                losses['ce_none'], unsup_prediction1, unsup_prediction2,
-                reference_targets,
-            )
-        elif _is_native_reference_mode(args):
+        if _is_native_reference_mode(args):
             reference_targets = _build_native_reference_targets(
                 unsup_prediction1, unsup_prediction2, unsup_input1,
                 reference_context, reference_context['cfg'], args,
@@ -2353,42 +1756,20 @@ def train_one_epoch(
                 losses['ce'], unsup_prediction1, unsup_prediction2,
                 pseudo_a, pseudo_b,
             )
-            weight_pixel = reference_targets.get('weight_pixel')
-            if weight_pixel is None:
-                weight_pixel = F.interpolate(
-                    reference_targets['weight_token'],
-                    size=unsup_prediction1.shape[-2:], mode='nearest',
-                )
-            if args.reference_mode == 'native_qcdf_anti_confirmation':
-                fine_stats = reference_targets['fine_stats']
-                native_cps = compute_native_qcdf_anti_confirmation_losses(
-                    losses['ce_none'], unsup_prediction1, unsup_prediction2,
-                    pseudo_a, pseudo_b,
-                    fine_stats['risk_pixel'][:, 0],
-                    fine_stats['q_pixel'][:, 0],
-                    fine_stats['opposite_target_pixel'][:, 0],
-                    args.anti_confirm_beta,
-                )
-            elif args.reference_mode == 'native_suppress_d_adaptive_fine_reverse':
-                fine_stats = reference_targets['fine_stats']
-                native_cps = compute_native_fine_reverse_cps_losses(
-                    losses['ce_none'], unsup_prediction1, unsup_prediction2,
-                    pseudo_a, pseudo_b, weight_pixel,
-                    fine_stats['reverse_weight_pixel'],
-                    fine_stats['opposite_target_pixel'][:, 0],
-                )
-            else:
-                native_cps = compute_native_suppressed_cps_losses(
-                    losses['ce_none'], unsup_prediction1, unsup_prediction2,
-                    pseudo_a, pseudo_b, weight_pixel,
-                )
+            fine_stats = reference_targets['fine_stats']
+            native_cps = compute_native_margin_calibrated_anti_confirmation_losses(
+                losses['ce_none'], unsup_prediction1, unsup_prediction2,
+                pseudo_a, pseudo_b,
+                fine_stats['risk_pixel'][:, 0],
+                fine_stats['q_pixel'][:, 0],
+                fine_stats['opposite_target_pixel'][:, 0],
+                args.reference_mode,
+            )
             cps_losses = {
                 '1_to_2': native_cps['1_to_2'],
                 '2_to_1': native_cps['2_to_1'],
                 'total': native_cps['total'],
             }
-            if args.reference_mode == 'native_suppress_hc':
-                native_ref_loss = compute_native_hc_correction_loss(reference_targets)
         else:
             cps_losses = compute_cps_losses(
                 losses['ce'],
@@ -2409,31 +1790,11 @@ def train_one_epoch(
         )
         weighted_unsup_loss = unsup_weight * unsup_loss
         total_loss = model1_loss + model2_loss
-        if _is_native_reference_mode(args):
-            total_loss = total_loss + float(args.lambda_native_ref) * native_ref_loss
         total_loss.backward()
 
         optimizer1.step()
         optimizer2.step()
         global_step += 1
-
-        if reference_context is not None and args.cps_mode == 'state_aware':
-            state_stats = _state_batch_stats(
-                reference_targets, unsup_prediction1, unsup_prediction2,
-                original_cps_losses, cps_losses, supervised_loss1,
-                supervised_loss2, total_loss, int(sup_mask.numel()),
-            )
-            _state_update_epoch_totals(state_totals, state_stats)
-            if (
-                state_iter_writer is not None
-                and args.state_aware_log_interval > 0
-                and global_step % args.state_aware_log_interval == 0
-            ):
-                state_iter_writer.writerow(_state_iter_row(
-                    epoch + 1, batch_index + 1, global_step, state_stats,
-                    original_cps_losses['total'], cps_losses['total'],
-                ))
-                state_iter_file.flush()
 
         if _is_native_reference_mode(args):
             contradiction = reference_targets['contradiction']
@@ -2446,21 +1807,11 @@ def train_one_epoch(
             native_totals['sum_weight'] += float(reference_targets['weight_token'].sum().item())
             native_totals['raw_cps_loss'] += float(native_cps['raw_total'].detach().item())
             native_totals['weighted_cps_loss'] += float(cps_losses['total'].detach().item())
-            native_totals['sum_cps_after_suppression'] += float(
-                native_cps.get('cps_after_suppression', cps_losses['total']).detach().item()
-            )
-            native_totals['sum_reverse_loss'] += float(
-                native_cps.get('reverse_total', unsup_prediction1.sum() * 0.0).detach().item()
-            )
             native_totals['sum_unsup_total'] += float(cps_losses['total'].detach().item())
             native_totals['native_ref_loss'] += float(native_ref_loss.detach().item())
             native_totals['total_loss'] += float(total_loss.detach().item())
             native_totals['batches'] += 1.0
-            if args.reference_mode in (
-                'native_suppress_d_adaptive_fine',
-                'native_suppress_d_adaptive_fine_reverse',
-                'native_qcdf_anti_confirmation',
-            ):
+            if _is_margin_calibrated_mode(args):
                 fine_stats = reference_targets['fine_stats']
                 native_totals['regionwise_candidate_pixels'] += float(
                     fine_stats['regionwise_candidate_pixels'].sum().item()
@@ -2481,34 +1832,28 @@ def train_one_epoch(
                 native_totals['sum_applied_pixel_weight'] += float(
                     fine_stats['sum_applied_pixel_weight'].item()
                 )
-                if args.reference_mode == 'native_suppress_d_adaptive_fine_reverse':
-                    risk = fine_stats['risk_pixel']
-                    risk_count = float(risk.sum().item())
-                    native_totals['risk_pixels'] += risk_count
-                    native_totals['risk_all_pixel_count'] += float(risk.numel())
-                    if risk.any().item():
-                        risk_2d = risk[:, 0]
-                        d_px = fine_stats['d_pixel'][:, 0][risk_2d]
-                        w_px = weight_pixel[:, 0][risk_2d]
-                        r_px = fine_stats['reverse_weight_pixel'][:, 0][risk_2d]
-                        native_totals['risk_d_values'].extend(d_px.detach().cpu().tolist())
-                        native_totals['risk_w_values'].extend(w_px.detach().cpu().tolist())
-                        native_totals['risk_r_values'].extend(r_px.detach().cpu().tolist())
-                        native_totals['risk_w_plus_r_values'].extend((w_px + r_px).detach().cpu().tolist())
-                elif args.reference_mode == 'native_qcdf_anti_confirmation':
+                if _is_margin_calibrated_mode(args):
                     risk = fine_stats['risk_pixel'][:, 0]
                     risk_count = float(risk.sum().item())
                     native_totals['risk_pixels'] += risk_count
                     native_totals['risk_all_pixel_count'] += float(risk.numel())
                     if risk.any().item():
                         q_px = fine_stats['q_pixel'][:, 0][risk]
+                        d_px = fine_stats['d_pixel'][:, 0][risk]
                         w_px = native_cps['cps_weight_risk']
                         r_px = native_cps['opposite_weight_risk']
                         native_totals['q_values'].extend(q_px.detach().cpu().tolist())
+                        native_totals['q_d_values'].extend(d_px.detach().cpu().tolist())
                         native_totals['q_cps_weights'].extend(w_px.detach().cpu().tolist())
                         native_totals['q_opp_weights'].extend(r_px.detach().cpu().tolist())
+                        if args.reference_mode == 'native_fine_margin_suppression':
+                            expected_budget = 1.0 - q_px
+                        elif args.reference_mode == 'native_fine_margin_reverse':
+                            expected_budget = 1.0 + q_px
+                        else:
+                            expected_budget = torch.ones_like(q_px)
                         native_totals['q_weight_sum_errors'].extend(
-                            (w_px + r_px - float(args.anti_confirm_beta)).detach().cpu().abs().tolist()
+                            (w_px + r_px - expected_budget).detach().cpu().abs().tolist()
                         )
                         native_totals['q_risk_loss'] += float(native_cps['risk_loss'].detach().item())
             if hc.any().item():
@@ -2516,18 +1861,6 @@ def train_one_epoch(
                 native_totals['sum_p_b_hc'] += float(reference_targets['p_b_token'][hc.unsqueeze(1)].sum().item())
                 native_totals['uni_fg_hc'] += float((reference_targets['uni_fg'] & hc.unsqueeze(1)).sum().item())
             native_totals['uni_bg_hc'] += float(((~reference_targets['uni_fg']) & hc.unsqueeze(1)).sum().item())
-            if args.reference_mode in (
-                'native_suppress_adaptive', 'native_suppress_d_adaptive',
-                'native_suppress_d_adaptive_fine',
-                'native_suppress_d_adaptive_fine_reverse',
-            ):
-                contradiction_mask = reference_targets['contradiction']
-                native_totals['s_cur_values'].extend(reference_targets['s_cur'][contradiction_mask].detach().cpu().tolist())
-                native_totals['s_opp_values'].extend(reference_targets['s_opp'][contradiction_mask].detach().cpu().tolist())
-                native_totals['d_values'].extend(reference_targets['d_positive'][contradiction_mask].detach().cpu().tolist())
-                native_totals['relative_gaps'].extend(reference_targets['relative_gap'][contradiction_mask].detach().cpu().tolist())
-                native_totals['adaptive_weights'].extend(reference_targets['weight_token'][:, 0][contradiction_mask].detach().cpu().tolist())
-
         metrics_writer.writerow(
             build_iteration_metrics(
                 global_step,
@@ -3111,631 +2444,6 @@ def _binary_metrics_at_threshold(logits, masks, threshold, inclusive=False):
     }
 
 
-def _build_validation_reference_cache(dataloader, context, cfg, args, cache_dir):
-    """Compute frozen validation UNI fields exactly once per formal run."""
-    cache_dir = Path(cache_dir)
-    cache_dir.mkdir(parents=True, exist_ok=True)
-    grid = int(context['token_grid'])
-    resolution = int(context['reference_resolution'])
-    margins = []
-    ids = []
-    with torch.inference_mode():
-        for batch in dataloader:
-            rgb = _reconstruct_rgb(_get_rgb_view(batch).cuda(non_blocking=True), cfg)
-            tokens = _uni_dense_features(context['uni'], rgb, resolution)
-            flat = tokens.reshape(-1, tokens.shape[-1])
-            score_fg = _topk_scores(flat, context['memory_fg'], args.uni_k).reshape(-1, grid, grid)
-            score_bg = _topk_scores(flat, context['memory_bg'], args.uni_k).reshape(-1, grid, grid)
-            margin_grid = score_fg - score_bg
-            margin = F.interpolate(
-                margin_grid[:, None], size=(256, 256), mode='bilinear', align_corners=False
-            )[:, 0]
-            assert margin_grid.shape[1:] == (grid, grid)
-            assert torch.isfinite(score_fg).all() and torch.isfinite(score_bg).all()
-            assert torch.isfinite(margin).all()
-            margins.append(margin.detach())
-            ids.extend(str(value) for value in batch['ID'])
-            for index, image_id in enumerate(batch['ID']):
-                np.savez_compressed(
-                    cache_dir / '{}.npz'.format(Path(str(image_id)).stem),
-                    id=np.asarray(str(image_id)),
-                    resolution=np.asarray(resolution),
-                    grid=np.asarray(grid),
-                    S_FG=score_fg[index].cpu().numpy().astype(np.float32),
-                    S_BG=score_bg[index].cpu().numpy().astype(np.float32),
-                    margin_grid=margin_grid[index].cpu().numpy().astype(np.float32),
-                    margin_256=margin[index].cpu().numpy().astype(np.float32),
-                )
-    cache = {
-        'margin': torch.cat(margins, dim=0),
-        'ids': ids,
-        'resolution': resolution,
-        'grid': grid,
-    }
-    metadata = {
-        'dataset': args.dataset_name,
-        'labeled_ratio': args.labeled_ratio,
-        'split': 'validation',
-        'seed': args.sd,
-        'reference_resolution': resolution,
-        'reference_grid': grid,
-        'feature_dim': context['feature_dim'],
-        'K': args.uni_k,
-        'anchor_fg': REFERENCE_MEMORY_ANCHOR_FG,
-        'anchor_bg': REFERENCE_MEMORY_ANCHOR_BG,
-        'memory_sha256': context['memory_sha256'],
-        'UNI_sha256': context['weights_sha256'],
-        'image_ids': ids,
-        'cache_fields': ['S_FG', 'S_BG', 'margin_grid', 'margin_256'],
-    }
-    (cache_dir / 'metadata.json').write_text(
-        json.dumps(metadata, indent=2, sort_keys=True), encoding='utf-8'
-    )
-    return cache
-
-
-def _evaluate_frozen_pair(
-    models, losses, dataloaders, cfg, checkpoint_label, source_epochs,
-):
-    for model in models:
-        model.eval()
-        for parameter in model.parameters():
-            parameter.requires_grad_(False)
-    validation = validate(models, losses, dataloaders['val'])
-    with redirect_stdout(io.StringIO()):
-        val_eval1, val_eval2, _, _ = print_val_eval(
-            cfg['NUM_CLASSES'], validation['scores1'], validation['scores2'],
-            validation['masks'], 30,
-        )
-    # Optional test evaluation is intentionally supported only when a caller
-    # supplies a post-training test loader; train_model never supplies one.
-    test = validate(models, losses, dataloaders['test']) if dataloaders.get('test') is not None else None
-    rows = []
-    for index, (branch, val_eval) in enumerate(
-        (('A', val_eval1), ('B', val_eval2))
-    ):
-        val_logits = validation['scores1'] if index == 0 else validation['scores2']
-        val_fixed = _binary_metrics_at_threshold(
-            val_logits, validation['masks'], 0.5, inclusive=True
-        )
-        rows.append({
-                'checkpoint': checkpoint_label, 'branch': branch,
-                'source_epoch': int(source_epochs[index]), 'split': 'validation',
-                'threshold': float(val_eval[0]),
-                'threshold_source': 'validation_project_search',
-                'jaccard': float(val_eval[1]), 'dice': float(val_eval[2]),
-                'fixed05_jaccard': val_fixed['jaccard'],
-                'fixed05_dice': val_fixed['dice'],
-            })
-        if test is not None:
-            test_logits = test['scores1'] if index == 0 else test['scores2']
-            test_from_val = _binary_metrics_at_threshold(
-                test_logits, test['masks'], float(val_eval[0]), inclusive=False
-            )
-            test_fixed = _binary_metrics_at_threshold(
-                test_logits, test['masks'], 0.5, inclusive=True
-            )
-            rows.append({
-                'checkpoint': checkpoint_label, 'branch': branch,
-                'source_epoch': int(source_epochs[index]), 'split': 'test',
-                'threshold': float(val_eval[0]),
-                'threshold_source': 'frozen_validation_threshold',
-                'jaccard': test_from_val['jaccard'],
-                'dice': test_from_val['dice'],
-                'fixed05_jaccard': test_fixed['jaccard'],
-                'fixed05_dice': test_fixed['dice'],
-            })
-    return rows
-
-
-def _state_validation_diagnostic(
-    validation, dataloader, context, cfg, args, val_eval1, val_eval2,
-    reference_cache=None,
-):
-    """GT-only retrospective diagnostics; none of these values enters loss."""
-    totals = defaultdict(float)
-    offset = 0
-    with torch.inference_mode():
-        for batch in dataloader:
-            batch_size = int(batch['mask'].shape[0])
-            logits_a = validation['scores1'][offset:offset + batch_size]
-            logits_b = validation['scores2'][offset:offset + batch_size]
-            offset += batch_size
-            gt = batch['mask'].cuda(non_blocking=True)
-            valid = gt.ne(-1)
-            if reference_cache is None:
-                targets = _build_state_aware_reference_targets(
-                    logits_a, logits_b, _get_rgb_view(batch).cuda(non_blocking=True),
-                    context, cfg, args,
-                )
-            else:
-                margin = reference_cache['margin'][offset - batch_size:offset]
-                targets = _build_state_aware_reference_targets_from_margin(
-                    logits_a, logits_b, margin
-                )
-            pa, pb = targets['pseudo_a'], targets['pseudo_b']
-            agreement = targets['agreement'] & valid
-            disagreement = targets['disagreement'] & valid
-            gt_fg = gt.eq(1)
-            reference_correct = ((targets['margin'] > 0) & gt_fg) | (
-                (targets['margin'] < 0) & ~gt_fg
-            )
-            a_correct = pa.eq(gt)
-            b_correct = pb.eq(gt)
-            cc = agreement & a_correct
-            ww = agreement & ~a_correct
-            ac = disagreement & a_correct & ~b_correct
-            bc = disagreement & ~a_correct & b_correct
-            if int((ac | bc).sum().item()) != int(disagreement.sum().item()):
-                raise AssertionError('State-aware validation D != AC union BC')
-            s_a, s_b = targets['signed_support_a'], targets['signed_support_b']
-            r = targets['conflict']
-            w_a, w_b = targets['w_a'], targets['w_b']
-            tie = targets['routing_tie']
-            non_tie = disagreement & ~tie
-            supported_a, supported_b = s_a > s_b, s_b > s_a
-            route_correct = non_tie & ((supported_a & ac) | (supported_b & bc))
-            route_wrong = non_tie & ((supported_a & bc) | (supported_b & ac))
-            prob_a = torch.softmax(logits_a, dim=1)[:, 1]
-            prob_b = torch.softmax(logits_b, dim=1)[:, 1]
-            p_opp_a = torch.where(pa.eq(1), 1.0 - prob_a, prob_a)
-            p_opp_b = torch.where(pb.eq(1), 1.0 - prob_b, prob_b)
-            rev_a = agreement & (r > p_opp_a)
-            rev_b = agreement & (r > p_opp_b)
-            conf = torch.minimum(
-                torch.maximum(prob_a, 1.0 - prob_a),
-                torch.maximum(prob_b, 1.0 - prob_b),
-            )
-            g_a_to_b = 1.0 - torch.where(pa.eq(1), prob_b, 1.0 - prob_b)
-            g_b_to_a = 1.0 - torch.where(pb.eq(1), prob_a, 1.0 - prob_a)
-            helpful_g = torch.where(ac, g_a_to_b, g_b_to_a)
-            harmful_g = torch.where(ac, g_b_to_a, g_a_to_b)
-            routed_helpful_g = torch.where(ac, w_a * g_a_to_b, w_b * g_b_to_a)
-            routed_harmful_g = torch.where(ac, w_b * g_b_to_a, w_a * g_a_to_b)
-            for key, value in (
-                ('valid_pixels', valid.sum()), ('CC', cc.sum()), ('WW', ww.sum()),
-                ('AC', ac.sum()), ('BC', bc.sum()), ('D', disagreement.sum()),
-                ('HC90_WW_all', (ww & conf.ge(0.90)).sum()),
-                ('HC95_WW_all', (ww & conf.ge(0.95)).sum()),
-                ('sum_r_CC', r[cc].sum()), ('sum_r_WW', r[ww].sum()),
-                ('WW_reverse_A', (ww & rev_a).sum()), ('WW_reverse_B', (ww & rev_b).sum()),
-                ('WW_any_reverse', (ww & (rev_a | rev_b)).sum()),
-                ('WW_both_reverse', (ww & rev_a & rev_b).sum()),
-                ('CC_harm_A', (cc & rev_a).sum()), ('CC_harm_B', (cc & rev_b).sum()),
-                ('CC_any_harm', (cc & (rev_a | rev_b)).sum()),
-                ('CC_both_harm', (cc & rev_a & rev_b).sum()),
-                ('shared_FP', (ww & pa.eq(1)).sum()),
-                ('shared_FN', (ww & pa.eq(0)).sum()),
-                ('A_correct_B_wrong', ac.sum()), ('B_correct_A_wrong', bc.sum()),
-                ('routing_correct', route_correct.sum()), ('routing_wrong', route_wrong.sum()),
-                ('routing_tie', (disagreement & tie).sum()),
-                ('sum_w_correct', torch.where(ac, w_a, w_b)[disagreement].sum()),
-                ('sum_w_wrong', torch.where(ac, w_b, w_a)[disagreement].sum()),
-                ('sum_helpful_g', helpful_g[disagreement].sum()),
-                ('sum_harmful_g', harmful_g[disagreement].sum()),
-                ('sum_routed_helpful_g', routed_helpful_g[disagreement].sum()),
-                ('sum_routed_harmful_g', routed_harmful_g[disagreement].sum()),
-                ('fg_d_non_tie', (non_tie & gt_fg).sum()),
-                ('fg_route_correct', (route_correct & gt_fg).sum()),
-                ('bg_d_non_tie', (non_tie & ~gt_fg).sum()),
-                ('bg_route_correct', (route_correct & ~gt_fg).sum()),
-                ('ac_non_tie', (non_tie & ac).sum()),
-                ('ac_route_correct', (route_correct & ac).sum()),
-                ('bc_non_tie', (non_tie & bc).sum()),
-                ('bc_route_correct', (route_correct & bc).sum()),
-                ('hc90_non_tie', (non_tie & conf.ge(0.90)).sum()),
-                ('hc90_route_correct', (route_correct & conf.ge(0.90)).sum()),
-                ('hc95_non_tie', (non_tie & conf.ge(0.95)).sum()),
-                ('hc95_route_correct', (route_correct & conf.ge(0.95)).sum()),
-                ('WW_reference_direction_correct', (ww & reference_correct).sum()),
-                ('CC_reference_harmful_direction', (cc & ~reference_correct).sum()),
-                ('WW_correct_but_insufficient', (ww & reference_correct & ~(rev_a | rev_b)).sum()),
-                ('HC90_ref_correct', (ww & conf.ge(0.90) & reference_correct).sum()),
-                ('HC95_ref_correct', (ww & conf.ge(0.95) & reference_correct).sum()),
-                ('strong_wrong_005', (route_wrong & targets['margin'].abs().ge(0.05)).sum()),
-                ('strong_wrong_010', (route_wrong & targets['margin'].abs().ge(0.10)).sum()),
-                ('strong_wrong_020', (route_wrong & targets['margin'].abs().ge(0.20)).sum()),
-                ('sum_abs_margin', targets['margin'].abs()[valid].sum()),
-            ):
-                totals[key] += float(value.item())
-    if offset != int(validation['masks'].shape[0]):
-        raise AssertionError('State-aware validation loader/logit length mismatch')
-    valid = totals['valid_pixels']; d = totals['D']; non_tie = totals['routing_correct'] + totals['routing_wrong']
-    cc, ww = totals['CC'], totals['WW']
-    return {
-        'valid_pixels': int(valid), 'CC': int(cc), 'WW': int(ww),
-        'AC': int(totals['AC']), 'BC': int(totals['BC']), 'D': int(d),
-        'absolute_WW_rate': _safe_mean(ww, valid),
-        'HC90_WW_all': int(totals['HC90_WW_all']), 'HC95_WW_all': int(totals['HC95_WW_all']),
-        'mean_r_CC': _safe_mean(totals['sum_r_CC'], cc), 'mean_r_WW': _safe_mean(totals['sum_r_WW'], ww),
-        'WW_reverse_A': int(totals['WW_reverse_A']), 'WW_reverse_B': int(totals['WW_reverse_B']),
-        'WW_any_reverse': int(totals['WW_any_reverse']), 'WW_both_reverse': int(totals['WW_both_reverse']),
-        'CC_harm_A': int(totals['CC_harm_A']), 'CC_harm_B': int(totals['CC_harm_B']),
-        'CC_any_harm': int(totals['CC_any_harm']), 'CC_both_harm': int(totals['CC_both_harm']),
-        'shared_FP': int(totals['shared_FP']), 'shared_FN': int(totals['shared_FN']),
-        'A_correct_B_wrong': int(totals['A_correct_B_wrong']), 'B_correct_A_wrong': int(totals['B_correct_A_wrong']),
-        'routing_correct': int(totals['routing_correct']), 'routing_wrong': int(totals['routing_wrong']),
-        'routing_tie': int(totals['routing_tie']),
-        'routing_accuracy_non_tie': _safe_mean(totals['routing_correct'], non_tie),
-        'mean_w_correct_teacher': _safe_mean(totals['sum_w_correct'], d),
-        'mean_w_wrong_teacher': _safe_mean(totals['sum_w_wrong'], d),
-        'helpful_retention': _safe_mean(totals['sum_w_correct'], d),
-        'harmful_reduction': 1.0 - _safe_mean(totals['sum_w_wrong'], d) if d else float('nan'),
-        'routing_weight_gap': _safe_mean(totals['sum_w_correct'], d) - _safe_mean(totals['sum_w_wrong'], d),
-        'GT_FG_routing_accuracy': _safe_mean(totals['fg_route_correct'], totals['fg_d_non_tie']),
-        'GT_BG_routing_accuracy': _safe_mean(totals['bg_route_correct'], totals['bg_d_non_tie']),
-        'A_correct_routing_accuracy': _safe_mean(totals['ac_route_correct'], totals['ac_non_tie']),
-        'B_correct_routing_accuracy': _safe_mean(totals['bc_route_correct'], totals['bc_non_tie']),
-        'HC90_routing_accuracy': _safe_mean(totals['hc90_route_correct'], totals['hc90_non_tie']),
-        'HC95_routing_accuracy': _safe_mean(totals['hc95_route_correct'], totals['hc95_non_tie']),
-        'helpful_gradient_mass': totals['sum_helpful_g'], 'harmful_gradient_mass': totals['sum_harmful_g'],
-        'routed_helpful_gradient_mass': totals['sum_routed_helpful_g'],
-        'routed_harmful_gradient_mass': totals['sum_routed_harmful_g'],
-        'net_gradient_selective_gain': (totals['sum_harmful_g'] - totals['sum_routed_harmful_g']) - (totals['sum_helpful_g'] - totals['sum_routed_helpful_g']),
-        'val_dice_student1': float(val_eval1[2]), 'val_dice_student2': float(val_eval2[2]),
-        'val_jaccard_student1': float(val_eval1[1]), 'val_jaccard_student2': float(val_eval2[1]),
-        'agreement_rate': _safe_mean(cc + ww, valid),
-        'cc_all_rate': _safe_mean(cc, valid), 'ww_all_rate': _safe_mean(ww, valid),
-        'd_all_rate': _safe_mean(d, valid), 'ww_over_agreement': _safe_mean(ww, cc + ww),
-        'HC90_WW_over_WW': _safe_mean(totals['HC90_WW_all'], ww),
-        'HC95_WW_over_WW': _safe_mean(totals['HC95_WW_all'], ww),
-        'WW_reference_direction_correct': _safe_mean(totals['WW_reference_direction_correct'], ww),
-        'CC_reference_harmful_direction': _safe_mean(totals['CC_reference_harmful_direction'], cc),
-        'WW_potential_reverse_A': _safe_mean(totals['WW_reverse_A'], ww),
-        'WW_potential_reverse_B': _safe_mean(totals['WW_reverse_B'], ww),
-        'WW_potential_reverse_any': _safe_mean(totals['WW_any_reverse'], ww),
-        'WW_potential_reverse_both': _safe_mean(totals['WW_both_reverse'], ww),
-        'WW_correct_but_insufficient': _safe_mean(totals['WW_correct_but_insufficient'], ww),
-        'HC90_ref_correct': _safe_mean(totals['HC90_ref_correct'], totals['HC90_WW_all']),
-        'HC95_ref_correct': _safe_mean(totals['HC95_ref_correct'], totals['HC95_WW_all']),
-        'D_routing_accuracy': _safe_mean(totals['routing_correct'], non_tie),
-        'A_correct_given_D': _safe_mean(totals['AC'], d),
-        'B_correct_given_D': _safe_mean(totals['BC'], d),
-        'best_fixed_branch_accuracy': max(_safe_mean(totals['AC'], d), _safe_mean(totals['BC'], d)),
-        'routing_gain_over_best_fixed': _safe_mean(totals['routing_correct'], non_tie) - max(_safe_mean(totals['AC'], d), _safe_mean(totals['BC'], d)),
-        'strong_wrong_routing_005': _safe_mean(totals['strong_wrong_005'], d),
-        'strong_wrong_routing_010': _safe_mean(totals['strong_wrong_010'], d),
-        'strong_wrong_routing_020': _safe_mean(totals['strong_wrong_020'], d),
-        'mean_reference_abs_margin': _safe_mean(totals['sum_abs_margin'], valid),
-    }
-
-
-def _native_validation_diagnostic(validation, dataloader, context, cfg, args):
-    """Offline validation diagnostics for the native S/SC intervention.
-
-    GT is consumed only in this function, after inference, to quantify shared
-    errors and token-footprint collateral.  It never enters the training gate.
-    """
-    totals = defaultdict(float)
-    events = defaultdict(float)
-    offset = 0
-    with torch.inference_mode():
-        for batch in dataloader:
-            n = int(batch['mask'].shape[0])
-            logits_a = validation['scores1'][offset:offset + n].cuda(non_blocking=True)
-            logits_b = validation['scores2'][offset:offset + n].cuda(non_blocking=True)
-            offset += n
-            gt = batch['mask'].cuda(non_blocking=True)
-            valid = gt.ne(-1)
-            pa = _foreground_probability(logits_a)
-            pb = _foreground_probability(logits_b)
-            hard_a = pa.ge(0.5)[:, 0]
-            hard_b = pb.ge(0.5)[:, 0]
-            conf_a = torch.maximum(pa, 1.0 - pa)[:, 0]
-            conf_b = torch.maximum(pb, 1.0 - pb)[:, 0]
-            agree_px = hard_a.eq(hard_b)
-            correct_a = hard_a.eq(gt)
-            correct_b = hard_b.eq(gt)
-            cc = correct_a & correct_b & valid
-            ww = ~correct_a & ~correct_b & agree_px & valid
-            hc = ww & conf_a.ge(0.9) & conf_b.ge(0.9)
-            shared_fp = ww & hard_a & gt.eq(0)
-            shared_fn = ww & ~hard_a & gt.eq(1)
-            targets = _build_native_reference_targets(
-                logits_a, logits_b, _get_rgb_view(batch).cuda(non_blocking=True),
-                context, cfg, args,
-            )
-            contradiction = targets['contradiction']
-            hc_token = targets['hc']
-            occ = F.adaptive_avg_pool2d(gt.float().unsqueeze(1), (16, 16))[:, 0]
-            pca = 0.5 * (targets['p_a_token'][:, 0] + targets['p_b_token'][:, 0])
-            direction_valid = (occ - pca).abs().gt(0.05)
-            uni_direction = torch.where(targets['uni_fg'][:, 0], 1.0, -1.0)
-            gt_direction = occ - pca
-            direction_correct = (uni_direction * gt_direction > 0) & direction_valid
-            token_ww = F.adaptive_avg_pool2d(ww.float().unsqueeze(1), (16, 16))[:, 0]
-            token_hc = F.adaptive_avg_pool2d(hc.float().unsqueeze(1), (16, 16))[:, 0]
-            token_cc = F.adaptive_avg_pool2d(cc.float().unsqueeze(1), (16, 16))[:, 0]
-            for key, value in (
-                ('valid', valid.sum()), ('cc', cc.sum()), ('ww', ww.sum()),
-                ('hc90ww', hc.sum()), ('shared_fp', shared_fp.sum()),
-                ('shared_fn', shared_fn.sum()),
-                ('contradiction_tokens', contradiction.sum()),
-                ('hc_contradiction_tokens', hc_token.sum()),
-                ('contradiction_ww_sum', token_ww[contradiction].sum()),
-                ('contradiction_hc_sum', token_hc[contradiction].sum()),
-                ('contradiction_cc_sum', token_cc[contradiction].sum()),
-                ('hc_ww_sum', token_ww[hc_token].sum()),
-                ('hc_hc_sum', token_hc[hc_token].sum()),
-                ('hc_cc_sum', token_cc[hc_token].sum()),
-                ('direction_correct', direction_correct[contradiction & direction_valid].sum()),
-                ('direction_valid', (contradiction & direction_valid).sum()),
-                ('hc_mae_sum', (pca - occ).abs()[hc_token].sum()),
-            ):
-                totals[key] += float(value.item())
-            # Connected-component event counts are validation-only diagnostics.
-            try:
-                from scipy import ndimage
-                for idx in range(n):
-                    for name, mask in (
-                        ('WW', ww[idx]), ('HC90WW', hc[idx]),
-                        ('Shared_FP', shared_fp[idx]), ('Shared_FN', shared_fn[idx]),
-                    ):
-                        count = int(ndimage.label(mask.detach().cpu().numpy(), structure=np.ones((3, 3), dtype=np.uint8))[1])
-                        events[name] += count
-                        events[name + '_images'] += float(count > 0)
-            except ImportError:
-                # Preserve a valid run if scipy is absent; pixel diagnostics
-                # remain exact and event fields are explicitly unavailable.
-                pass
-    if offset != int(validation['masks'].shape[0]):
-        raise AssertionError('Native validation loader/logit length mismatch')
-    valid = totals['valid']
-    contradiction = totals['contradiction_tokens']
-    hc_tokens = totals['hc_contradiction_tokens']
-    shared = {
-        'epoch': 0, 'valid_pixels': int(valid),
-        'CC_rate': _safe_mean(totals['cc'], valid),
-        'WW_rate': _safe_mean(totals['ww'], valid),
-        'HC90WW_rate': _safe_mean(totals['hc90ww'], valid),
-        'Shared_FP_rate': _safe_mean(totals['shared_fp'], valid),
-        'Shared_FN_rate': _safe_mean(totals['shared_fn'], valid),
-        'WW_pixels': int(totals['ww']), 'HC90WW_pixels': int(totals['hc90ww']),
-        'Shared_FP_pixels': int(totals['shared_fp']), 'Shared_FN_pixels': int(totals['shared_fn']),
-    }
-    native = {
-        'epoch': 0, 'contradiction_tokens': int(contradiction),
-        'hc_contradiction_tokens': int(hc_tokens),
-        'contradiction_rate': _safe_mean(contradiction, max(1.0, totals['valid'] / 256.0)),
-        'hc_contradiction_rate': _safe_mean(hc_tokens, max(1.0, totals['valid'] / 256.0)),
-        'mean_WW_ratio_contradiction': _safe_mean(totals['contradiction_ww_sum'], contradiction),
-        'mean_HC90WW_ratio_contradiction': _safe_mean(totals['contradiction_hc_sum'], contradiction),
-        'mean_CC_ratio_contradiction': _safe_mean(totals['contradiction_cc_sum'], contradiction),
-        'mean_WW_ratio_hc_contradiction': _safe_mean(totals['hc_ww_sum'], hc_tokens),
-        'mean_HC90WW_ratio_hc_contradiction': _safe_mean(totals['hc_hc_sum'], hc_tokens),
-        'mean_CC_ratio_hc_contradiction': _safe_mean(totals['hc_cc_sum'], hc_tokens),
-        'direction_accuracy': _safe_mean(totals['direction_correct'], totals['direction_valid']),
-        'HC_token_MAE': _safe_mean(totals['hc_mae_sum'], hc_tokens),
-    }
-    event_row = {'epoch': 0}
-    for name in ('WW', 'HC90WW', 'Shared_FP', 'Shared_FN'):
-        event_row[name + '_events'] = int(events[name])
-        event_row[name + '_images'] = int(events[name + '_images'])
-        event_row[name + '_events_per_image'] = _safe_mean(events[name], len(dataloader.dataset))
-    return shared, native, event_row
-
-
-def _state_aware_checkpoint_metadata(args, context, best_val_eval_lists, best_epochs):
-    """Metadata contract for every state-aware current/best checkpoint."""
-    return {
-        'dataset_name': args.dataset_name, 'labeled_ratio': args.labeled_ratio,
-        'seed': args.sd, 'input_mode': args.input_mode, 'network': args.network,
-        'cps_mode': 'state_aware', 'selection_split': 'validation',
-        'selection_metric': 'jaccard',
-        'best_val_metrics': [list(v) for v in best_val_eval_lists],
-        'best_epochs': list(best_epochs),
-        'reference_memory_path': context['memory_path'],
-        'reference_memory_sha256': context['memory_sha256'],
-        'reference_resolution': context['reference_resolution'],
-        'reference_grid': context['token_grid'],
-        'reference_memory_source': 'labeled_10 GT only',
-        'uni_sha256': context['weights_sha256'],
-        'uni_weights': context['weights_path'], 'uni_k': args.uni_k,
-        'margin_definition': 'm=S_fg-S_bg',
-        'agreement_signed_support_definition': 's=(2*y_c-1)*m',
-        'agreement_conflict_definition': 'r=clamp(-s,0,1)',
-        'agreement_soft_correction_definition': (
-            '(1-r)*CE(current)+r*CE(opposite) on agreement; '
-            'opposite target is never used on disagreement'
-        ),
-        'disagreement_support_A_definition': 's_A=(2*pseudo_A-1)*m',
-        'disagreement_support_B_definition': 's_B=(2*pseudo_B-1)*m',
-        'disagreement_routing_weight_definition': (
-            'r_A/B=clamp(-s_A/B,0,1); w_A/B=1-r_A/B; '
-            'A->B uses w_A and B->A uses w_B'
-        ),
-        'loss_reduction': (
-            '0.5*mean(pixel_loss_A_to_B)+0.5*mean(pixel_loss_B_to_A) '
-            'over valid pixels; no sum(wL)/sum(w)'
-        ),
-        'hard_reference_threshold_used': False,
-        'hard_routing_used': False,
-        'student_confidence_used': False,
-        'pseudo_label_flipping_used': False,
-        'direction_specific_scaling_used': False,
-        'reference_build_rng_isolated': True,
-        'test_evaluation_policy': 'final_frozen_only',
-    }
-
-
-def _native_checkpoint_metadata(args, context, best_val_eval_lists, best_epochs):
-    metadata = {
-        'dataset_name': args.dataset_name, 'labeled_ratio': args.labeled_ratio,
-        'seed': args.sd, 'input_mode': args.input_mode, 'network': args.network,
-        'cps_mode': args.cps_mode, 'reference_mode': args.reference_mode,
-        'selection_split': 'validation', 'selection_metric': 'jaccard',
-        'best_val_metrics': [list(v) for v in best_val_eval_lists],
-        'best_epochs': list(best_epochs),
-        'reference_memory_path': context['memory_path'],
-        'reference_memory_sha256': context['memory_sha256'],
-        'reference_resolution': 256, 'reference_grid': 16,
-        'reference_memory_source': 'labeled_10 GT only',
-        'uni_sha256': context['weights_sha256'], 'uni_weights': context['weights_path'],
-        'uni_k': args.uni_k, 'native_suppress_gamma': args.native_suppress_gamma,
-        'native_hc_thresh': args.native_hc_thresh,
-        'lambda_native_ref': args.lambda_native_ref,
-        'native_gate': 'detach(adaptive_avg_pool2d(pA/pB,(16,16))) agreement and UNI margin sign; no GT',
-        'native_weight_expansion': 'nearest loss-weight expansion only',
-        'native_hc_target': 'UNI sign at token scale; BCE on undetached pooled probabilities',
-        'test_evaluation_policy': 'final_frozen_only',
-    }
-    if args.reference_mode == 'native_suppress_adaptive':
-        metadata.update({
-            'native_adaptive_weight_definition': (
-                'agreement-only w=1-max(S_opp-S_cur,0)/(abs(S_opp)+abs(S_cur)+1e-6); '
-                'direct current-token relative semantic gap; no CDF or history'
-            ),
-            'native_adaptive_weight_floor': 0.0,
-            'native_adaptive_weight_ceiling': 1.0,
-        })
-    if args.reference_mode == 'native_suppress_d_adaptive':
-        metadata.update({
-            'native_d_adaptive_weight_definition': 'w=1 when disagreement or D<=0; w=max(0,0.5-D) when agreement and D>0',
-            'native_d_adaptive_weight_floor_on_contradiction': 0.0,
-            'native_d_adaptive_weight_ceiling_on_contradiction': 0.5,
-            'native_d_adaptive_history': False,
-            'native_d_adaptive_extra_hyperparameters': 'none',
-        })
-    if args.reference_mode == 'native_suppress_d_adaptive_fine':
-        metadata.update({
-            'native_d_adaptive_weight_definition': 'w=1 when disagreement or D<=0; w=max(0,0.5-D) when agreement and D>0',
-            'native_d_adaptive_weight_floor_on_contradiction': 0.0,
-            'native_d_adaptive_weight_ceiling_on_contradiction': 0.5,
-            'native_d_adaptive_history': False,
-            'native_d_adaptive_extra_hyperparameters': 'none',
-            'native_fine_pixel_selection': 'token contradiction AND pixel student agreement AND pixel consensus equals token consensus',
-            'native_fine_weight_expansion': 'nearest token weight, selected risk pixels only; all other pixels weight 1',
-        })
-    if args.reference_mode == 'native_suppress_d_adaptive_fine_reverse':
-        metadata.update({
-            'native_d_adaptive_weight_definition': 'w=1 when non-risk; w=max(0,0.5-D) on fine risky pixels',
-            'native_d_adaptive_reverse_weight_definition': 'r=min(D,0.5) on fine risky pixels; w+r=0.5',
-            'native_d_adaptive_history': False,
-            'native_d_adaptive_extra_hyperparameters': 'none',
-            'native_fine_pixel_selection': 'token contradiction AND pixel student agreement AND pixel consensus equals token consensus',
-            'native_reverse_target': 'opposite of detached token consensus',
-            'native_fine_weight_expansion': 'nearest token weight, selected risk pixels only; all other pixels weight 1',
-        })
-    if args.reference_mode == 'native_qcdf_anti_confirmation':
-        metadata.update({
-            'anti_confirmation_formula': 'L_risk=beta*((1-q)*L_CPS+q*L_opp) on unchanged fine-selective risky pixels; standard CPS elsewhere',
-            'anti_confirmation_beta': float(args.anti_confirm_beta),
-            'anti_confirmation_q_definition': 'q=F_train(D), D=S_opp-S_cur, positive-D training-side empirical CDF fixed before training',
-            'anti_confirmation_q_cdf_path': context.get('q_cdf_path'),
-            'anti_confirmation_opposite_target': '1-detached CPS consensus class; UNI provides no pixel pseudo-label',
-            'native_fine_pixel_selection': 'token contradiction AND pixel student agreement AND pixel consensus equals token consensus',
-            'native_fine_weight_expansion': 'q and beta applied only on selected risky pixels; all other pixels standard CPS',
-            'native_qcdf_validation_or_test_calibration': False,
-        })
-    return metadata
-
-
-def _write_state_aware_protocol_audit(
-    path, args, cfg, datasets, context, optimizers, startup_passed,
-):
-    """Persist the state-aware protocol and all frozen-reference checks."""
-    optimizer_parameter_ids = {
-        id(parameter)
-        for optimizer in optimizers
-        for group in optimizer.param_groups
-        for parameter in group['params']
-    }
-    audit = {
-        'experiment': 'State-Aware Reference-Guided CPS',
-        'formal_training': True, 'fresh_initialization': True,
-        'resume_checkpoint': None, 'startup_assertions_passed': startup_passed,
-        'command': ' '.join(sys.argv),
-        'dataset_name': args.dataset_name,
-        'path_dataset': str(Path(args.path_dataset).resolve()),
-        'dataset_counts': {
-            'labeled_unique': len(datasets['train_sup_unique']),
-            'unlabeled': len(datasets['train_unsup']),
-            'validation': len(datasets['val']),
-            'test': datasets['test_count'],
-        },
-        'config': {
-            'labeled_ratio': args.labeled_ratio, 'seed': args.sd,
-            'batch_size': args.batch_size, 'num_epochs': args.num_epochs,
-            'network': args.network, 'input_mode': args.input_mode,
-            'cps_mode': args.cps_mode, 'lr': args.lr,
-            'reference_resolution': args.reference_resolution,
-            'reference_grid': _reference_grid(args.reference_resolution),
-            'momentum': args.momentum, 'weight_decay': 5 * 10 ** args.wd,
-            'step_size': args.step_size, 'gamma': args.gamma,
-            'unsup_weight': args.unsup_weight,
-            'warm_up_duration': args.warm_up_duration,
-            'milestone_interval': args.milestone_interval,
-            'best_save_interval': args.best_save_interval,
-        },
-        'actual_cps_loss_criterion': (
-            'torch.nn.CrossEntropyLoss(reduction=none), hard-target CE; '
-            '0.5 mean per direction'
-        ),
-        'agreement': {
-            'margin': 'm=S_fg-S_bg',
-            'signed_support': 's=(2*y_c-1)*m',
-            'conflict': 'r=clamp(-s,0,1)',
-            'formula': '(1-r)*CE(current)+r*CE(opposite)',
-            'scope': 'agreement only',
-        },
-        'disagreement': {
-            'state': 'pseudo_A != pseudo_B',
-            'support_A': 's_A=(2*pseudo_A-1)*m',
-            'support_B': 's_B=(2*pseudo_B-1)*m',
-            'routing': 'r=clamp(-s,0,1); w=1-r',
-            'A_to_B': 'w_A*CE(logits_B,pseudo_A)',
-            'B_to_A': 'w_B*CE(logits_A,pseudo_B)',
-            'opposite_target_used': False,
-            'sum_weight_normalization': False,
-        },
-        'UNI': {
-            'architecture': 'ViT-L/16', 'feature_dim': 1024,
-            'dense_token_grid': [context['token_grid'], context['token_grid']],
-            'reference_resolution': context['reference_resolution'],
-            'sha256': context['weights_sha256'], 'path': context['weights_path'],
-            'frozen': True, 'eval': not context['uni'].training,
-            'requires_grad': any(
-                parameter.requires_grad for parameter in context['uni'].parameters()
-            ),
-            'in_optimizer': any(
-                id(parameter) in optimizer_parameter_ids
-                for parameter in context['uni'].parameters()
-            ),
-        },
-        'reference_memory': {
-            'path': context['memory_path'],
-            'sha256': context['memory_sha256'],
-            'foreground_count': context['memory_fg_count'],
-            'background_count': context['memory_bg_count'],
-            'feature_dim': context['feature_dim'],
-            'token_grid': context['token_grid'], 'K': context['memory_top_k'],
-            'built_before_optimizer': True,
-            'build_requested': bool(context.get('memory_build_requested', False)),
-            'build_performed_this_run': bool(context.get('memory_built', False)),
-            'source': context.get('memory_build_source', 'labeled_10 GT only'),
-            'online_updates': False,
-            'frozen_after_build': True,
-        },
-        'forbidden_mechanisms': {
-            'hard_reference_threshold_used': False,
-            'hard_routing_used': False, 'student_confidence_used': False,
-            'tau_or_threshold_used': False, 'lambda_routing_used': False,
-            'class_or_branch_specific_scaling_used': False,
-            'stage_schedule_used': False, 'w2_normalization_used': False,
-        },
-        'reference_build_rng_isolated': True,
-        'test_policy': 'not evaluated during training; final frozen evaluation only',
-        'code': {
-            'main_path': str(Path(__file__).resolve()),
-            'main_sha256': _sha256_file(Path(__file__).resolve()),
-            'torch': torch.__version__, 'numpy': np.__version__,
-            'timestamp': time.strftime('%Y-%m-%dT%H:%M:%S%z'),
-        },
-    }
-    with open(path, 'w', encoding='utf-8') as handle:
-        json.dump(audit, handle, indent=2, ensure_ascii=False)
-
-
 def train_model(
     args,
     cfg,
@@ -3757,8 +2465,7 @@ def train_model(
             if path.is_file()
         ]
         completed_run = (
-            Path(trained_models_path, 'state_aware_training_complete.json').is_file()
-            or Path(trained_models_path, 'native_training_complete.json').is_file()
+            Path(trained_models_path, 'native_training_complete.json').is_file()
             or any(Path(trained_models_path, 'milestones').glob('epoch_*.pth'))
         )
         if existing_training_artifacts and completed_run and not args.resume:
@@ -3774,12 +2481,23 @@ def train_model(
             args.uni_reference_memory = str(
                 Path(trained_models_path) / 'reference_memory_uni256.npz'
             )
-    elif _is_reference_mode(args.cps_mode) and args.uni_reference_memory is None:
-        args.uni_reference_memory = str(Path(trained_models_path) / 'reference_memory.npz')
     logger, metrics_path, diagnostic_logger = create_run_outputs(
         args, trained_models_path
     )
     if _is_native_reference_mode(args):
+        if args.reference_mode == 'native_fine_margin_suppression':
+            adaptive_strategy = 'labeled_train_margin_calibrated_suppression_only'
+            loss_formula = 'w_cps=1-q; w_opp=0 on fine risky pixels'
+        elif args.reference_mode == 'native_fine_margin_reverse':
+            adaptive_strategy = 'labeled_train_margin_calibrated_reverse_only'
+            loss_formula = 'w_cps=1; w_opp=q on fine risky pixels'
+            reverse_target_description = 'opposite detached token consensus; additive only on fine risky pixels'
+        else:
+            adaptive_strategy = 'labeled_train_margin_calibrated_directional_mixture'
+            loss_formula = 'w_cps=1-q; w_opp=q on fine risky pixels'
+            reverse_target_description = 'opposite detached token consensus; mixed only on fine risky pixels'
+        if args.reference_mode == 'native_fine_margin_suppression':
+            reverse_target_description = 'disabled'
         native_config = {
             'experiment': args.reference_mode,
             'dataset_name': args.dataset_name,
@@ -3791,48 +2509,24 @@ def train_model(
             'native_grid': '16x16',
             'feature_dim': 1024,
             'reference_memory': str(Path(args.uni_reference_memory).resolve()) if args.uni_reference_memory else 'fixed_uni256',
-            'native_suppress_gamma': args.native_suppress_gamma,
-            'native_hc_thresh': args.native_hc_thresh,
-            'lambda_native_ref': args.lambda_native_ref,
-            'adaptive_strategy': ('q_cdf_directional_mixture_with_beta_budget' if args.reference_mode == 'native_qcdf_anti_confirmation' else 'direct_relative_semantic_gap' if args.reference_mode == 'native_suppress_adaptive' else 'fine_selective_D_suppression_plus_opposite_correction' if args.reference_mode == 'native_suppress_d_adaptive_fine_reverse' else 'direct_D_extra_suppression_fine_selective' if args.reference_mode == 'native_suppress_d_adaptive_fine' else 'direct_D_extra_suppression' if args.reference_mode == 'native_suppress_d_adaptive' else 'fixed_contradiction_suppression'),
-            'cdf': 'fixed training-side empirical CDF; beta={}'.format(args.anti_confirm_beta) if args.reference_mode == 'native_qcdf_anti_confirmation' else 'disabled' if args.reference_mode in ('native_suppress_adaptive', 'native_suppress_d_adaptive', 'native_suppress_d_adaptive_fine', 'native_suppress_d_adaptive_fine_reverse') else 'not_applicable',
-            'running_buffer': 'disabled' if args.reference_mode in ('native_suppress_adaptive', 'native_suppress_d_adaptive', 'native_suppress_d_adaptive_fine', 'native_suppress_d_adaptive_fine_reverse') else 'not_applicable',
-            'd_adaptive_formula': 'q=F_train(D); w_cps=beta*(1-q); w_opp=beta*q on fine risky pixels; beta={}'.format(args.anti_confirm_beta) if args.reference_mode == 'native_qcdf_anti_confirmation' else 'w=max(0,0.5-D); r=min(D,0.5) on fine risky pixels' if args.reference_mode == 'native_suppress_d_adaptive_fine_reverse' else 'w=1 if disagreement or D<=0 else max(0,0.5-D)' if args.reference_mode in ('native_suppress_d_adaptive', 'native_suppress_d_adaptive_fine') else 'not_applicable',
-            'pixel_selection': 'token contradiction AND pixel student agreement AND pixel consensus equals token consensus' if args.reference_mode in ('native_suppress_d_adaptive_fine', 'native_suppress_d_adaptive_fine_reverse', 'native_qcdf_anti_confirmation') else 'not_applicable',
-            'reverse_target': 'opposite detached token consensus; q-CDF mixture only on fine risky pixels' if args.reference_mode == 'native_qcdf_anti_confirmation' else 'opposite detached token consensus; only on fine risky pixels' if args.reference_mode == 'native_suppress_d_adaptive_fine_reverse' else 'disabled',
+            'adaptive_strategy': adaptive_strategy,
+            'cdf': 'not used',
+            'running_buffer': 'disabled',
+            'd_adaptive_formula': 'q=D/(D+tau+eps); {}; tau is fixed labeled-train LOO statistic'.format(loss_formula),
+            'pixel_selection': 'token contradiction AND pixel student agreement AND pixel consensus equals token consensus',
+            'reverse_target': reverse_target_description,
             'contradiction_gate': 'detach pooled pA/pB; agreement and UNI margin sign only; no GT',
             'loss_weight_expansion': 'nearest 16x16 -> student pixel resolution',
-            'hc_correction': (
-                'BCE on undetached pooled probabilities and UNI token label'
-                if args.reference_mode == 'native_suppress_hc' else 'disabled'
-            ),
+            'hc_correction': 'disabled',
             'test_evaluation_policy': 'not evaluated during training',
             'command': ' '.join(sys.argv),
         }
         for root in (Path(trained_models_path), Path('outputs/native_scale_training')):
             root.mkdir(parents=True, exist_ok=True)
-            (root / 'config_{}.json'.format(
-                {
-                    'native_suppress': 'native_s',
-                    'native_suppress_hc': 'native_sc',
-                    'native_suppress_adaptive': 'native_gap_adaptive_s',
-                    'native_suppress_d_adaptive': 'native_d_adaptive_s',
-                    'native_suppress_d_adaptive_fine': 'native_d_adaptive_fine_s',
-                    'native_suppress_d_adaptive_fine_reverse': 'native_d_adaptive_fine_reverse_s',
-                    'native_qcdf_anti_confirmation': 'native_qcdf_anti_confirmation_s',
-                }[args.reference_mode]
-            )).write_text(json.dumps(native_config, indent=2, ensure_ascii=False), encoding='utf-8')
+            (root / 'config_{}.json'.format(NATIVE_MODE_TAGS[args.reference_mode])).write_text(
+                json.dumps(native_config, indent=2, ensure_ascii=False), encoding='utf-8'
+            )
     reference_context = None
-    state_epoch_writer = None
-    state_metrics_file = None
-    state_validation_writer = None
-    state_validation_file = None
-    training_epoch_writer = None
-    training_epoch_file = None
-    validation_epoch_writer = None
-    validation_epoch_file = None
-    state_iter_writer = None
-    state_iter_file = None
     native_training_writer = None
     native_training_file = None
     native_validation_writer = None
@@ -3845,7 +2539,6 @@ def train_model(
     motivation_file = None
     motivation_logged_epochs = set()
     if _uses_uni_reference(args):
-        rng_state = _snapshot_rng_state() if args.cps_mode == 'state_aware' else None
         reference_context = _load_reference(
             args,
             cfg,
@@ -3853,22 +2546,8 @@ def train_model(
             manifest_dir=manifest_dir,
             use_manifests=use_manifests,
         )
-        if rng_state is not None:
-            _restore_rng_state(rng_state)
-            reference_context['reference_build_rng_isolated'] = True
-            logger.info(
-                'Reference build RNG isolation complete | '
-                'reference_build_rng_isolated=true'
-            )
-        else:
-            reference_context['reference_build_rng_isolated'] = False
+        reference_context['reference_build_rng_isolated'] = False
         reference_context['cfg'] = cfg
-        reference_context['validation_reference_cache'] = None
-        if args.cps_mode == 'state_aware':
-            reference_context['validation_reference_cache'] = _build_validation_reference_cache(
-                dataloaders['val'], reference_context, cfg, args,
-                Path(trained_models_path) / 'reference_validation_cache',
-            )
 
     (
         models,
@@ -3896,47 +2575,11 @@ def train_model(
         model1.load_state_dict(resume_payload['appearance_state_dict'], strict=True)
         model2.load_state_dict(resume_payload['structure_state_dict'], strict=True)
         logger.info('Resume student weights loaded strictly | epoch=%d', int(resume_payload['epoch']))
-    if reference_context is not None and args.cps_mode == 'state_aware':
-        _run_state_aware_startup_checks(
-            args, cfg, reference_context, models, optimizers, losses
-        )
-        logger.info(
-            'State-aware startup consistency checks passed | '
-            'hard_routing_used=false | student_confidence_used=false '
-            '| tau_or_threshold_used=false | w2_normalization_used=false '
-            '| agreement=(1-r)*CE(current)+r*CE(opposite); '
-            'disagreement=w*CE(peer,pseudo)'
-        )
-        _write_state_aware_protocol_audit(
-            os.path.join(
-                trained_models_path,
-                'state_aware_reference_protocol_audit.json',
-            ),
-            args, cfg, datasets, reference_context, optimizers, True,
-        )
-        logger.info(
-            'State-aware fresh initialization confirmed | resume_checkpoint=None '
-            '| checkpoint_root=%s | segmentation_root=%s',
-            trained_models_path, segmentation_results_path,
-        )
     if reference_context is not None and _is_native_reference_mode(args):
         _run_native_startup_checks(args, reference_context, models, optimizers)
-        if args.reference_mode == 'native_suppress_adaptive':
-            _run_direct_gap_numerical_checks()
-        if args.reference_mode == 'native_suppress_d_adaptive':
-            _run_d_adaptive_numerical_checks()
-        if args.reference_mode == 'native_suppress_d_adaptive_fine':
-            _run_d_adaptive_numerical_checks()
-            _run_d_adaptive_fine_numerical_checks()
-        if args.reference_mode == 'native_suppress_d_adaptive_fine_reverse':
-            _run_d_adaptive_numerical_checks()
-            _run_d_adaptive_fine_numerical_checks()
-            _run_d_adaptive_fine_reverse_numerical_checks()
         logger.info(
-            'Native-scale reference startup checks passed | mode=%s | '
-            'UNI input=256 | token grid=16x16 | gamma=%.4f | hc_thresh=%.4f | lambda_ref=%.4f',
-            args.reference_mode, args.native_suppress_gamma,
-            args.native_hc_thresh, args.lambda_native_ref,
+            'Native-scale reference startup checks passed | mode=%s | UNI input=256 | token grid=16x16',
+            args.reference_mode,
         )
     best_val_eval_lists = (
         [0 for _ in range(4)],
@@ -3974,52 +2617,6 @@ def train_model(
         metrics_file = stack.enter_context(
             open(metrics_path, 'a' if args.resume else 'w', newline='', encoding='utf-8')
         )
-        if reference_context is not None and args.cps_mode == 'state_aware':
-            training_epoch_file = stack.enter_context(
-                open(os.path.join(trained_models_path, 'training_epoch_metrics.csv'), 'a' if args.resume else 'w', newline='', encoding='utf-8')
-            )
-            validation_epoch_file = stack.enter_context(
-                open(os.path.join(trained_models_path, 'validation_epoch_metrics.csv'), 'a' if args.resume else 'w', newline='', encoding='utf-8')
-            )
-            training_epoch_writer = csv.DictWriter(training_epoch_file, fieldnames=TRAINING_EPOCH_FIELDS)
-            validation_epoch_writer = csv.DictWriter(validation_epoch_file, fieldnames=VALIDATION_EPOCH_FIELDS)
-            if not args.resume:
-                training_epoch_writer.writeheader(); validation_epoch_writer.writeheader()
-            state_metrics_path = os.path.join(
-                trained_models_path, 'state_aware_reference_metrics.csv'
-            )
-            state_validation_path = os.path.join(
-                trained_models_path, 'state_aware_validation_diagnostic.csv'
-            )
-            state_metrics_file = stack.enter_context(
-                open(state_metrics_path, 'a' if args.resume else 'w', newline='', encoding='utf-8')
-            )
-            state_validation_file = stack.enter_context(
-                open(state_validation_path, 'a' if args.resume else 'w', newline='', encoding='utf-8')
-            )
-            state_epoch_writer = csv.DictWriter(
-                state_metrics_file, fieldnames=STATE_METRIC_FIELDS
-            )
-            if not args.resume:
-                state_epoch_writer.writeheader()
-            state_validation_writer = csv.DictWriter(
-                state_validation_file, fieldnames=STATE_VALIDATION_FIELDS
-            )
-            if not args.resume:
-                state_validation_writer.writeheader()
-            if args.state_aware_log_interval > 0:
-                state_iter_path = os.path.join(
-                    trained_models_path,
-                    'state_aware_reference_metrics_iter.csv',
-                )
-                state_iter_file = stack.enter_context(
-                    open(state_iter_path, 'a' if args.resume else 'w', newline='', encoding='utf-8')
-                )
-                state_iter_writer = csv.DictWriter(
-                    state_iter_file, fieldnames=STATE_ITER_METRIC_FIELDS
-                )
-                if not args.resume:
-                    state_iter_writer.writeheader()
         if _is_native_reference_mode(args):
             native_root = Path(
                 args.native_metrics_dir
@@ -4027,15 +2624,7 @@ def train_model(
                 else 'outputs/native_scale_training'
             )
             native_root.mkdir(parents=True, exist_ok=True)
-            mode_tag = {
-                'native_suppress': 'native_s',
-                'native_suppress_hc': 'native_sc',
-                'native_suppress_adaptive': 'native_gap_adaptive_s',
-                'native_suppress_d_adaptive': 'native_d_adaptive_s',
-                'native_suppress_d_adaptive_fine': 'native_d_adaptive_fine_s',
-                'native_suppress_d_adaptive_fine_reverse': 'native_d_adaptive_fine_reverse_s',
-                'native_qcdf_anti_confirmation': 'native_qcdf_anti_confirmation_s',
-            }[args.reference_mode]
+            mode_tag = NATIVE_MODE_TAGS[args.reference_mode]
             native_training_file = stack.enter_context(open(
                 native_root / 'training_{}.csv'.format(mode_tag),
                 'a' if args.resume else 'w', newline='', encoding='utf-8'
@@ -4108,8 +2697,6 @@ def train_model(
                 metrics_writer,
                 metrics_file,
                 reference_context=reference_context,
-                state_iter_writer=state_iter_writer,
-                state_iter_file=state_iter_file,
             )
             schedulers[0].step()
             schedulers[1].step()
@@ -4192,15 +2779,6 @@ def train_model(
                         motivation['hc90ww_given_ww'],
                     )
                 )
-            if reference_context is not None and args.cps_mode == 'state_aware':
-                state_validation_row = _state_validation_diagnostic(
-                    validation, dataloaders['val'], reference_context, cfg, args,
-                    val_eval1, val_eval2,
-                    reference_cache=reference_context['validation_reference_cache'],
-                )
-                state_validation_row['epoch'] = epoch + 1
-                state_validation_writer.writerow(state_validation_row)
-                state_validation_file.flush()
             if _is_native_reference_mode(args):
                 shared_row, native_row, event_row = _native_validation_diagnostic(
                     validation, dataloaders['val'], reference_context, cfg, args
@@ -4258,11 +2836,7 @@ def train_model(
                 best_sync_state = (
                     _model_state_snapshot(model1), _model_state_snapshot(model2)
                 )
-                sync_metadata = (
-                    _state_aware_checkpoint_metadata(
-                        args, reference_context, best_val_eval_lists, best_epochs
-                    ) if reference_context is not None else {}
-                )
+                sync_metadata = {}
                 if _is_native_reference_mode(args):
                     sync_metadata = _native_checkpoint_metadata(
                         args, reference_context, best_val_eval_lists, best_epochs
@@ -4302,20 +2876,6 @@ def train_model(
                     'best_epochs': list(best_epochs),
                     'args': vars(args).copy(),
                 }
-                if reference_context is not None and args.cps_mode == 'state_aware':
-                    milestone_metadata.update({
-                        key: value
-                        for key, value in _state_aware_checkpoint_metadata(
-                            args, reference_context, best_val_eval_lists,
-                            best_epochs,
-                        ).items()
-                        if key not in {
-                            'dataset_name', 'labeled_ratio', 'seed',
-                            'input_mode', 'network', 'cps_mode',
-                            'selection_split', 'selection_metric',
-                            'best_val_metrics', 'best_epochs',
-                        }
-                    })
                 if _is_native_reference_mode(args):
                     milestone_metadata.update(_native_checkpoint_metadata(
                         args, reference_context, best_val_eval_lists, best_epochs
@@ -4338,30 +2898,6 @@ def train_model(
                     ).ljust(print_num_minus, ' '),
                     '|',
                 )
-                if reference_context is not None and args.cps_mode == 'state_aware':
-                    torch.save({
-                        'epoch': current_epoch,
-                        'global_step': global_step,
-                        'appearance_state_dict': _model_state_snapshot(model1),
-                        'structure_state_dict': _model_state_snapshot(model2),
-                        'optimizer1': optimizers[0].state_dict(),
-                        'optimizer2': optimizers[1].state_dict(),
-                        'scheduler1': schedulers[0].state_dict(),
-                        'scheduler2': schedulers[1].state_dict(),
-                        'best_val_eval_lists': best_val_eval_lists,
-                        'best_model_states': best_model_states,
-                        'best_epochs': best_epochs,
-                        'best_sync_mean': best_sync_mean,
-                        'best_sync_state': best_sync_state,
-                        'best_sync_epoch': best_sync_epoch,
-                        'rng_state': _snapshot_rng_state(),
-                        'dataset_name': args.dataset_name,
-                        'labeled_ratio': args.labeled_ratio,
-                        'seed': args.sd,
-                        'reference_resolution': args.reference_resolution,
-                        'reference_memory_sha256': reference_context['memory_sha256'],
-                        'uni_sha256': reference_context['weights_sha256'],
-                    }, os.path.join(trained_models_path, 'resume_checkpoint.pth'))
                 if _is_native_reference_mode(args):
                     torch.save({
                         'epoch': current_epoch,
@@ -4431,43 +2967,6 @@ def train_model(
                 best_val_eval_lists,
             )
             _log_epoch(logger, args, metrics)
-            if reference_context is not None and args.cps_mode == 'state_aware':
-                state_epoch_writer.writerow(_state_epoch_row(epoch + 1, reference_totals))
-                state_metrics_file.flush()
-                unlabeled = reference_totals['unlabeled_pixels']
-                disagreement = reference_totals['disagreement_pixels']
-                agreement = reference_totals['agreement_pixels']
-                dir_a_to_b = _safe_mean(reference_totals['state_loss_1_to_2_pixel_sum'], unlabeled)
-                dir_b_to_a = _safe_mean(reference_totals['state_loss_2_to_1_pixel_sum'], unlabeled)
-                train_row = {
-                    'epoch': epoch + 1,
-                    'learning_rate': optimizers[0].param_groups[0]['lr'],
-                    'unsup_weight': args.unsup_weight * (epoch + 1) / args.num_epochs,
-                    'train_sup_loss_A': train_losses[0] / num_batches['train_sup'],
-                    'train_sup_loss_B': train_losses[1] / num_batches['train_sup'],
-                    'train_unsup_A_to_B': dir_a_to_b,
-                    'train_unsup_B_to_A': dir_b_to_a,
-                    'train_total_A': train_losses[0] / num_batches['train_sup'] + (args.unsup_weight * (epoch + 1) / args.num_epochs) * dir_b_to_a,
-                    'train_total_B': train_losses[1] / num_batches['train_sup'] + (args.unsup_weight * (epoch + 1) / args.num_epochs) * dir_a_to_b,
-                    'train_total': train_losses[3] / num_batches['train_sup'],
-                    'Agreement_rate_train': _safe_mean(agreement, unlabeled),
-                    'Disagreement_rate_train': _safe_mean(disagreement, unlabeled),
-                    'mean_r_agreement_train': _safe_mean(reference_totals['sum_r_agreement'], agreement),
-                    'mean_w_A_train': _safe_mean(reference_totals['sum_w_a_disagreement'], disagreement),
-                    'mean_w_B_train': _safe_mean(reference_totals['sum_w_b_disagreement'], disagreement),
-                    'mean_reference_abs_margin_train': _safe_mean(reference_totals['sum_abs_margin'], unlabeled),
-                    'epoch_time_seconds': epoch_seconds,
-                    'peak_cuda_memory_MiB': torch.cuda.max_memory_allocated() / (1024 ** 2),
-                    'peak_cuda_reserved_MiB': torch.cuda.max_memory_reserved() / (1024 ** 2),
-                }
-                training_epoch_writer.writerow(train_row); training_epoch_file.flush()
-                validation_epoch_writer.writerow({
-                    'epoch': epoch + 1, 'Jaccard_A': val_eval1[1], 'Jaccard_B': val_eval2[1],
-                    'Dice_A': val_eval1[2], 'Dice_B': val_eval2[2],
-                    'mean_Jaccard': 0.5 * (val_eval1[1] + val_eval2[1]),
-                    'mean_Dice': 0.5 * (val_eval1[2] + val_eval2[2]),
-                    'threshold_A': val_eval1[0], 'threshold_B': val_eval2[0],
-                }); validation_epoch_file.flush()
             if _is_native_reference_mode(args):
                 native = reference_totals
                 token_count = native['num_tokens']
@@ -4528,53 +3027,7 @@ def train_model(
                 if adaptive_weights.size:
                     if not np.isfinite(relative_gaps).all() or not np.isfinite(adaptive_weights).all() or not np.all((relative_gaps >= 0.0) & (relative_gaps <= 1.0)) or not np.all((adaptive_weights >= 0.0) & (adaptive_weights <= 1.0)):
                         raise AssertionError('Direct relative gap/weight escaped [0,1] or became non-finite')
-                    if args.reference_mode == 'native_suppress_adaptive':
-                        edges = np.quantile(relative_gaps, [0.25, .5, .75])
-                        q_weights = [
-                            adaptive_weights[relative_gaps <= edges[0]],
-                            adaptive_weights[(relative_gaps > edges[0]) & (relative_gaps <= edges[1])],
-                            adaptive_weights[(relative_gaps > edges[1]) & (relative_gaps <= edges[2])],
-                            adaptive_weights[relative_gaps > edges[2]],
-                        ]
-                        q_gaps = [relative_gaps[relative_gaps <= edges[0]], relative_gaps[(relative_gaps > edges[0]) & (relative_gaps <= edges[1])], relative_gaps[(relative_gaps > edges[1]) & (relative_gaps <= edges[2])], relative_gaps[relative_gaps > edges[2]]]
-                        q_gap_means = [float(x.mean()) if x.size else None for x in q_gaps]
-                        q_weight_means = [float(x.mean()) if x.size else None for x in q_weights]
-                        adaptive_stats.update({
-                            'gap_Q1_mean_gap': q_gap_means[0], 'gap_Q1_mean_weight': q_weight_means[0],
-                            'gap_Q2_mean_gap': q_gap_means[1], 'gap_Q2_mean_weight': q_weight_means[1],
-                            'gap_Q3_mean_gap': q_gap_means[2], 'gap_Q3_mean_weight': q_weight_means[2],
-                            'gap_Q4_mean_gap': q_gap_means[3], 'gap_Q4_mean_weight': q_weight_means[3],
-                        })
-                        if len(q_weight_means) == 4 and not all(q_weight_means[i] >= q_weight_means[i + 1] - 1e-6 for i in range(3)):
-                            raise AssertionError('Direct gap quartiles are not ordered by decreasing weight')
-                    if args.reference_mode in (
-                        'native_suppress_d_adaptive',
-                        'native_suppress_d_adaptive_fine',
-                        'native_suppress_d_adaptive_fine_reverse',
-                    ):
-                        edges = np.quantile(d_values, [0.25, .5, .75])
-                        d_groups = [
-                            d_values <= edges[0],
-                            (d_values > edges[0]) & (d_values <= edges[1]),
-                            (d_values > edges[1]) & (d_values <= edges[2]),
-                            d_values > edges[2],
-                        ]
-                        q_d_means = [float(d_values[g].mean()) if g.any() else None for g in d_groups]
-                        q_w_means = [float(adaptive_weights[g].mean()) if g.any() else None for g in d_groups]
-                        adaptive_stats.update({
-                            'D_Q1_mean_D': q_d_means[0], 'D_Q1_mean_weight': q_w_means[0],
-                            'D_Q2_mean_D': q_d_means[1], 'D_Q2_mean_weight': q_w_means[1],
-                            'D_Q3_mean_D': q_d_means[2], 'D_Q3_mean_weight': q_w_means[2],
-                            'D_Q4_mean_D': q_d_means[3], 'D_Q4_mean_weight': q_w_means[3],
-                        })
-                        if not all(q_d_means[i] < q_d_means[i + 1] for i in range(3)):
-                            raise AssertionError('D-Adaptive D quartiles are not strictly ordered')
-                        if not all(q_w_means[i] >= q_w_means[i + 1] - 1e-6 for i in range(3)):
-                            raise AssertionError('D-Adaptive weights are not monotonically decreasing by D quartile')
-                if args.reference_mode in (
-                    'native_suppress_d_adaptive_fine',
-                    'native_suppress_d_adaptive_fine_reverse',
-                ):
+                if _is_margin_calibrated_mode(args):
                     candidate = native['regionwise_candidate_pixels']
                     selected = native['fine_selected_pixels']
                     all_pixels = native['all_pixel_count']
@@ -4594,49 +3047,26 @@ def train_model(
                     ))
                     if candidate and abs(rsum - 1.0) > 1e-6:
                         raise AssertionError('Fine R1+R2+R3 != 1')
-                if args.reference_mode == 'native_suppress_d_adaptive_fine_reverse':
-                    risk_d = np.asarray(native['risk_d_values'], dtype=np.float64)
-                    risk_w = np.asarray(native['risk_w_values'], dtype=np.float64)
-                    risk_r = np.asarray(native['risk_r_values'], dtype=np.float64)
-                    risk_wr = np.asarray(native['risk_w_plus_r_values'], dtype=np.float64)
-                    if risk_wr.size and not np.allclose(risk_wr, 0.5, atol=1e-6, rtol=0.0):
-                        raise AssertionError('Fine reverse epoch mean w+r budget violated')
-                    adaptive_stats.update({
-                        'num_risk_pixels': int(native['risk_pixels']),
-                        'risk_pixel_fraction': _safe_mean(native['risk_pixels'], native['risk_all_pixel_count']),
-                        'mean_D_risk': float(risk_d.mean()) if risk_d.size else None,
-                        'D_risk_p10': float(np.percentile(risk_d, 10)) if risk_d.size else None,
-                        'D_risk_p25': float(np.percentile(risk_d, 25)) if risk_d.size else None,
-                        'D_risk_p50': float(np.percentile(risk_d, 50)) if risk_d.size else None,
-                        'D_risk_p75': float(np.percentile(risk_d, 75)) if risk_d.size else None,
-                        'D_risk_p90': float(np.percentile(risk_d, 90)) if risk_d.size else None,
-                        'mean_w_risk': float(risk_w.mean()) if risk_w.size else None,
-                        'mean_r_risk': float(risk_r.mean()) if risk_r.size else None,
-                        'w_risk_p10': float(np.percentile(risk_w, 10)) if risk_w.size else None,
-                        'w_risk_p50': float(np.percentile(risk_w, 50)) if risk_w.size else None,
-                        'w_risk_p90': float(np.percentile(risk_w, 90)) if risk_w.size else None,
-                        'r_risk_p10': float(np.percentile(risk_r, 10)) if risk_r.size else None,
-                        'r_risk_p50': float(np.percentile(risk_r, 50)) if risk_r.size else None,
-                        'r_risk_p90': float(np.percentile(risk_r, 90)) if risk_r.size else None,
-                        'mean_w_plus_r': float(risk_wr.mean()) if risk_wr.size else None,
-                        'reverse_fraction': _safe_mean(risk_r.sum(), risk_wr.sum()),
-                        'loss_cps_after_suppression': _safe_mean(native['sum_cps_after_suppression'], native['batches']),
-                        'loss_reverse': _safe_mean(native['sum_reverse_loss'], native['batches']),
-                        'loss_unsup_total': _safe_mean(native['sum_unsup_total'], native['batches']),
-                    })
-                if args.reference_mode == 'native_qcdf_anti_confirmation':
+                if _is_margin_calibrated_mode(args):
                     q_risk = np.asarray(native['q_values'], dtype=np.float64)
+                    d_risk = np.asarray(native['q_d_values'], dtype=np.float64)
                     q_cps = np.asarray(native['q_cps_weights'], dtype=np.float64)
                     q_opp = np.asarray(native['q_opp_weights'], dtype=np.float64)
                     q_errors = np.asarray(native['q_weight_sum_errors'], dtype=np.float64)
                     if q_risk.size:
                         if not np.isfinite(q_risk).all() or not np.all((q_risk >= 0.0) & (q_risk <= 1.0)):
-                            raise AssertionError('q-CDF risk values escaped [0,1]')
+                            raise AssertionError('Margin-calibrated risk values escaped [0,1]')
                         if q_errors.size and float(q_errors.max()) >= 1e-6:
-                            raise AssertionError('q-CDF risky budget sum is not exact')
+                            raise AssertionError('Margin-calibrated risky budget sum is not exact')
                         adaptive_stats.update({
                             'num_risk_pixels': int(native['risk_pixels']),
                             'risk_pixel_fraction': _safe_mean(native['risk_pixels'], native['risk_all_pixel_count']),
+                            'mean_D_risk': float(d_risk.mean()),
+                            'D_risk_p10': float(np.percentile(d_risk, 10)),
+                            'D_risk_p25': float(np.percentile(d_risk, 25)),
+                            'D_risk_p50': float(np.percentile(d_risk, 50)),
+                            'D_risk_p75': float(np.percentile(d_risk, 75)),
+                            'D_risk_p90': float(np.percentile(d_risk, 90)),
                             'mean_q_risk': float(q_risk.mean()),
                             'q_risk_p10': float(np.percentile(q_risk, 10)),
                             'q_risk_p25': float(np.percentile(q_risk, 25)),
@@ -4645,9 +3075,9 @@ def train_model(
                             'q_risk_p90': float(np.percentile(q_risk, 90)),
                             'mean_CPS_weight_risk': float(q_cps.mean()),
                             'mean_opposite_weight_risk': float(q_opp.mean()),
-                            'risk_budget': float(args.anti_confirm_beta),
+                            'risk_budget': float((q_cps + q_opp).mean()),
                             'risk_weight_sum_max_error': float(q_errors.max()) if q_errors.size else 0.0,
-                            'loss_risk_qcdf': _safe_mean(native['q_risk_loss'], native['batches']),
+                            'loss_risk_severity': _safe_mean(native['q_risk_loss'], native['batches']),
                         })
                 native_training_writer.writerow({
                     'experiment': args.reference_mode,
@@ -4672,51 +3102,6 @@ def train_model(
                 })
                 native_training_file.flush()
 
-    state_final_rows = None
-    state_last_path = None
-    if args.cps_mode == 'state_aware':
-        epoch200_states = tuple(_model_state_snapshot(model) for model in models)
-        state_metadata = _state_aware_checkpoint_metadata(
-            args, reference_context, best_val_eval_lists, best_epochs
-        )
-        state_last_path = os.path.join(trained_models_path, 'last_checkpoint.pth')
-        torch.save({
-            'epoch': args.num_epochs,
-            'appearance_state_dict': epoch200_states[0],
-            'structure_state_dict': epoch200_states[1],
-            **state_metadata,
-        }, state_last_path)
-        state_final_rows = _evaluate_frozen_pair(
-            models, losses, dataloaders, cfg, 'epoch200',
-            (args.num_epochs, args.num_epochs),
-        )
-        model1.load_state_dict(best_model_states[0], strict=True)
-        model2.load_state_dict(best_model_states[1], strict=True)
-        state_final_rows.extend(
-            _evaluate_frozen_pair(
-                models, losses, dataloaders, cfg, 'best_validation', best_epochs,
-            )
-        )
-        model1.load_state_dict(epoch200_states[0], strict=True)
-        model2.load_state_dict(epoch200_states[1], strict=True)
-        final_path = os.path.join(
-            trained_models_path, 'state_aware_final_frozen_evaluation.csv'
-        )
-        with open(final_path, 'w', newline='', encoding='utf-8') as handle:
-            writer = csv.DictWriter(
-                handle,
-                fieldnames=[
-                    'checkpoint', 'branch', 'source_epoch', 'split',
-                    'threshold', 'threshold_source', 'jaccard', 'dice',
-                    'fixed05_jaccard', 'fixed05_dice',
-                ],
-            )
-            writer.writeheader()
-            writer.writerows(state_final_rows)
-        logger.info(
-            'State-aware final validation snapshot complete | test deferred '
-            'to unified post-matrix evaluation | path=%s', final_path,
-        )
     if _is_native_reference_mode(args):
         native_last_path = os.path.join(trained_models_path, 'last_checkpoint.pth')
         torch.save({
@@ -4727,9 +3112,6 @@ def train_model(
                 args, reference_context, best_val_eval_lists, best_epochs
             ),
         }, native_last_path)
-    else:
-        native_last_path = None
-
     elapsed = time.time() - training_start
     minutes, seconds = divmod(elapsed, 60)
     hours, minutes = divmod(minutes, 60)
@@ -4786,16 +3168,12 @@ def train_model(
             'epoch200_checkpoint': str(
                 Path(trained_models_path) / 'milestones' / 'epoch_200.pth'
             ),
-            'last_checkpoint': state_last_path if state_last_path is not None else native_last_path,
-            'final_frozen_evaluation': state_final_rows,
+            'last_checkpoint': native_last_path,
+            'final_frozen_evaluation': None,
             'test_policy': 'final_frozen_only_after_epoch200',
             'training_elapsed_seconds_including_final_evaluation': elapsed,
         }
-        completion_name = (
-            'native_training_complete.json'
-            if _is_native_reference_mode(args)
-            else 'state_aware_training_complete.json'
-        )
+        completion_name = 'native_training_complete.json'
         with open(
             os.path.join(trained_models_path, completion_name),
             'w', encoding='utf-8'
@@ -4886,52 +3264,22 @@ def parse_args():
         '--cps_mode', '--cps-mode',
         dest='cps_mode',
         default='standard',
-        choices=[
-            'standard', 'state_aware',
-        ],
+        choices=['standard'] + list(NATIVE_REFERENCE_MODES),
         help=(
             'standard uses the original bidirectional CPS; '
-            'state_aware adds continuous D-only directional attenuation.'
+            'native_fine_margin_suppression uses (1-q) CPS only on risky pixels; '
+            'native_fine_margin_reverse uses CPS plus q-weighted opposite loss; '
+            'native_fine_margin_calibrated_reverse '
+            'uses q=D/(D+tau) with train-only LOO tau.'
         ),
-    )
-    parser.add_argument(
-        '--reference-mode', '--reference_mode',
-        dest='reference_mode', default='none', choices=REFERENCE_MODES,
-        help=(
-            'Additional frozen UNI reference behavior. none preserves vanilla '
-            'CPS; pixel_legacy preserves the existing state-aware reference '
-            'path; native_suppress and native_suppress_hc preserve the existing '
-            'native modes; native_suppress_adaptive is legacy direct relative '
-            'semantic-gap weighting; native_suppress_d_adaptive is exactly '
-            'w=max(0,0.5-D) on contradiction; native_suppress_d_adaptive_fine '
-            'applies that unchanged token weight only to matching fine pixels; '
-            'native_suppress_d_adaptive_fine_reverse adds r=min(D,0.5) opposite '
-            'loss only on those same fine risky pixels.'
-        ),
-    )
-    parser.add_argument(
-        '--native-suppress-gamma',
-        dest='native_suppress_gamma',
-        default=0.5, type=float,
-        help='Fixed Native-S contradiction CPS loss weight; adaptive mode ignores this floor.',
-    )
-    parser.add_argument(
-        '--native-hc-thresh', dest='native_hc_thresh',
-        default=0.9, type=float,
-        help='Fixed confidence threshold for native HC correction.',
-    )
-    parser.add_argument(
-        '--lambda-native-ref', dest='lambda_native_ref',
-        default=0.5, type=float,
-        help='Fixed weight of token-level HC UNI correction loss.',
     )
     parser.add_argument(
         '--uni_reference_memory', '--reference-memory', '--reference_memory',
         dest='uni_reference_memory',
         default=None,
         help=(
-            'reference_memory.npz used by UNI reference modes; when omitted, '
-            'it is created inside the current experiment checkpoint directory'
+            'optional compatibility override for reference_memory.npz; when omitted, '
+            'the current experiment checkpoint directory is used'
         ),
     )
     parser.add_argument(
@@ -4939,7 +3287,7 @@ def parse_args():
         action='store_true',
         help=(
             'build the missing reference memory from the current labeled GT split; '
-            'state-aware mode requires this flag when the memory is absent'
+            'native CPS modes require this flag when the memory is absent'
         ),
     )
     parser.add_argument(
@@ -4952,15 +3300,11 @@ def parse_args():
         default=UNI_CONFIG_DEFAULT,
         help='UNI config.json next to the local weight file',
     )
-    parser.add_argument('--uni_k', default=5, type=int)
+    parser.add_argument('--uni_k', default=50, type=int)
     parser.add_argument(
-        '--anti-confirm-q-cdf', dest='anti_confirm_q_cdf', default=None,
-        help='Fixed training-side sorted positive-D npz used by q-CDF anti-confirmation mode.',
-    )
-    parser.add_argument(
-        '--anti-confirm-beta', dest='anti_confirm_beta', default=0.5, type=float,
-        choices=[0.5, 1.0],
-        help='q-CDF risky intervention budget; supported values are exactly 0.5 or 1.0.',
+        '--margin-calibration-records', dest='margin_calibration_records',
+        default=None,
+        help='Optional train-only image-level LOO token records; by default created per task and --uni_k.',
     )
     parser.add_argument(
         '--native-metrics-dir', dest='native_metrics_dir', default=None,
@@ -4970,17 +3314,11 @@ def parse_args():
         '--reference-resolution', '--reference_resolution',
         dest='reference_resolution', type=int, default=None,
         choices=list(SUPPORTED_REFERENCE_RESOLUTIONS),
-        help='Frozen UNI reference input resolution; Native modes default to 256, legacy reference modes to 224.',
+        help='Frozen UNI reference input resolution; native CPS modes default to 256.',
     )
     parser.add_argument(
         '--uni-input-size', dest='uni_input_size', type=int, default=None,
         help='Alias for the frozen UNI reference resolution; native modes require 256.',
-    )
-    parser.add_argument(
-        '--state_aware_log_interval',
-        default=50,
-        type=int,
-        help='write one state-aware iteration row every N optimizer steps; 0 disables it',
     )
     parser.add_argument(
         '--resume', action='store_true',
@@ -4994,6 +3332,12 @@ def parse_args():
     parser.add_argument('-n', '--network', default='unet')
 
     args = parser.parse_args()
+    # The CPS mode is now the single public method selector.  The internal
+    # reference_mode alias keeps the native implementation and metadata
+    # paths normalized without exposing a second CLI selector.
+    args.reference_mode = (
+        'none' if args.cps_mode == 'standard' else args.cps_mode
+    )
     if args.uni_input_size is not None:
         if (
             args.reference_resolution is not None
@@ -5003,96 +3347,43 @@ def parse_args():
         args.reference_resolution = int(args.uni_input_size)
     elif args.reference_resolution is None:
         args.reference_resolution = (
-            256 if args.reference_mode in NATIVE_REFERENCE_MODES
+            256 if args.cps_mode in NATIVE_REFERENCE_MODES
             else DEFAULT_REFERENCE_RESOLUTION
         )
     if args.reference_mode in NATIVE_REFERENCE_MODES:
-        if args.cps_mode != 'standard':
-            parser.error('native reference modes require --cps_mode standard')
         if args.reference_resolution != 256:
             parser.error('native reference modes require --uni-input-size 256')
-        if not (0.0 < args.native_suppress_gamma <= 1.0):
-            parser.error('--native-suppress-gamma must be in (0,1]')
-        if not (0.0 < args.native_hc_thresh <= 1.0):
-            parser.error('--native-hc-thresh must be in (0,1]')
-        if args.lambda_native_ref < 0.0:
-            parser.error('--lambda-native-ref must be non-negative')
-        if args.reference_mode == 'native_qcdf_anti_confirmation':
-            if not args.anti_confirm_q_cdf:
-                parser.error('q-CDF mode requires --anti-confirm-q-cdf')
-    if args.reference_mode == 'pixel_legacy' and args.cps_mode == 'standard':
-        # Explicit selector for the pre-existing UNI reference behavior; no
-        # separate implementation is introduced for the legacy branch.
-        args.cps_mode = 'state_aware'
     if args.milestone_interval < 0:
         parser.error('--milestone_interval must be non-negative')
     if args.best_save_interval < 0:
         parser.error('--best_save_interval must be non-negative')
-    if args.state_aware_log_interval < 0:
-        parser.error('--state_aware_log_interval must be non-negative')
-    if _is_reference_mode(args.cps_mode) or _is_native_reference_mode(args):
+    if _is_native_reference_mode(args):
         args.reference_grid = _reference_grid(args.reference_resolution)
     if args.path_trained_models is None:
-        if args.reference_mode == 'native_suppress':
-            args.path_trained_models = 'checkpoints/native_s_seed{}'.format(args.sd)
-        elif args.reference_mode == 'native_suppress_hc':
-            args.path_trained_models = 'checkpoints/native_sc_seed{}'.format(args.sd)
-        elif args.reference_mode == 'native_suppress_adaptive':
-            args.path_trained_models = 'checkpoints/native_gap_adaptive_s_seed{}'.format(args.sd)
-        elif args.reference_mode == 'native_suppress_d_adaptive':
-            args.path_trained_models = 'checkpoints/native_d_adaptive_s_seed{}'.format(args.sd)
-        elif args.reference_mode == 'native_suppress_d_adaptive_fine':
-            args.path_trained_models = 'checkpoints/native_d_adaptive_fine_seed{}'.format(args.sd)
-        elif args.reference_mode == 'native_suppress_d_adaptive_fine_reverse':
-            args.path_trained_models = 'checkpoints/native_d_adaptive_fine_reverse_seed{}'.format(args.sd)
-        elif args.reference_mode == 'native_qcdf_anti_confirmation':
-            args.path_trained_models = 'checkpoints/qcdf_k50_beta{}_seed{}'.format(
-                str(args.anti_confirm_beta).replace('.', ''), args.sd
-            )
-        elif args.cps_mode == 'state_aware':
-            args.path_trained_models = (
-                'checkpoints/semi_{}_seed_{}_rgbstain_state_aware'.format(
-                    args.labeled_ratio, args.sd
-                )
-            )
-        else:
-            args.path_trained_models = 'checkpoints/semi_fdcl_paper_{}'.format(
-                args.labeled_ratio
-            )
-    if args.cps_mode == 'state_aware' and args.reference_resolution != DEFAULT_REFERENCE_RESOLUTION and '_refR{}'.format(args.reference_resolution) not in str(args.path_trained_models):
-        args.path_trained_models = '{}_refR{}'.format(
-            args.path_trained_models, args.reference_resolution
+        default_checkpoints = {
+            'native_fine_margin_suppression': 'checkpoints/k50_margin_suppression',
+            'native_fine_margin_reverse': 'checkpoints/k50_margin_reverse',
+            'native_fine_margin_calibrated_reverse': 'checkpoints/k50_margin_calibrated_reverse',
+        }
+        args.path_trained_models = default_checkpoints.get(
+            args.reference_mode,
+            'checkpoints/semi_fdcl_paper_{}'.format(args.labeled_ratio),
         )
     if args.path_seg_results is None:
-        if args.reference_mode == 'native_suppress':
-            args.path_seg_results = 'seg_pred/native_s_seed{}'.format(args.sd)
-        elif args.reference_mode == 'native_suppress_hc':
-            args.path_seg_results = 'seg_pred/native_sc_seed{}'.format(args.sd)
-        elif args.reference_mode == 'native_suppress_adaptive':
-            args.path_seg_results = 'seg_pred/native_gap_adaptive_s_seed{}'.format(args.sd)
-        elif args.reference_mode == 'native_suppress_d_adaptive':
-            args.path_seg_results = 'seg_pred/native_d_adaptive_s_seed{}'.format(args.sd)
-        elif args.reference_mode == 'native_suppress_d_adaptive_fine':
-            args.path_seg_results = 'seg_pred/native_d_adaptive_fine_seed{}'.format(args.sd)
-        elif args.reference_mode == 'native_suppress_d_adaptive_fine_reverse':
-            args.path_seg_results = 'seg_pred/native_d_adaptive_fine_reverse_seed{}'.format(args.sd)
-        elif args.reference_mode == 'native_qcdf_anti_confirmation':
-            args.path_seg_results = 'seg_pred/qcdf_k50_beta{}_seed{}'.format(
-                str(args.anti_confirm_beta).replace('.', ''), args.sd
-            )
-        elif args.cps_mode == 'state_aware':
-            args.path_seg_results = (
-                'seg_pred/semi_{}_seed_{}_rgbstain_state_aware'.format(
-                    args.labeled_ratio, args.sd
-                )
-            )
-        else:
-            args.path_seg_results = 'seg_pred/semi_fdcl_paper_{}'.format(
-                args.labeled_ratio
-            )
-    if args.cps_mode == 'state_aware' and args.reference_resolution != DEFAULT_REFERENCE_RESOLUTION and '_refR{}'.format(args.reference_resolution) not in str(args.path_seg_results):
-        args.path_seg_results = '{}_refR{}'.format(
-            args.path_seg_results, args.reference_resolution
+        default_seg_results = {
+            'native_fine_margin_suppression': 'seg_pred/k50_margin_suppression',
+            'native_fine_margin_reverse': 'seg_pred/k50_margin_reverse',
+            'native_fine_margin_calibrated_reverse': 'seg_pred/k50_margin_calibrated_reverse',
+        }
+        args.path_seg_results = default_seg_results.get(
+            args.reference_mode,
+            'seg_pred/semi_fdcl_paper_{}'.format(args.labeled_ratio),
+        )
+    if args.reference_mode in MARGIN_CALIBRATED_MODES and args.margin_calibration_records is None:
+        args.margin_calibration_records = str(
+            Path(args.path_trained_models)
+            / 'margin_calibration_k{}'.format(args.uni_k)
+            / 'selected_k_token_records.csv'
         )
     return args
 
