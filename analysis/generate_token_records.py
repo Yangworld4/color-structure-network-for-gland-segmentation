@@ -80,6 +80,14 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Generate frozen UNI validation token records")
     parser.add_argument("--memory", type=Path, default=DEFAULT_MEMORY)
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
+    parser.add_argument(
+        "--top-k", type=int, default=None,
+        help="Override memory metadata top-K for this diagnostic; does not modify the memory file.",
+    )
+    parser.add_argument(
+        "--include-mixed", action="store_true",
+        help="Write all 16x16 tokens, labeling 0.1<fg_ratio<0.9 as MIXED.",
+    )
     parser.add_argument("--batch-size", type=int, default=2)
     parser.add_argument("--num-workers", type=int, default=4)
     args = parser.parse_args()
@@ -107,12 +115,18 @@ def main() -> None:
         UNI_CONFIG_DEFAULT,
         expected_sha256=EXPECTED_UNI_SHA256,
     )
-    memory_fg, memory_bg, top_k = _load_memory(memory_path)
+    memory_fg, memory_bg, memory_top_k = _load_memory(memory_path)
+    top_k = memory_top_k if args.top_k is None else int(args.top_k)
+    if top_k < 1 or top_k > min(memory_fg.shape[0], memory_bg.shape[0]):
+        raise ValueError(
+            f"top-k={top_k} is invalid for memory sizes "
+            f"FG={memory_fg.shape[0]}, BG={memory_bg.shape[0]}"
+        )
 
     args.output.expanduser().resolve().parent.mkdir(parents=True, exist_ok=True)
     fieldnames = [
         "image_id", "token_row", "token_col", "S_FG", "S_BG", "Delta",
-        "fg_ratio", "gt_class", "purity",
+        "fg_ratio", "gt_class", "purity", "top_k",
     ]
     total_images = 0
     total_records = 0
@@ -147,8 +161,10 @@ def main() -> None:
                                 gt_class = "FG"
                             elif fg_ratio <= 0.10:
                                 gt_class = "BG"
-                            else:
+                            elif not args.include_mixed:
                                 continue
+                            else:
+                                gt_class = "MIXED"
                             s_fg = float(score_fg[image_index, row * 16 + col])
                             s_bg = float(score_bg[image_index, row * 16 + col])
                             writer.writerow({
@@ -161,11 +177,12 @@ def main() -> None:
                                 "fg_ratio": fg_ratio,
                                 "gt_class": gt_class,
                                 "purity": "PURE",
+                                "top_k": top_k,
                             })
                             total_records += 1
                             if gt_class == "FG":
                                 fg_records += 1
-                            else:
+                            elif gt_class == "BG":
                                 bg_records += 1
 
     print("=== Token Record Generation ===")
@@ -174,6 +191,7 @@ def main() -> None:
     print(f"FG records: {fg_records}")
     print(f"BG records: {bg_records}")
     print(f"Memory: {memory_path}")
+    print(f"Top-K used for retrieval: {top_k} (memory metadata: {memory_top_k})")
     print(f"UNI weights: {weights_path}")
     print(f"UNI config: {config_path}")
     print(f"Manifest: {manifest_dir} (use_manifests={use_manifests})")

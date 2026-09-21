@@ -111,6 +111,7 @@ def _load_records(path: Path) -> tuple[list[dict[str, str]], list[str], dict[str
         fields,
         ["fg_ratio", "gt_fg_ratio", "gt_occupancy", "occupancy", "purity"],
     )
+    top_k_field = _first_present(fields, ["top_k", "k", "retrieval_k"])
 
     if fg_field is None or bg_field is None:
         raise ValueError(
@@ -128,6 +129,7 @@ def _load_records(path: Path) -> tuple[list[dict[str, str]], list[str], dict[str
         "s_bg": bg_field,
         "gt_class": class_field or "",
         "gt_ratio": ratio_field or "",
+        "top_k": top_k_field or "",
         "gt_rule": "direct gt class" if class_field else "ratio >= 0.9 FG; <= 0.1 BG; mixed ignored",
     }
     return rows, fields, column_info
@@ -272,6 +274,10 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Plot offline UNI FG/BG memory margin separation")
     parser.add_argument("--input", type=Path, default=None, help="Existing token_records.csv")
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
+    parser.add_argument(
+        "--top-k", type=int, default=None,
+        help="Expected retrieval K recorded in the input CSV.",
+    )
     args = parser.parse_args()
 
     input_path = _find_input(args.input)
@@ -279,6 +285,22 @@ def main() -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
 
     rows, _fields, column_info = _load_records(input_path)
+    detected_top_k = None
+    if column_info["top_k"]:
+        detected = {
+            int(float(str(row[column_info["top_k"]]).strip()))
+            for row in rows
+            if str(row.get(column_info["top_k"], "")).strip()
+        }
+        if len(detected) > 1:
+            raise ValueError(f"Input contains multiple top-k values: {sorted(detected)}")
+        if detected:
+            detected_top_k = next(iter(detected))
+    if args.top_k is not None and detected_top_k is not None and args.top_k != detected_top_k:
+        raise ValueError(
+            f"Requested --top-k={args.top_k}, but input records contain top_k={detected_top_k}"
+        )
+    top_k = args.top_k if args.top_k is not None else detected_top_k
     margins, classes, _pure_flags = _extract_margins(rows, column_info)
     fg_values = margins[classes == 1]
     bg_values = margins[classes == 0]
@@ -325,6 +347,7 @@ def main() -> None:
     summary = {
         "input": str(input_path),
         "output_dir": str(output_dir),
+        "top_k": top_k,
         "total_tokens": int(margins.size),
         "fg_tokens": int(fg_values.size),
         "bg_tokens": int(bg_values.size),
@@ -355,7 +378,9 @@ def main() -> None:
 
     readme = f"""# UNI FG/BG Memory Semantic Separation
 
-Input: `{input_path}`
+    Input: `{input_path}`
+
+Retrieval Top-K: `{top_k if top_k is not None else 'not recorded'}`
 
 The figure uses the existing validation token records and computes `Delta = S_FG - S_BG`.
 No model forward, memory rebuild, training, or CPS modification is performed.
@@ -382,6 +407,7 @@ Outputs:
     (output_dir / "README.md").write_text(readme, encoding="utf-8")
 
     print("=== Memory Semantic Separation ===")
+    print(f"Retrieval Top-K: {top_k if top_k is not None else 'not recorded'}")
     print("Validation tokens:")
     print(f"  Total: {margins.size}")
     print(f"  FG: {fg_values.size}")

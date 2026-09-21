@@ -1,0 +1,135 @@
+{
+  "selection_data": "labeled training data only",
+  "selection_protocol": "image-level leave-one-image-out",
+  "candidate_k": [
+    1,
+    3,
+    5,
+    10,
+    20,
+    50
+  ],
+  "selected_k": 50,
+  "selected_metrics": {
+    "K": 50,
+    "auroc": 0.951921568627451,
+    "balanced_accuracy": 0.8766946778711484,
+    "fg_accuracy": 0.9514285714285714,
+    "bg_accuracy": 0.8019607843137255,
+    "overall_accuracy": 0.8884297520661157,
+    "median_gap": 0.37056946009397507,
+    "standardized_separation": 2.4373445205519584,
+    "image_bacc_mean": 0.8999812279748103,
+    "image_bacc_std": 0.11906433303015763,
+    "image_auroc_mean": 0.959605823644635,
+    "image_auroc_std": 0.0638549037078383
+  },
+  "selection_trace": {
+    "max_auroc": 0.951921568627451,
+    "auroc_pool": [
+      50
+    ],
+    "max_bacc_within_auroc_pool": 0.8766946778711484,
+    "bacc_pool": [
+      50
+    ],
+    "max_median_gap_within_ties": 0.37056946009397507,
+    "final_pool": [
+      50
+    ]
+  },
+  "robust_range": [
+    [
+      1,
+      3
+    ],
+    [
+      3,
+      5
+    ],
+    [
+      5,
+      10
+    ]
+  ],
+  "validity_by_k": {
+    "1": true,
+    "3": true,
+    "5": true,
+    "10": true,
+    "20": true,
+    "50": true
+  },
+  "fold_sizes": [
+    {
+      "image_id": "train_42.png",
+      "fg": 373,
+      "bg": 291
+    },
+    {
+      "image_id": "train_43.png",
+      "fg": 373,
+      "bg": 297
+    },
+    {
+      "image_id": "train_55.png",
+      "fg": 384,
+      "bg": 291
+    },
+    {
+      "image_id": "train_74.png",
+      "fg": 373,
+      "bg": 291
+    },
+    {
+      "image_id": "train_76.png",
+      "fg": 373,
+      "bg": 347
+    },
+    {
+      "image_id": "train_79.png",
+      "fg": 373,
+      "bg": 296
+    },
+    {
+      "image_id": "train_9.png",
+      "fg": 373,
+      "bg": 317
+    }
+  ],
+  "num_labeled_images": 7,
+  "labeled_image_ids": [
+    "train_42.png",
+    "train_43.png",
+    "train_55.png",
+    "train_74.png",
+    "train_76.png",
+    "train_79.png",
+    "train_9.png"
+  ],
+  "query_pure_definition": {
+    "fg": "occupancy >= 0.9",
+    "bg": "occupancy <= 0.1",
+    "mixed": "excluded from semantic calibration"
+  },
+  "memory_selection_policy": {
+    "source_memory": "/data/mission/models/Exp/DUAL/checkpoints/glas_labeled10_seed24/reference_memory_uni256.npz",
+    "fg_count_in_file": 437,
+    "bg_count_in_file": 355,
+    "recreated_fg_count": 437,
+    "recreated_bg_count": 355,
+    "per_image_cap": 64,
+    "seed": 24,
+    "reference_memory_seed": 2026,
+    "fallback_count": {
+      "fg": 0,
+      "bg": 0
+    },
+    "feature_normalization": "UNI dense_patch_tokens and L2-normalized reference features"
+  },
+  "cache_used": false,
+  "memory_path": "/data/mission/models/Exp/DUAL/checkpoints/glas_labeled10_seed24/reference_memory_uni256.npz",
+  "validation_used": false,
+  "test_used": false,
+  "final_recommendation": "Recommended K for all subsequent validation/test/CPS experiments: K = 50"
+}

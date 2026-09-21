@@ -198,6 +198,10 @@ NATIVE_TRAINING_FIELDS = [
     'w_risk_p10', 'w_risk_p50', 'w_risk_p90', 'r_risk_p10',
     'r_risk_p50', 'r_risk_p90', 'mean_w_plus_r', 'reverse_fraction',
     'loss_cps_after_suppression', 'loss_reverse', 'loss_unsup_total',
+    'mean_q_risk', 'q_risk_p10', 'q_risk_p25', 'q_risk_p50',
+    'q_risk_p75', 'q_risk_p90', 'mean_CPS_weight_risk',
+    'mean_opposite_weight_risk', 'risk_budget', 'risk_weight_sum_max_error',
+    'loss_risk_qcdf',
 ]
 
 REFERENCE_CPS_MODES = (
@@ -211,6 +215,7 @@ NATIVE_REFERENCE_MODES = (
     'native_suppress', 'native_suppress_hc', 'native_suppress_adaptive',
     'native_suppress_d_adaptive', 'native_suppress_d_adaptive_fine',
     'native_suppress_d_adaptive_fine_reverse',
+    'native_qcdf_anti_confirmation',
 )
 REFERENCE_MODES = ('none', 'pixel_legacy') + NATIVE_REFERENCE_MODES
 
@@ -939,7 +944,11 @@ def _build_reference_memory(
         memory_bg_count=np.array(memory_bg.shape[0]),
         feature_dim=np.array(feature_dim),
         token_grid=np.array(token_grid),
-        top_k=np.array(5),
+        # Memory construction is independent of retrieval K.  Keep the legacy
+        # key for compatibility, but record the actual retrieval setting too.
+        top_k=np.array(int(args.uni_k)),
+        memory_construction=np.array('class-balanced native UNI token memory'),
+        retrieval_top_k=np.array(int(args.uni_k)),
         anchor_fg=np.array(REFERENCE_MEMORY_ANCHOR_FG),
         anchor_bg=np.array(REFERENCE_MEMORY_ANCHOR_BG),
         memory_per_image_class=np.array(REFERENCE_MEMORY_PER_IMAGE_PER_CLASS),
@@ -1032,7 +1041,8 @@ def _load_reference(args, cfg, logger, manifest_dir=None, use_manifests=False):
     assert memory_bg_np.shape[1] == 1024, memory_bg_np.shape
     assert feature_dim == 1024, feature_dim
     assert token_grid == expected_grid, (token_grid, expected_grid)
-    assert memory_top_k == 5, memory_top_k
+    if memory_top_k < 1:
+        raise RuntimeError('Reference memory metadata top_k must be positive: {}'.format(memory_top_k))
     with np.load(str(memory_path), allow_pickle=False) as memory:
         source_ratio = int(memory['source_labeled_ratio']) if 'source_labeled_ratio' in memory.files else 10
         source_dataset = (
@@ -1048,7 +1058,18 @@ def _load_reference(args, cfg, logger, manifest_dir=None, use_manifests=False):
         )
     assert np.allclose(np.linalg.norm(memory_fg_np, axis=1), 1.0, atol=1e-4)
     assert np.allclose(np.linalg.norm(memory_bg_np, axis=1), 1.0, atol=1e-4)
-    assert args.uni_k == 5, args.uni_k
+    requested_k = int(args.uni_k)
+    max_supported_k = min(memory_fg_count, memory_bg_count)
+    if requested_k < 1:
+        raise ValueError(
+            'Requested --uni_k={} must be a positive integer'.format(requested_k)
+        )
+    if requested_k > max_supported_k:
+        logger.warning(
+            'Requested --uni_k=%d exceeds the smaller reference class (%d); '
+            'Top-K retrieval will use all available references for that class',
+            requested_k, max_supported_k,
+        )
     memory_fg = torch.from_numpy(memory_fg_np).cuda(non_blocking=True)
     memory_bg = torch.from_numpy(memory_bg_np).cuda(non_blocking=True)
     memory_fg_norm_error = float(
@@ -1086,6 +1107,27 @@ def _load_reference(args, cfg, logger, manifest_dir=None, use_manifests=False):
         args.labeled_ratio,
     )
     logger.info('%s UNI implementation=models/uni.py', mode_label)
+    q_cdf_values = None
+    q_cdf_path = None
+    if args.reference_mode == 'native_qcdf_anti_confirmation':
+        q_cdf_path = Path(args.anti_confirm_q_cdf).expanduser().resolve()
+        if not q_cdf_path.is_file():
+            raise FileNotFoundError('q-CDF reference not found: {}'.format(q_cdf_path))
+        with np.load(str(q_cdf_path), allow_pickle=False) as q_reference:
+            if 'sorted_positive_d' not in q_reference.files:
+                raise RuntimeError(
+                    'q-CDF reference must contain sorted_positive_d: {}'.format(q_cdf_path)
+                )
+            q_cdf_np = np.asarray(q_reference['sorted_positive_d'], dtype=np.float32)
+        if q_cdf_np.ndim != 1 or q_cdf_np.size == 0 or not np.all(np.isfinite(q_cdf_np)):
+            raise RuntimeError('Invalid q-CDF reference: {}'.format(q_cdf_path))
+        if np.any(q_cdf_np <= 0) or np.any(q_cdf_np[1:] < q_cdf_np[:-1]):
+            raise RuntimeError('q-CDF reference must be sorted positive D values')
+        q_cdf_values = torch.from_numpy(q_cdf_np).cuda(non_blocking=True)
+        logger.info(
+            '%s q-CDF loaded | path=%s | count=%d | D_min=%.8f | D_max=%.8f',
+            mode_label, q_cdf_path, q_cdf_np.size, float(q_cdf_np[0]), float(q_cdf_np[-1]),
+        )
     return {
         'uni': uni,
         'memory_fg': memory_fg,
@@ -1107,6 +1149,8 @@ def _load_reference(args, cfg, logger, manifest_dir=None, use_manifests=False):
         'memory_build_requested': bool(getattr(args, 'uni_build_reference_memory', False)),
         'memory_build_source': 'labeled_{} GT only'.format(args.labeled_ratio),
         'hard_reference_threshold_used': False,
+        'q_cdf_values': q_cdf_values,
+        'q_cdf_path': str(q_cdf_path) if q_cdf_path is not None else None,
     }
 
 
@@ -1297,7 +1341,11 @@ def _build_native_reference_targets(logits_a, logits_b, rgb_input, context, cfg,
     relative_gap = torch.clamp(
         d_positive / (s_opp.abs() + s_cur.abs() + 1e-6), 0.0, 1.0
     ).detach()
-    if args.reference_mode == 'native_suppress_adaptive':
+    if args.reference_mode == 'native_qcdf_anti_confirmation':
+        # q-CDF mode does not use this legacy token weight for the loss; keep
+        # it neutral so the unchanged fine-risk selector can be reused.
+        weight_token = torch.ones_like(margin).detach()
+    elif args.reference_mode == 'native_suppress_adaptive':
         weight_token = torch.where(
             agreement,
             (1.0 - relative_gap).unsqueeze(1),
@@ -1353,6 +1401,7 @@ def _build_native_reference_targets(logits_a, logits_b, rgb_input, context, cfg,
     if args.reference_mode in (
         'native_suppress_d_adaptive_fine',
         'native_suppress_d_adaptive_fine_reverse',
+        'native_qcdf_anti_confirmation',
     ):
         # Fine-selective mode keeps the exact token contradiction and token
         # weight, but applies it only where the full-resolution students still
@@ -1428,6 +1477,27 @@ def _build_native_reference_targets(logits_a, logits_b, rgb_input, context, cfg,
                 'risk_pixel': risk_pixel.detach(),
                 'd_pixel': d_pixel.detach(),
                 'reverse_weight_pixel': reverse_weight_pixel,
+                'opposite_target_pixel': opposite_target_pixel,
+            })
+        elif args.reference_mode == 'native_qcdf_anti_confirmation':
+            if context.get('q_cdf_values') is None:
+                raise RuntimeError('q-CDF mode has no loaded q_cdf_values')
+            q_values = context['q_cdf_values']
+            q_token = torch.searchsorted(
+                q_values, d_positive.reshape(-1), right=True
+            ).to(d_positive.dtype).reshape_as(d_positive) / float(q_values.numel())
+            q_token = q_token.clamp(0.0, 1.0).detach()
+            q_pixel = F.interpolate(
+                q_token.unsqueeze(1), size=prob_a.shape[-2:], mode='nearest'
+            ).detach()
+            opposite_target_pixel = (~consensus_pixel).float().detach()
+            fine_stats.update({
+                'risk_pixel': risk_pixel.detach(),
+                'd_pixel': F.interpolate(
+                    d_positive.detach().unsqueeze(1),
+                    size=prob_a.shape[-2:], mode='nearest',
+                ).detach(),
+                'q_pixel': q_pixel,
                 'opposite_target_pixel': opposite_target_pixel,
             })
     return {
@@ -1536,6 +1606,73 @@ def compute_native_fine_reverse_cps_losses(
         'raw_2_to_1': raw_2_to_1,
         'cps_after_suppression': cps_after_suppression,
         'reverse_total': reverse_total,
+    }
+
+
+def compute_native_qcdf_anti_confirmation_losses(
+    ce_none,
+    prediction1,
+    prediction2,
+    pseudo1,
+    pseudo2,
+    risk_pixel,
+    q_pixel,
+    opposite_target_pixel,
+    beta,
+):
+    """q-CDF directional mixture with a fixed risky intervention budget.
+
+    Non-risk pixels retain standard CPS.  On the exact fine-selective risk
+    mask, current CPS and detached opposite-target CE are mixed by q and then
+    multiplied by beta.  The reduction remains the full-image CPS reduction,
+    so beta=1 is redistribution only and beta=0.5 is redistribution plus
+    overall risky-gradient suppression.
+    """
+    if getattr(ce_none, 'reduction', None) != 'none':
+        raise AssertionError('q-CDF mode requires reduction=none CE')
+    if float(beta) not in (0.5, 1.0):
+        raise AssertionError('q-CDF beta must be 0.5 or 1.0')
+    if risk_pixel.shape != pseudo1.shape or q_pixel.shape != pseudo1.shape:
+        raise AssertionError('q-CDF pixel tensors must match pseudo-label shape')
+    if opposite_target_pixel.shape != pseudo1.shape:
+        raise AssertionError('q-CDF opposite target shape mismatch')
+    valid1 = pseudo1.ne(ce_none.ignore_index)
+    valid2 = pseudo2.ne(ce_none.ignore_index)
+    if not valid1.any().item() or not valid2.any().item():
+        raise AssertionError('q-CDF mode received no valid pseudo-label pixels')
+    if not torch.all((q_pixel >= 0.0) & (q_pixel <= 1.0)).item():
+        raise AssertionError('q-CDF q escaped [0,1]')
+    current_a = ce_none(prediction1, pseudo2)
+    current_b = ce_none(prediction2, pseudo1)
+    opposite_target = opposite_target_pixel.long().detach()
+    opposite_a = ce_none(prediction1, opposite_target)
+    opposite_b = ce_none(prediction2, opposite_target)
+    mix_a = (1.0 - q_pixel) * current_a + q_pixel * opposite_a
+    mix_b = (1.0 - q_pixel) * current_b + q_pixel * opposite_b
+    effective_a = torch.where(risk_pixel, float(beta) * mix_a, current_a)
+    effective_b = torch.where(risk_pixel, float(beta) * mix_b, current_b)
+    loss_a_to_b = 0.5 * effective_a[valid1].mean()
+    loss_b_to_a = 0.5 * effective_b[valid2].mean()
+    raw_a = 0.5 * current_a[valid1].mean()
+    raw_b = 0.5 * current_b[valid2].mean()
+    mix_risk = 0.5 * (mix_a[risk_pixel].mean() + mix_b[risk_pixel].mean()) if risk_pixel.any().item() else prediction1.sum() * 0.0
+    risk_loss = float(beta) * mix_risk
+    total = loss_a_to_b + loss_b_to_a
+    if not torch.isfinite(total).item():
+        raise FloatingPointError('q-CDF Anti-Confirmation CPS loss contains NaN/Inf')
+    return {
+        '1_to_2': loss_a_to_b,
+        '2_to_1': loss_b_to_a,
+        'total': total,
+        'raw_total': raw_a + raw_b,
+        'raw_1_to_2': raw_a,
+        'raw_2_to_1': raw_b,
+        'risk_loss': risk_loss,
+        'risk_mix': mix_risk,
+        'q_risk': q_pixel[risk_pixel].detach(),
+        'risk_pixel_count': risk_pixel.sum().detach(),
+        'cps_weight_risk': (float(beta) * (1.0 - q_pixel))[risk_pixel].detach(),
+        'opposite_weight_risk': (float(beta) * q_pixel)[risk_pixel].detach(),
     }
 
 
@@ -1832,8 +1969,10 @@ def _run_native_startup_checks(args, context, models, optimizers):
         raise AssertionError('Native modes must retain standard CPS')
     if context['reference_resolution'] != 256 or context['token_grid'] != 16:
         raise AssertionError('Native UNI geometry must be 256/16x16')
-    if context['feature_dim'] != 1024 or context['memory_top_k'] != 5:
-        raise AssertionError('Unexpected native UNI feature/K configuration')
+    if context['feature_dim'] != 1024:
+        raise AssertionError('Unexpected native UNI feature configuration')
+    if args.uni_k < 1:
+        raise AssertionError('Requested native UNI Top-K must be positive')
     if any(parameter.requires_grad for parameter in context['uni'].parameters()):
         raise AssertionError('UNI parameters are trainable')
     optimizer_ids = {
@@ -1876,6 +2015,17 @@ def _run_native_startup_checks(args, context, models, optimizers):
         print('Reverse target:       opposite token consensus')
         print('Pixel selection:      token contradiction AND pixel agreement AND pixel consensus=token consensus')
         print('CDF:                  disabled')
+        print('Running buffer:       disabled')
+        print('Extra hyperparameters: none')
+    if args.reference_mode == 'native_qcdf_anti_confirmation':
+        print('Reference mode:       native_qcdf_anti_confirmation')
+        print('Adaptive strategy:    q-CDF Anti-Confirmation fine-selective mixture')
+        print('Weight formula:       beta*(1-q) CPS + beta*q opposite on risky pixels')
+        print('Opposite target:      1 - detached token consensus')
+        print('Pixel selection:      token contradiction AND pixel agreement AND pixel consensus=token consensus')
+        print('CDF:                  fixed training-side empirical CDF')
+        print('CDF path:             {}'.format(args.anti_confirm_q_cdf))
+        print('Beta:                 {:.1f}'.format(args.anti_confirm_beta))
         print('Running buffer:       disabled')
         print('Extra hyperparameters: none')
 
@@ -1993,8 +2143,10 @@ def _run_state_aware_startup_checks(args, cfg, context, models, optimizers, loss
         raise AssertionError('State-aware UNI SHA256 mismatch')
     if context['memory_fg_count'] <= 0 or context['memory_bg_count'] <= 0:
         raise AssertionError('State-aware reference memory is empty')
-    if (context['feature_dim'], context['token_grid'], context['memory_top_k'], args.uni_k) != (1024, _reference_grid(args.reference_resolution), 5, 5):
-        raise AssertionError('State-aware reference geometry/K mismatch')
+    if (context['feature_dim'], context['token_grid']) != (1024, _reference_grid(args.reference_resolution)):
+        raise AssertionError('State-aware reference geometry mismatch')
+    if args.uni_k < 1:
+        raise AssertionError('Requested state-aware UNI Top-K must be positive')
     if max(context['memory_fg_norm_error'], context['memory_bg_norm_error']) > 1e-4:
         raise AssertionError('State-aware reference memory is not L2 normalized')
     if context['hard_reference_threshold_used']:
@@ -2105,6 +2257,8 @@ def train_one_epoch(
             'sum_reverse_loss': 0.0,
             'sum_cps_after_suppression': 0.0,
             'sum_unsup_total': 0.0,
+            'q_values': [], 'q_cps_weights': [], 'q_opp_weights': [],
+            'q_weight_sum_errors': [], 'q_risk_loss': 0.0,
         }
     mask_list = None
 
@@ -2205,7 +2359,17 @@ def train_one_epoch(
                     reference_targets['weight_token'],
                     size=unsup_prediction1.shape[-2:], mode='nearest',
                 )
-            if args.reference_mode == 'native_suppress_d_adaptive_fine_reverse':
+            if args.reference_mode == 'native_qcdf_anti_confirmation':
+                fine_stats = reference_targets['fine_stats']
+                native_cps = compute_native_qcdf_anti_confirmation_losses(
+                    losses['ce_none'], unsup_prediction1, unsup_prediction2,
+                    pseudo_a, pseudo_b,
+                    fine_stats['risk_pixel'][:, 0],
+                    fine_stats['q_pixel'][:, 0],
+                    fine_stats['opposite_target_pixel'][:, 0],
+                    args.anti_confirm_beta,
+                )
+            elif args.reference_mode == 'native_suppress_d_adaptive_fine_reverse':
                 fine_stats = reference_targets['fine_stats']
                 native_cps = compute_native_fine_reverse_cps_losses(
                     losses['ce_none'], unsup_prediction1, unsup_prediction2,
@@ -2295,6 +2459,7 @@ def train_one_epoch(
             if args.reference_mode in (
                 'native_suppress_d_adaptive_fine',
                 'native_suppress_d_adaptive_fine_reverse',
+                'native_qcdf_anti_confirmation',
             ):
                 fine_stats = reference_targets['fine_stats']
                 native_totals['regionwise_candidate_pixels'] += float(
@@ -2330,6 +2495,22 @@ def train_one_epoch(
                         native_totals['risk_w_values'].extend(w_px.detach().cpu().tolist())
                         native_totals['risk_r_values'].extend(r_px.detach().cpu().tolist())
                         native_totals['risk_w_plus_r_values'].extend((w_px + r_px).detach().cpu().tolist())
+                elif args.reference_mode == 'native_qcdf_anti_confirmation':
+                    risk = fine_stats['risk_pixel'][:, 0]
+                    risk_count = float(risk.sum().item())
+                    native_totals['risk_pixels'] += risk_count
+                    native_totals['risk_all_pixel_count'] += float(risk.numel())
+                    if risk.any().item():
+                        q_px = fine_stats['q_pixel'][:, 0][risk]
+                        w_px = native_cps['cps_weight_risk']
+                        r_px = native_cps['opposite_weight_risk']
+                        native_totals['q_values'].extend(q_px.detach().cpu().tolist())
+                        native_totals['q_cps_weights'].extend(w_px.detach().cpu().tolist())
+                        native_totals['q_opp_weights'].extend(r_px.detach().cpu().tolist())
+                        native_totals['q_weight_sum_errors'].extend(
+                            (w_px + r_px - float(args.anti_confirm_beta)).detach().cpu().abs().tolist()
+                        )
+                        native_totals['q_risk_loss'] += float(native_cps['risk_loss'].detach().item())
             if hc.any().item():
                 native_totals['sum_p_a_hc'] += float(reference_targets['p_a_token'][hc.unsqueeze(1)].sum().item())
                 native_totals['sum_p_b_hc'] += float(reference_targets['p_b_token'][hc.unsqueeze(1)].sum().item())
@@ -3435,6 +3616,17 @@ def _native_checkpoint_metadata(args, context, best_val_eval_lists, best_epochs)
             'native_reverse_target': 'opposite of detached token consensus',
             'native_fine_weight_expansion': 'nearest token weight, selected risk pixels only; all other pixels weight 1',
         })
+    if args.reference_mode == 'native_qcdf_anti_confirmation':
+        metadata.update({
+            'anti_confirmation_formula': 'L_risk=beta*((1-q)*L_CPS+q*L_opp) on unchanged fine-selective risky pixels; standard CPS elsewhere',
+            'anti_confirmation_beta': float(args.anti_confirm_beta),
+            'anti_confirmation_q_definition': 'q=F_train(D), D=S_opp-S_cur, positive-D training-side empirical CDF fixed before training',
+            'anti_confirmation_q_cdf_path': context.get('q_cdf_path'),
+            'anti_confirmation_opposite_target': '1-detached CPS consensus class; UNI provides no pixel pseudo-label',
+            'native_fine_pixel_selection': 'token contradiction AND pixel student agreement AND pixel consensus equals token consensus',
+            'native_fine_weight_expansion': 'q and beta applied only on selected risky pixels; all other pixels standard CPS',
+            'native_qcdf_validation_or_test_calibration': False,
+        })
     return metadata
 
 
@@ -3602,12 +3794,12 @@ def train_model(
             'native_suppress_gamma': args.native_suppress_gamma,
             'native_hc_thresh': args.native_hc_thresh,
             'lambda_native_ref': args.lambda_native_ref,
-            'adaptive_strategy': ('direct_relative_semantic_gap' if args.reference_mode == 'native_suppress_adaptive' else 'fine_selective_D_suppression_plus_opposite_correction' if args.reference_mode == 'native_suppress_d_adaptive_fine_reverse' else 'direct_D_extra_suppression_fine_selective' if args.reference_mode == 'native_suppress_d_adaptive_fine' else 'direct_D_extra_suppression' if args.reference_mode == 'native_suppress_d_adaptive' else 'fixed_contradiction_suppression'),
-            'cdf': 'disabled' if args.reference_mode in ('native_suppress_adaptive', 'native_suppress_d_adaptive', 'native_suppress_d_adaptive_fine', 'native_suppress_d_adaptive_fine_reverse') else 'not_applicable',
+            'adaptive_strategy': ('q_cdf_directional_mixture_with_beta_budget' if args.reference_mode == 'native_qcdf_anti_confirmation' else 'direct_relative_semantic_gap' if args.reference_mode == 'native_suppress_adaptive' else 'fine_selective_D_suppression_plus_opposite_correction' if args.reference_mode == 'native_suppress_d_adaptive_fine_reverse' else 'direct_D_extra_suppression_fine_selective' if args.reference_mode == 'native_suppress_d_adaptive_fine' else 'direct_D_extra_suppression' if args.reference_mode == 'native_suppress_d_adaptive' else 'fixed_contradiction_suppression'),
+            'cdf': 'fixed training-side empirical CDF; beta={}'.format(args.anti_confirm_beta) if args.reference_mode == 'native_qcdf_anti_confirmation' else 'disabled' if args.reference_mode in ('native_suppress_adaptive', 'native_suppress_d_adaptive', 'native_suppress_d_adaptive_fine', 'native_suppress_d_adaptive_fine_reverse') else 'not_applicable',
             'running_buffer': 'disabled' if args.reference_mode in ('native_suppress_adaptive', 'native_suppress_d_adaptive', 'native_suppress_d_adaptive_fine', 'native_suppress_d_adaptive_fine_reverse') else 'not_applicable',
-            'd_adaptive_formula': 'w=max(0,0.5-D); r=min(D,0.5) on fine risky pixels' if args.reference_mode == 'native_suppress_d_adaptive_fine_reverse' else 'w=1 if disagreement or D<=0 else max(0,0.5-D)' if args.reference_mode in ('native_suppress_d_adaptive', 'native_suppress_d_adaptive_fine') else 'not_applicable',
-            'pixel_selection': 'token contradiction AND pixel student agreement AND pixel consensus equals token consensus' if args.reference_mode in ('native_suppress_d_adaptive_fine', 'native_suppress_d_adaptive_fine_reverse') else 'not_applicable',
-            'reverse_target': 'opposite detached token consensus; only on fine risky pixels' if args.reference_mode == 'native_suppress_d_adaptive_fine_reverse' else 'disabled',
+            'd_adaptive_formula': 'q=F_train(D); w_cps=beta*(1-q); w_opp=beta*q on fine risky pixels; beta={}'.format(args.anti_confirm_beta) if args.reference_mode == 'native_qcdf_anti_confirmation' else 'w=max(0,0.5-D); r=min(D,0.5) on fine risky pixels' if args.reference_mode == 'native_suppress_d_adaptive_fine_reverse' else 'w=1 if disagreement or D<=0 else max(0,0.5-D)' if args.reference_mode in ('native_suppress_d_adaptive', 'native_suppress_d_adaptive_fine') else 'not_applicable',
+            'pixel_selection': 'token contradiction AND pixel student agreement AND pixel consensus equals token consensus' if args.reference_mode in ('native_suppress_d_adaptive_fine', 'native_suppress_d_adaptive_fine_reverse', 'native_qcdf_anti_confirmation') else 'not_applicable',
+            'reverse_target': 'opposite detached token consensus; q-CDF mixture only on fine risky pixels' if args.reference_mode == 'native_qcdf_anti_confirmation' else 'opposite detached token consensus; only on fine risky pixels' if args.reference_mode == 'native_suppress_d_adaptive_fine_reverse' else 'disabled',
             'contradiction_gate': 'detach pooled pA/pB; agreement and UNI margin sign only; no GT',
             'loss_weight_expansion': 'nearest 16x16 -> student pixel resolution',
             'hc_correction': (
@@ -3627,6 +3819,7 @@ def train_model(
                     'native_suppress_d_adaptive': 'native_d_adaptive_s',
                     'native_suppress_d_adaptive_fine': 'native_d_adaptive_fine_s',
                     'native_suppress_d_adaptive_fine_reverse': 'native_d_adaptive_fine_reverse_s',
+                    'native_qcdf_anti_confirmation': 'native_qcdf_anti_confirmation_s',
                 }[args.reference_mode]
             )).write_text(json.dumps(native_config, indent=2, ensure_ascii=False), encoding='utf-8')
     reference_context = None
@@ -3828,7 +4021,11 @@ def train_model(
                 if not args.resume:
                     state_iter_writer.writeheader()
         if _is_native_reference_mode(args):
-            native_root = Path('outputs/native_scale_training')
+            native_root = Path(
+                args.native_metrics_dir
+                if getattr(args, 'native_metrics_dir', None)
+                else 'outputs/native_scale_training'
+            )
             native_root.mkdir(parents=True, exist_ok=True)
             mode_tag = {
                 'native_suppress': 'native_s',
@@ -3837,6 +4034,7 @@ def train_model(
                 'native_suppress_d_adaptive': 'native_d_adaptive_s',
                 'native_suppress_d_adaptive_fine': 'native_d_adaptive_fine_s',
                 'native_suppress_d_adaptive_fine_reverse': 'native_d_adaptive_fine_reverse_s',
+                'native_qcdf_anti_confirmation': 'native_qcdf_anti_confirmation_s',
             }[args.reference_mode]
             native_training_file = stack.enter_context(open(
                 native_root / 'training_{}.csv'.format(mode_tag),
@@ -4426,6 +4624,31 @@ def train_model(
                         'loss_reverse': _safe_mean(native['sum_reverse_loss'], native['batches']),
                         'loss_unsup_total': _safe_mean(native['sum_unsup_total'], native['batches']),
                     })
+                if args.reference_mode == 'native_qcdf_anti_confirmation':
+                    q_risk = np.asarray(native['q_values'], dtype=np.float64)
+                    q_cps = np.asarray(native['q_cps_weights'], dtype=np.float64)
+                    q_opp = np.asarray(native['q_opp_weights'], dtype=np.float64)
+                    q_errors = np.asarray(native['q_weight_sum_errors'], dtype=np.float64)
+                    if q_risk.size:
+                        if not np.isfinite(q_risk).all() or not np.all((q_risk >= 0.0) & (q_risk <= 1.0)):
+                            raise AssertionError('q-CDF risk values escaped [0,1]')
+                        if q_errors.size and float(q_errors.max()) >= 1e-6:
+                            raise AssertionError('q-CDF risky budget sum is not exact')
+                        adaptive_stats.update({
+                            'num_risk_pixels': int(native['risk_pixels']),
+                            'risk_pixel_fraction': _safe_mean(native['risk_pixels'], native['risk_all_pixel_count']),
+                            'mean_q_risk': float(q_risk.mean()),
+                            'q_risk_p10': float(np.percentile(q_risk, 10)),
+                            'q_risk_p25': float(np.percentile(q_risk, 25)),
+                            'q_risk_p50': float(np.percentile(q_risk, 50)),
+                            'q_risk_p75': float(np.percentile(q_risk, 75)),
+                            'q_risk_p90': float(np.percentile(q_risk, 90)),
+                            'mean_CPS_weight_risk': float(q_cps.mean()),
+                            'mean_opposite_weight_risk': float(q_opp.mean()),
+                            'risk_budget': float(args.anti_confirm_beta),
+                            'risk_weight_sum_max_error': float(q_errors.max()) if q_errors.size else 0.0,
+                            'loss_risk_qcdf': _safe_mean(native['q_risk_loss'], native['batches']),
+                        })
                 native_training_writer.writerow({
                     'experiment': args.reference_mode,
                     'epoch': epoch + 1,
@@ -4731,6 +4954,19 @@ def parse_args():
     )
     parser.add_argument('--uni_k', default=5, type=int)
     parser.add_argument(
+        '--anti-confirm-q-cdf', dest='anti_confirm_q_cdf', default=None,
+        help='Fixed training-side sorted positive-D npz used by q-CDF anti-confirmation mode.',
+    )
+    parser.add_argument(
+        '--anti-confirm-beta', dest='anti_confirm_beta', default=0.5, type=float,
+        choices=[0.5, 1.0],
+        help='q-CDF risky intervention budget; supported values are exactly 0.5 or 1.0.',
+    )
+    parser.add_argument(
+        '--native-metrics-dir', dest='native_metrics_dir', default=None,
+        help='Optional run-local directory for native training/validation mechanism CSVs.',
+    )
+    parser.add_argument(
         '--reference-resolution', '--reference_resolution',
         dest='reference_resolution', type=int, default=None,
         choices=list(SUPPORTED_REFERENCE_RESOLUTIONS),
@@ -4781,6 +5017,9 @@ def parse_args():
             parser.error('--native-hc-thresh must be in (0,1]')
         if args.lambda_native_ref < 0.0:
             parser.error('--lambda-native-ref must be non-negative')
+        if args.reference_mode == 'native_qcdf_anti_confirmation':
+            if not args.anti_confirm_q_cdf:
+                parser.error('q-CDF mode requires --anti-confirm-q-cdf')
     if args.reference_mode == 'pixel_legacy' and args.cps_mode == 'standard':
         # Explicit selector for the pre-existing UNI reference behavior; no
         # separate implementation is introduced for the legacy branch.
@@ -4792,8 +5031,6 @@ def parse_args():
     if args.state_aware_log_interval < 0:
         parser.error('--state_aware_log_interval must be non-negative')
     if _is_reference_mode(args.cps_mode) or _is_native_reference_mode(args):
-        if args.uni_k != 5:
-            parser.error('--uni_k must remain 5 for UNI reference modes')
         args.reference_grid = _reference_grid(args.reference_resolution)
     if args.path_trained_models is None:
         if args.reference_mode == 'native_suppress':
@@ -4808,6 +5045,10 @@ def parse_args():
             args.path_trained_models = 'checkpoints/native_d_adaptive_fine_seed{}'.format(args.sd)
         elif args.reference_mode == 'native_suppress_d_adaptive_fine_reverse':
             args.path_trained_models = 'checkpoints/native_d_adaptive_fine_reverse_seed{}'.format(args.sd)
+        elif args.reference_mode == 'native_qcdf_anti_confirmation':
+            args.path_trained_models = 'checkpoints/qcdf_k50_beta{}_seed{}'.format(
+                str(args.anti_confirm_beta).replace('.', ''), args.sd
+            )
         elif args.cps_mode == 'state_aware':
             args.path_trained_models = (
                 'checkpoints/semi_{}_seed_{}_rgbstain_state_aware'.format(
@@ -4835,6 +5076,10 @@ def parse_args():
             args.path_seg_results = 'seg_pred/native_d_adaptive_fine_seed{}'.format(args.sd)
         elif args.reference_mode == 'native_suppress_d_adaptive_fine_reverse':
             args.path_seg_results = 'seg_pred/native_d_adaptive_fine_reverse_seed{}'.format(args.sd)
+        elif args.reference_mode == 'native_qcdf_anti_confirmation':
+            args.path_seg_results = 'seg_pred/qcdf_k50_beta{}_seed{}'.format(
+                str(args.anti_confirm_beta).replace('.', ''), args.sd
+            )
         elif args.cps_mode == 'state_aware':
             args.path_seg_results = (
                 'seg_pred/semi_{}_seed_{}_rgbstain_state_aware'.format(

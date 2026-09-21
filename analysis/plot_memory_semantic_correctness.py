@@ -14,8 +14,8 @@ import numpy as np
 
 
 ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_INPUT = ROOT / "outputs/native_scale_reference/glas_standard_cps_uni256/token_records.csv"
-DEFAULT_OUTPUT = ROOT / "outputs/memory_semantic_correctness"
+DEFAULT_INPUT = ROOT / "outputs/native_scale_reference/glas_standard_cps_uni256/token_records_k50.csv"
+DEFAULT_OUTPUT = ROOT / "outputs/memory_semantic_correctness_k50"
 
 
 def _field(fields, names):
