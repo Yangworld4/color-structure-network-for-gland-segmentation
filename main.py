@@ -135,11 +135,15 @@ def _get_rgb_view(batch: Mapping[str, torch.Tensor]) -> torch.Tensor:
 
 
 def compute_supervised_loss(
+    ce_loss,
     dice_loss,
     prediction: torch.Tensor,
     target: torch.Tensor,
 ) -> torch.Tensor:
-    return dice_loss(prediction, target)
+    return 0.5 * (
+        ce_loss(prediction, target.long())
+        + dice_loss(prediction, target)
+    )
 
 def _pixel_entropy(scores: torch.Tensor) -> torch.Tensor:
     probabilities = torch.softmax(scores.detach(), dim=1).clamp_min(1e-8)
@@ -827,11 +831,13 @@ def train_one_epoch(
             mask_list = torch.cat((mask_list, sup_mask.detach()), dim=0)
 
         supervised_loss1 = compute_supervised_loss(
+            losses['ce'],
             losses['dice'],
             sup_prediction1,
             sup_mask,
         )
         supervised_loss2 = compute_supervised_loss(
+            losses['ce'],
             losses['dice'],
             sup_prediction2,
             sup_mask,
@@ -1038,11 +1044,13 @@ def validate(models, losses, dataloader):
             output2 = model2(input2)[0]
             names.extend(batch['ID'])
             loss1 += compute_supervised_loss(
+                losses['ce'],
                 losses['dice'],
                 output1,
                 mask,
             ).item()
             loss2 += compute_supervised_loss(
+                losses['ce'],
                 losses['dice'],
                 output2,
                 mask,
