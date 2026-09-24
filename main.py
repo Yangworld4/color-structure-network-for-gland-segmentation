@@ -4,7 +4,6 @@ from contextlib import ExitStack, redirect_stdout
 from collections import defaultdict
 import io
 import json
-import math
 import os
 import random
 import sys
@@ -13,7 +12,6 @@ from pathlib import Path
 from typing import Dict, Mapping, Optional, Tuple
 from warnings import simplefilter
 
-from utils.ramps import sigmoid_rampup
 import numpy as np
 import torch
 import torch.nn.functional as F
@@ -51,7 +49,6 @@ from utils.training_diagnostics import (
     foreground_probability as _foreground_probability,
     init_diagnostic_totals as _init_diagnostic_totals,
     init_motivation_totals as _init_motivation_totals,
-    linear_cka as _linear_cka,
     log_diagnostics,
     select_feature_module as _select_feature_module,
     update_diagnostic_totals as _update_diagnostic_totals,
@@ -138,19 +135,11 @@ def _get_rgb_view(batch: Mapping[str, torch.Tensor]) -> torch.Tensor:
 
 
 def compute_supervised_loss(
-    ce_loss,
     dice_loss,
     prediction: torch.Tensor,
     target: torch.Tensor,
 ) -> torch.Tensor:
-    # return 0.5 * (
-    #     ce_loss(prediction, target.long())
-    #     + dice_loss(prediction, target)
-    # )
     return dice_loss(prediction, target)
-        
-    
-
 
 def _pixel_entropy(scores: torch.Tensor) -> torch.Tensor:
     probabilities = torch.softmax(scores.detach(), dim=1).clamp_min(1e-8)
@@ -171,52 +160,6 @@ def compute_standard_cps_losses(
         pseudo2 = prediction2.detach().argmax(dim=1)
     loss_1_to_2 = 0.5 * ce_loss(prediction2, pseudo1)
     loss_2_to_1 = 0.5 * ce_loss(prediction1, pseudo2)
-    return {
-        '1_to_2': loss_1_to_2,
-        '2_to_1': loss_2_to_1,
-        'total': loss_1_to_2 + loss_2_to_1}
-
-
-def compute_entropy_routed_cps_losses(
-    ce_loss,
-    prediction1: torch.Tensor,
-    prediction2: torch.Tensor,
-) -> Dict[str, torch.Tensor]:
-    """Compute CPS with entropy routing on pixel-level disagreements.
-
-    Agreement pixels keep the vanilla bidirectional CPS loss. On a
-    disagreement pixel, only the lower-entropy branch supervises the other
-    branch; the selected teacher never receives a self-supervision loss.
-    """
-    detached1 = prediction1.detach()
-    detached2 = prediction2.detach()
-    pseudo1 = detached1.argmax(dim=1)
-    pseudo2 = detached2.argmax(dim=1)
-
-    entropy1 = _pixel_entropy(detached1)
-    entropy2 = _pixel_entropy(detached2)
-
-    disagreement = pseudo1.ne(pseudo2)
-    # Ties are assigned to branch 1 for deterministic, mutually exclusive
-    # routing on disagreement pixels.
-    branch1_is_stable = entropy1.le(entropy2)
-    route_1_to_2 = (~disagreement) | branch1_is_stable
-    route_2_to_1 = (~disagreement) | (~branch1_is_stable)
-
-    def masked_ce(prediction, target, route):
-        per_pixel = F.cross_entropy(
-            prediction,
-            target,
-            weight=ce_loss.weight,
-            ignore_index=ce_loss.ignore_index,
-            reduction='none',
-        )
-        if route.sum().item() == 0:
-            return prediction.sum() * 0.0
-        return per_pixel[route].mean()
-
-    loss_1_to_2 = 0.5 * masked_ce(prediction2, pseudo1, route_1_to_2)
-    loss_2_to_1 = 0.5 * masked_ce(prediction1, pseudo2, route_2_to_1)
     return {
         '1_to_2': loss_1_to_2,
         '2_to_1': loss_2_to_1,
@@ -791,22 +734,6 @@ def _run_native_startup_checks(args, context, models, optimizers):
         print('tau:                  {:.8f}'.format(float(calibration['tau'])))
         print('Old CDF/bootstrap:    disabled')
         print('Extra hyperparameters: none')
-def _run_direct_gap_numerical_checks():
-    """Batch-level algebra checks; no model forward or training is run."""
-    s_cur = torch.tensor([0.2, 0.2, 0.6, 0.0], device='cuda')
-    s_opp = torch.tensor([0.1, 0.8, 0.6, 0.0], device='cuda')
-    gap = torch.clamp(torch.maximum(s_opp - s_cur, torch.zeros_like(s_cur)) / (s_opp.abs() + s_cur.abs() + 1e-6), 0.0, 1.0)
-    weight = (1.0 - gap).detach()
-    assert torch.allclose(weight, 1.0 - gap, atol=0.0, rtol=0.0)
-    assert weight[0].item() == 1.0
-    assert gap[2].item() == 0.0 and weight[2].item() == 1.0
-    assert gap[1].item() > gap[0].item() and weight[1].item() < weight[0].item()
-    assert torch.isfinite(gap).all().item() and torch.isfinite(weight).all().item()
-    assert gap.min().item() >= 0.0 and gap.max().item() <= 1.0
-    assert weight.min().item() >= 0.0 and weight.max().item() <= 1.0
-    assert not weight.requires_grad
-    print('Direct gap numerical checks: PASS')
-
 def train_one_epoch(
     args,
     epoch,
@@ -832,7 +759,6 @@ def train_one_epoch(
     supervised_batches = iter(dataloaders['train_sup'])
     unsupervised_batches = iter(dataloaders['train_unsup'])
     num_train_batches = len(dataloaders['train_sup'])
-    pbar = range(num_train_batches)
     score_list1 = None
     score_list2 = None
     native_totals = None
@@ -901,13 +827,11 @@ def train_one_epoch(
             mask_list = torch.cat((mask_list, sup_mask.detach()), dim=0)
 
         supervised_loss1 = compute_supervised_loss(
-            losses['ce'],
             losses['dice'],
             sup_prediction1,
             sup_mask,
         )
         supervised_loss2 = compute_supervised_loss(
-            losses['ce'],
             losses['dice'],
             sup_prediction2,
             sup_mask,
@@ -935,10 +859,6 @@ def train_one_epoch(
             )
             pseudo_a = unsup_prediction1.detach().argmax(dim=1)
             pseudo_b = unsup_prediction2.detach().argmax(dim=1)
-            original_cps_losses = compute_standard_cps_losses(
-                losses['ce'], unsup_prediction1, unsup_prediction2,
-                pseudo_a, pseudo_b,
-            )
             fine_stats = reference_targets['fine_stats']
             native_cps = compute_native_margin_calibrated_anti_confirmation_losses(
                 losses['ce_none'], unsup_prediction1, unsup_prediction2,
@@ -960,7 +880,6 @@ def train_one_epoch(
                 unsup_prediction2,
                 cps_mode='standard',
             )
-            original_cps_losses = cps_losses
         unsup_loss = cps_losses['total']
 
         model1_loss = (
@@ -1119,13 +1038,11 @@ def validate(models, losses, dataloader):
             output2 = model2(input2)[0]
             names.extend(batch['ID'])
             loss1 += compute_supervised_loss(
-                losses['ce'],
                 losses['dice'],
                 output1,
                 mask,
             ).item()
             loss2 += compute_supervised_loss(
-                losses['ce'],
                 losses['dice'],
                 output2,
                 mask,
@@ -1186,20 +1103,6 @@ def _hard_overlap(prediction: torch.Tensor, target: torch.Tensor) -> Dict[str, f
         ),
         'accuracy': float(prediction.eq(target).float().mean().item()),
     }
-
-def _fixed05_segmentation_metrics(logits, masks):
-    probability = torch.softmax(logits.detach(), dim=1)[:, 1]
-    prediction = probability.ge(0.5)
-    target = masks.eq(1)
-    intersection = int((prediction & target).sum().item())
-    union = int((prediction | target).sum().item())
-    pred_area = int(prediction.sum().item())
-    target_area = int(target.sum().item())
-    return {
-        'jaccard': _safe_mean(intersection, union),
-        'dice': _safe_mean(2 * intersection, pred_area + target_area),
-    }
-
 
 def _collect_epoch_metrics(
     epoch,
@@ -1454,22 +1357,6 @@ def _model_state_snapshot(model):
     return {
         name: value.detach().cpu().clone()
         for name, value in model.state_dict().items()
-    }
-
-
-def _binary_metrics_at_threshold(logits, masks, threshold, inclusive=False):
-    probability = torch.softmax(logits.detach(), dim=1)[:, 1]
-    prediction = (
-        probability.ge(threshold) if inclusive else probability.gt(threshold)
-    )
-    target = masks.eq(1)
-    intersection = int((prediction & target).sum().item())
-    union = int((prediction | target).sum().item())
-    pred_area = int(prediction.sum().item())
-    target_area = int(target.sum().item())
-    return {
-        'jaccard': _safe_mean(intersection, union),
-        'dice': _safe_mean(2 * intersection, pred_area + target_area),
     }
 
 
