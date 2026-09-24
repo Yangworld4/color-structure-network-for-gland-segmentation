@@ -73,8 +73,8 @@ python -u main.py \
 python main.py \
     --dataset_name GlaS \
     --path_dataset datasets/GLaS \
-    --path_trained_models checkpoints/k50_margin_calibrated_reverse_1337 \
-    --path_seg_results seg_pred/k50_margin_calibrated_reverse_1337 \
+    --path_trained_models checkpoints/k50_margin_calibrated_reverse_1337_1 \
+    --path_seg_results seg_pred/k50_margin_calibrated_reverse_1337_1 \
     --labeled_ratio 10 \
     --sd 1337 \
     --batch_size 2 \
