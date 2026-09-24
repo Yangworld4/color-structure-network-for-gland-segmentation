@@ -1,0 +1,16 @@
+{
+  "selected_k": 50,
+  "selection_protocol": "image-level leave-one-image-out",
+  "validation_used": false,
+  "test_used": false,
+  "source_dataset": "CRAG",
+  "source_labeled_ratio": 10,
+  "source_memory": "/data/mission/models/Exp/DUAL/outputs/final_native_fine_margin_calibrated_reverse_reference_cache/CRAG_labeled_10/reference_memory_uni256.npz",
+  "reference_resolution": 256,
+  "token_grid": 16,
+  "feature_dim": 1024,
+  "fg_token_count": 1043,
+  "bg_token_count": 1455,
+  "fallback_count": 0,
+  "calibration_source": "labeled train-only image-level LOO with frozen UNI and current reference memory selection"
+}

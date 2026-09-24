@@ -206,16 +206,9 @@ def _restore_rng_state(state):
 def get_training_views(
     batch: Mapping[str, torch.Tensor],
 ) -> Tuple[torch.Tensor, torch.Tensor]:
-    """Return Student1 and Student2 inputs."""
-    if 'image_aug1' in batch and 'image_aug2' in batch and 'mask' not in batch:
-        student1 = batch['image_aug1']
-        student2 = batch['image_aug2']
-    elif 'image_aug1' in batch and 'image_aug2' in batch:
-        student1 = batch['image']
-        student2 = batch['image']
-    else:
-        student1 = batch.get('image_rgb', batch['image'])
-        student2 = batch.get('image_stain', batch['image'])
+    """Return the RGB/RGB or RGB/stain inputs for the two students."""
+    student1 = batch.get('image_rgb', batch['image'])
+    student2 = batch.get('image_stain', batch['image'])
     spatial_shapes = {tuple(view.shape[-2:]) for view in (student1, student2)}
     if len(spatial_shapes) != 1:
         raise ValueError(
@@ -399,9 +392,7 @@ def build_datasets(args, cfg):
     mean_key, std_key = _normalization_keys(args.input1)
     transforms = data_transform_2d()
     normalize = data_normalize_2d(cfg[mean_key], cfg[std_key])
-    train_transform = (
-        transforms['val'] if args.input_mode == 'ucmt_views' else transforms['train']
-    )
+    train_transform = transforms['train']
 
     common = {
         'data_normalize_1': normalize,
@@ -512,40 +503,6 @@ def print_data_summary(args, datasets, manifest_dir, use_manifests):
             len(datasets['train_sup'])
         )
     )
-    if args.input_mode == 'ucmt_views':
-        print('Teacher view: clean RGB')
-        print('Student1 view: appearance aug x1')
-        print('Student2 view: sequential appearance aug x2')
-        for name, tensor in (
-            ('Teacher clean RGB', unsup_sample['image']),
-            ('Student1 aug x1', unsup_sample['image_aug1']),
-            ('Student2 aug x2', unsup_sample['image_aug2']),
-        ):
-            stats_tensor = tensor.float()
-            print(
-                '{}: shape={} dtype={} min={:.6f} max={:.6f} mean={:.6f} std={:.6f}'.format(
-                    name,
-                    tuple(tensor.shape),
-                    tensor.dtype,
-                    stats_tensor.min().item(),
-                    stats_tensor.max().item(),
-                    stats_tensor.mean().item(),
-                    stats_tensor.std().item(),
-                )
-            )
-        print(
-            'UCMT view spatial shapes: teacher={} student1={} student2={}'.format(
-                tuple(unsup_sample['image'].shape[-2:]),
-                tuple(unsup_sample['image_aug1'].shape[-2:]),
-                tuple(unsup_sample['image_aug2'].shape[-2:]),
-            )
-        )
-        print(
-            'UCMT appearance mean abs diff: teacher-student1={:.6f} student1-student2={:.6f}'.format(
-                (unsup_sample['image'] - unsup_sample['image_aug1']).abs().mean().item(),
-                (unsup_sample['image_aug1'] - unsup_sample['image_aug2']).abs().mean().item(),
-            )
-        )
     print(
         'Supervised image:',
         tuple(sup_sample['image'].shape),
@@ -1036,8 +993,15 @@ def _build_margin_calibration_train_loo(
                 fg_count += 1
             else:
                 bg_count += 1
-    if not fg_count or not bg_count:
-        raise RuntimeError('Train-only margin calibration has an empty FG or BG class')
+    if not records:
+        raise RuntimeError('Train-only margin calibration produced no pure tokens')
+    calibration_class_fallback = 'none'
+    if not fg_count and bg_count:
+        calibration_class_fallback = 'FG_from_BG'
+    elif not bg_count and fg_count:
+        calibration_class_fallback = 'BG_from_FG'
+    elif not fg_count and not bg_count:
+        raise RuntimeError('Train-only margin calibration has no FG or BG records')
     records_path.parent.mkdir(parents=True, exist_ok=True)
     with records_path.open('w', newline='', encoding='utf-8') as handle:
         writer = csv.DictWriter(handle, fieldnames=list(records[0].keys()))
@@ -1058,6 +1022,7 @@ def _build_margin_calibration_train_loo(
         'bg_token_count': bg_count,
         'fallback_count': fallback_count,
         'calibration_source': 'labeled train-only image-level LOO with frozen UNI and current reference memory selection',
+        'calibration_class_fallback': calibration_class_fallback,
     }
     summary_path.write_text(json.dumps(summary, indent=2, ensure_ascii=False), encoding='utf-8')
     logger.info(
@@ -1096,8 +1061,15 @@ def _load_margin_calibration(args, logger):
             if not math.isfinite(magnitude):
                 raise RuntimeError('Non-finite calibration |Delta|')
             values[gt_class].append(magnitude)
+    raw_counts = {key: len(value) for key, value in values.items()}
+    fallback_mode = str(summary.get('calibration_class_fallback', 'none'))
     if not values['FG'] or not values['BG']:
-        raise RuntimeError('Calibration requires non-empty FG and BG records')
+        if fallback_mode == 'FG_from_BG' and values['BG']:
+            values['FG'] = list(values['BG'])
+        elif fallback_mode == 'BG_from_FG' and values['FG']:
+            values['BG'] = list(values['FG'])
+        else:
+            raise RuntimeError('Calibration requires non-empty FG and BG records')
     median_fg = float(np.median(np.asarray(values['FG'], dtype=np.float64)))
     median_bg = float(np.median(np.asarray(values['BG'], dtype=np.float64)))
     tau = 0.5 * (median_fg + median_bg)
@@ -1107,7 +1079,10 @@ def _load_margin_calibration(args, logger):
         'source': 'labeled train-only image-level LOO token records at requested --uni_k',
         'records_path': str(records_path), 'summary_path': str(summary_path),
         'validation_used': False, 'test_used': False, 'K': expected_k,
-        'fg_token_count': len(values['FG']), 'bg_token_count': len(values['BG']),
+        'fg_token_count': raw_counts['FG'], 'bg_token_count': raw_counts['BG'],
+        'effective_fg_token_count': len(values['FG']),
+        'effective_bg_token_count': len(values['BG']),
+        'calibration_class_fallback': fallback_mode,
         'fg_mean_abs_delta': float(np.mean(values['FG'])),
         'fg_median_abs_delta': median_fg,
         'fg_p10_abs_delta': float(np.percentile(values['FG'], 10)),
@@ -1121,17 +1096,32 @@ def _load_margin_calibration(args, logger):
         'bg_p75_abs_delta': float(np.percentile(values['BG'], 75)),
         'bg_p90_abs_delta': float(np.percentile(values['BG'], 90)),
         'tau': tau,
-        'tau_definition': 'class-balanced typical semantic separation magnitude of the train-only UNI Memory reference',
+        'tau_definition': (
+            'class-balanced typical semantic separation magnitude of the train-only '
+            'UNI Memory reference; missing class mirrors the available train-only '
+            'class for tiny labeled splits'
+            if fallback_mode != 'none' else
+            'class-balanced typical semantic separation magnitude of the train-only UNI Memory reference'
+        ),
     }
     tau_path = records_path.with_name('tau_calibration.json')
     stats['tau_calibration_path'] = str(tau_path)
     tau_path.write_text(json.dumps(stats, indent=2, ensure_ascii=False), encoding='utf-8')
     logger.info(
-        'Margin calibration loaded | records=%s | FG=%d BG=%d | m_FG=%.8f | m_BG=%.8f | tau=%.8f',
-        records_path, stats['fg_token_count'], stats['bg_token_count'], median_fg, median_bg, tau,
+        'Margin calibration loaded | records=%s | FG=%d BG=%d | effective_FG=%d '
+        'effective_BG=%d | fallback=%s | m_FG=%.8f | m_BG=%.8f | tau=%.8f',
+        records_path,
+        stats['fg_token_count'],
+        stats['bg_token_count'],
+        stats['effective_fg_token_count'],
+        stats['effective_bg_token_count'],
+        fallback_mode,
+        median_fg,
+        median_bg,
+        tau,
     )
-    print('Margin calibration | FG tokens={} | BG tokens={} | m_FG={:.8f} | m_BG={:.8f} | tau={:.8f}'.format(
-        stats['fg_token_count'], stats['bg_token_count'], median_fg, median_bg, tau
+    print('Margin calibration | FG tokens={} | BG tokens={} | fallback={} | m_FG={:.8f} | m_BG={:.8f} | tau={:.8f}'.format(
+        stats['fg_token_count'], stats['bg_token_count'], fallback_mode, median_fg, median_bg, tau
     ))
     return stats
 
@@ -1895,7 +1885,7 @@ def train_one_epoch(
         loss_totals['sup1'] += supervised_loss1.item()
         loss_totals['sup2'] += supervised_loss2.item()
         loss_totals['total'] += total_loss.item()
-    reference_totals = state_totals if state_totals is not None else native_totals
+    reference_totals = native_totals
     return (
         loss_totals,
         (score_list1, score_list2, mask_list),
@@ -2060,6 +2050,226 @@ def _collect_epoch_metrics(
     }
 
 
+def _native_validation_diagnostic(validation, dataloader, context, cfg, args):
+    """Compute validation-only diagnostics for the native UNI intervention.
+
+    Ground-truth masks are used here only to measure shared errors and the
+    quality of the detached UNI token direction.  This function is outside
+    the training loss path, so validation/test labels never affect training.
+    """
+    totals = defaultdict(float)
+    events = defaultdict(float)
+    offset = 0
+    with torch.inference_mode():
+        for batch in dataloader:
+            n = int(batch['mask'].shape[0])
+            logits_a = validation['scores1'][offset:offset + n].cuda(non_blocking=True)
+            logits_b = validation['scores2'][offset:offset + n].cuda(non_blocking=True)
+            offset += n
+            gt = batch['mask'].cuda(non_blocking=True)
+            valid = gt.ne(-1)
+            pa = _foreground_probability(logits_a)
+            pb = _foreground_probability(logits_b)
+            hard_a = pa.ge(0.5)[:, 0]
+            hard_b = pb.ge(0.5)[:, 0]
+            conf_a = torch.maximum(pa, 1.0 - pa)[:, 0]
+            conf_b = torch.maximum(pb, 1.0 - pb)[:, 0]
+            agree_px = hard_a.eq(hard_b)
+            correct_a = hard_a.eq(gt)
+            correct_b = hard_b.eq(gt)
+            cc = correct_a & correct_b & valid
+            ww = ~correct_a & ~correct_b & agree_px & valid
+            hc = ww & conf_a.ge(0.9) & conf_b.ge(0.9)
+            shared_fp = ww & hard_a & gt.eq(0)
+            shared_fn = ww & ~hard_a & gt.eq(1)
+
+            targets = _build_native_reference_targets(
+                logits_a,
+                logits_b,
+                _get_rgb_view(batch).cuda(non_blocking=True),
+                context,
+                cfg,
+                args,
+            )
+            contradiction = targets['contradiction']
+            hc_token = targets['hc']
+            occ = F.adaptive_avg_pool2d(
+                gt.float().unsqueeze(1), (16, 16)
+            )[:, 0]
+            pca = 0.5 * (
+                targets['p_a_token'][:, 0] + targets['p_b_token'][:, 0]
+            )
+            direction_valid = (occ - pca).abs().gt(0.05)
+            uni_direction = torch.where(targets['uni_fg'][:, 0], 1.0, -1.0)
+            gt_direction = occ - pca
+            direction_correct = (
+                uni_direction * gt_direction > 0
+            ) & direction_valid
+            token_ww = F.adaptive_avg_pool2d(
+                ww.float().unsqueeze(1), (16, 16)
+            )[:, 0]
+            token_hc = F.adaptive_avg_pool2d(
+                hc.float().unsqueeze(1), (16, 16)
+            )[:, 0]
+            token_cc = F.adaptive_avg_pool2d(
+                cc.float().unsqueeze(1), (16, 16)
+            )[:, 0]
+
+            for key, value in (
+                ('valid', valid.sum()),
+                ('cc', cc.sum()),
+                ('ww', ww.sum()),
+                ('hc90ww', hc.sum()),
+                ('shared_fp', shared_fp.sum()),
+                ('shared_fn', shared_fn.sum()),
+                ('contradiction_tokens', contradiction.sum()),
+                ('hc_contradiction_tokens', hc_token.sum()),
+                ('contradiction_ww_sum', token_ww[contradiction].sum()),
+                ('contradiction_hc_sum', token_hc[contradiction].sum()),
+                ('contradiction_cc_sum', token_cc[contradiction].sum()),
+                ('hc_ww_sum', token_ww[hc_token].sum()),
+                ('hc_hc_sum', token_hc[hc_token].sum()),
+                ('hc_cc_sum', token_cc[hc_token].sum()),
+                (
+                    'direction_correct',
+                    direction_correct[contradiction & direction_valid].sum(),
+                ),
+                (
+                    'direction_valid',
+                    (contradiction & direction_valid).sum(),
+                ),
+                ('hc_mae_sum', (pca - occ).abs()[hc_token].sum()),
+            ):
+                totals[key] += float(value.item())
+
+            # Connected-component counts are validation-only diagnostics.
+            try:
+                from scipy import ndimage
+
+                for idx in range(n):
+                    for name, mask in (
+                        ('WW', ww[idx]),
+                        ('HC90WW', hc[idx]),
+                        ('Shared_FP', shared_fp[idx]),
+                        ('Shared_FN', shared_fn[idx]),
+                    ):
+                        count = int(
+                            ndimage.label(
+                                mask.detach().cpu().numpy(),
+                                structure=np.ones((3, 3), dtype=np.uint8),
+                            )[1]
+                        )
+                        events[name] += count
+                        events[name + '_images'] += float(count > 0)
+            except ImportError:
+                # Pixel-level diagnostics remain valid without scipy.
+                pass
+
+    if offset != int(validation['masks'].shape[0]):
+        raise AssertionError('Native validation loader/logit length mismatch')
+
+    valid = totals['valid']
+    contradiction = totals['contradiction_tokens']
+    hc_tokens = totals['hc_contradiction_tokens']
+    shared = {
+        'epoch': 0,
+        'valid_pixels': int(valid),
+        'CC_rate': _safe_mean(totals['cc'], valid),
+        'WW_rate': _safe_mean(totals['ww'], valid),
+        'HC90WW_rate': _safe_mean(totals['hc90ww'], valid),
+        'Shared_FP_rate': _safe_mean(totals['shared_fp'], valid),
+        'Shared_FN_rate': _safe_mean(totals['shared_fn'], valid),
+        'WW_pixels': int(totals['ww']),
+        'HC90WW_pixels': int(totals['hc90ww']),
+        'Shared_FP_pixels': int(totals['shared_fp']),
+        'Shared_FN_pixels': int(totals['shared_fn']),
+    }
+    native = {
+        'epoch': 0,
+        'contradiction_tokens': int(contradiction),
+        'hc_contradiction_tokens': int(hc_tokens),
+        'contradiction_rate': _safe_mean(
+            contradiction, max(1.0, totals['valid'] / 256.0)
+        ),
+        'hc_contradiction_rate': _safe_mean(
+            hc_tokens, max(1.0, totals['valid'] / 256.0)
+        ),
+        'mean_WW_ratio_contradiction': _safe_mean(
+            totals['contradiction_ww_sum'], contradiction
+        ),
+        'mean_HC90WW_ratio_contradiction': _safe_mean(
+            totals['contradiction_hc_sum'], contradiction
+        ),
+        'mean_CC_ratio_contradiction': _safe_mean(
+            totals['contradiction_cc_sum'], contradiction
+        ),
+        'mean_WW_ratio_hc_contradiction': _safe_mean(
+            totals['hc_ww_sum'], hc_tokens
+        ),
+        'mean_HC90WW_ratio_hc_contradiction': _safe_mean(
+            totals['hc_hc_sum'], hc_tokens
+        ),
+        'mean_CC_ratio_hc_contradiction': _safe_mean(
+            totals['hc_cc_sum'], hc_tokens
+        ),
+        'direction_accuracy': _safe_mean(
+            totals['direction_correct'], totals['direction_valid']
+        ),
+        'HC_token_MAE': _safe_mean(totals['hc_mae_sum'], hc_tokens),
+    }
+    event_row = {'epoch': 0}
+    for name in ('WW', 'HC90WW', 'Shared_FP', 'Shared_FN'):
+        event_row[name + '_events'] = int(events[name])
+        event_row[name + '_images'] = int(events[name + '_images'])
+        event_row[name + '_events_per_image'] = _safe_mean(
+            events[name], len(dataloader.dataset)
+        )
+    return shared, native, event_row
+
+
+def _native_checkpoint_metadata(args, context, best_val_eval_lists, best_epochs):
+    """Return the immutable-reference metadata stored in native checkpoints."""
+    return {
+        'dataset_name': args.dataset_name,
+        'labeled_ratio': args.labeled_ratio,
+        'seed': args.sd,
+        'input_mode': args.input_mode,
+        'network': args.network,
+        'cps_mode': args.cps_mode,
+        'reference_mode': args.reference_mode,
+        'selection_split': 'validation',
+        'selection_metric': 'jaccard',
+        'best_val_metrics': [list(values) for values in best_val_eval_lists],
+        'best_epochs': list(best_epochs),
+        'reference_memory_path': context['memory_path'],
+        'reference_memory_sha256': context['memory_sha256'],
+        'reference_resolution': 256,
+        'reference_grid': 16,
+        'reference_memory_source': 'labeled_{} GT only'.format(
+            args.labeled_ratio
+        ),
+        'uni_sha256': context['weights_sha256'],
+        'uni_weights': context['weights_path'],
+        'uni_k': args.uni_k,
+        'margin_calibration_records': (
+            str(Path(args.margin_calibration_records).resolve())
+            if args.margin_calibration_records else None
+        ),
+        'native_suppress_gamma': getattr(args, 'native_suppress_gamma', None),
+        'native_hc_thresh': getattr(args, 'native_hc_thresh', None),
+        'lambda_native_ref': getattr(args, 'lambda_native_ref', None),
+        'native_gate': (
+            'detach(adaptive_avg_pool2d(pA/pB,(16,16))) agreement and '
+            'UNI margin sign; no GT'
+        ),
+        'native_weight_expansion': 'nearest loss-weight expansion only',
+        'native_hc_target': (
+            'UNI sign at token scale; BCE on undetached pooled probabilities'
+        ),
+        'test_evaluation_policy': 'final_frozen_only',
+    }
+
+
 def _log_epoch(logger, args, metrics):
     logger.info(
         'epoch=%d/%d | learning_rate=%.8g | average_train_loss=%.6f '
@@ -2134,6 +2344,12 @@ def train_model(
     trained_models_path, segmentation_results_path = build_output_paths(
         args, datasets, use_manifests
     )
+    if _is_margin_calibrated_mode(args) and args.margin_calibration_records is None:
+        args.margin_calibration_records = str(
+            Path(trained_models_path)
+            / 'margin_calibration_k{}'.format(args.uni_k)
+            / 'selected_k_token_records.csv'
+        )
     if _uses_uni_reference(args):
         existing_training_artifacts = [
             path for path in Path(trained_models_path).rglob('*')
@@ -2184,6 +2400,7 @@ def train_model(
             'native_grid': '16x16',
             'feature_dim': 1024,
             'reference_memory': str(Path(args.uni_reference_memory).resolve()) if args.uni_reference_memory else 'fixed_uni256',
+            'margin_calibration_records': str(Path(args.margin_calibration_records).resolve()) if args.margin_calibration_records else None,
             'adaptive_strategy': adaptive_strategy,
             'cdf': 'not used',
             'running_buffer': 'disabled',
@@ -2884,11 +3101,9 @@ def parse_args():
         '--input_mode',
         dest='input_mode',
         default='rgb_rgb',
-        choices=['rgb_rgb', 'rgb_stain', 'rgb_hed', 'ucmt_views'],
+        choices=['rgb_rgb', 'rgb_stain'],
         help='rgb_rgb uses original RGB for both students; ' \
-        'rgb_stain uses stain RGB for student2; ' \
-        'rgb_hed uses HED for student2;' \
-        'ucmt_views uses clean/Aug1/sequential Aug2 RGB',
+        'rgb_stain uses stain RGB for student2',
     )
     parser.add_argument(
         '--manifest_dir',
@@ -3053,12 +3268,6 @@ def parse_args():
         args.path_seg_results = default_seg_results.get(
             args.reference_mode,
             'seg_pred/semi_fdcl_paper_{}'.format(args.labeled_ratio),
-        )
-    if args.reference_mode in MARGIN_CALIBRATED_MODES and args.margin_calibration_records is None:
-        args.margin_calibration_records = str(
-            Path(args.path_trained_models)
-            / 'margin_calibration_k{}'.format(args.uni_k)
-            / 'selected_k_token_records.csv'
         )
     return args
 

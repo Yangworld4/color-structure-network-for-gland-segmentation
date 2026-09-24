@@ -1,0 +1,44 @@
+Data source: datasets/CRAG/manifests/paper_seed_2026
+Input mode: rgb_stain
+Unique samples: supervised=16, unsupervised=137, validation=20, test=deferred
+Effective epoch samples after supervised oversampling: supervised=137
+Supervised image: (3, 256, 256) torch.float32
+Supervised RGB/Stain views: (3, 256, 256) (3, 256, 256) (256, 256)
+Supervised mask: (256, 256) torch.int64 classes=[0, 1]
+Unsupervised image: (3, 256, 256) torch.float32
+Unsupervised RGB/Stain views: (3, 256, 256) (3, 256, 256)
+Validation image/mask: (3, 256, 256) (256, 256)
+Training log: checkpoints/final_native_fine_margin_calibrated_reverse_seed_24/CRAG/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5.0-w=20-16-137-image-input_mode=rgb_stain-cps_mode=native_fine_margin_calibrated_reverse/train.log
+Metrics CSV: checkpoints/final_native_fine_margin_calibrated_reverse_seed_24/CRAG/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5.0-w=20-16-137-image-input_mode=rgb_stain-cps_mode=native_fine_margin_calibrated_reverse/metrics.csv
+Diagnostic log: checkpoints/final_native_fine_margin_calibrated_reverse_seed_24/CRAG/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5.0-w=20-16-137-image-input_mode=rgb_stain-cps_mode=native_fine_margin_calibrated_reverse/diagnostics_20260921-204157.log
+/data/software/miniconda3/envs/cg-seg/lib/python3.10/site-packages/torch/_utils.py:776: UserWarning: TypedStorage is deprecated. It will be removed in the future and UntypedStorage will be the only storage class. This should only matter to you if you are using storages directly.  To access UntypedStorage directly, use tensor.untyped_storage() instead of tensor.storage()
+  return self.fget.__get__(instance, owner)()
+/data/software/miniconda3/envs/cg-seg/lib/python3.10/site-packages/torch/nn/modules/conv.py:459: UserWarning: Applied workaround for CuDNN issue, install nvrtc.so (Triggered internally at ../aten/src/ATen/native/cudnn/Conv_v8.cpp:80.)
+  return F.conv2d(input, weight, bias, self.stride,
+Margin calibration | FG tokens=1043 | BG tokens=1455 | m_FG=0.12084365 | m_BG=0.12010741 | tau=0.12047553
+initialize network with kaiming
+initialize network with kaiming
+UNI input shape       = [B,3,256,256]
+UNI patch-token shape = [B,256,1024]
+native grid           = 16x16
+feature dim           = 1024
+Reference mode:       native_fine_margin_calibrated_reverse
+Adaptive strategy:    labeled-train margin-calibrated Anti-Confirmation
+Weight formula:       (1-q) CPS + q opposite on risky pixels
+Severity formula:     q=D/(D+tau+eps)
+Opposite target:      1 - detached token consensus
+Pixel selection:      token contradiction AND pixel agreement AND pixel consensus=token consensus
+Calibration source:   labeled train-only image-level LOO K=50
+tau:                  0.12047553
+Old CDF/bootstrap:    disabled
+Extra hyperparameters: none
+Input shapes | student1=(2, 3, 256, 256) | student2=(2, 3, 256, 256) | mask=(2, 256, 256)
+[Motivation][Epoch 001] Agreement=0.537310 SoftDisagreement=0.262582 WW|Agree=0.526810 HC90WW|WW=0.025150
+Traceback (most recent call last):
+  File "/data/mission/models/Exp/DUAL/main.py", line 3089, in <module>
+    main()
+  File "/data/mission/models/Exp/DUAL/main.py", line 3085, in main
+    train_model(args, cfg, datasets, manifest_dir, use_manifests)
+  File "/data/mission/models/Exp/DUAL/main.py", line 2458, in train_model
+    shared_row, native_row, event_row = _native_validation_diagnostic(
+NameError: name '_native_validation_diagnostic' is not defined
