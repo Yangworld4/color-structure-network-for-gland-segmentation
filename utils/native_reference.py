@@ -1,7 +1,7 @@
 """Frozen UNI reference construction and retrieval helpers.
 
-This module owns reference-memory and margin-calibration details so the training
-loop in main.py can stay focused on optimization and validation.
+This module owns reference-memory and margin-calibration details so the trainer
+can stay focused on optimization and validation.
 """
 
 import csv

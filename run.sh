@@ -19,20 +19,20 @@ python main.py \
 
 
 python main.py \
-    --dataset_name RINGS      \
-    --path_dataset datasets/RINGS \
-    --path_trained_models checkpoints/semi_10_seed_24_rgb\
+    --dataset_name CRAG      \
+    --path_dataset datasets/CRAG \
+    --path_trained_models checkpoints/semi_10_seed_1337_rgbstain\
     --labeled_ratio 10 \
-    --input_mode rgb_rgb \
-    --sd 24
+    --input_mode rgb_stain \
+    --sd 1337
 
 python main.py \
     --dataset_name GlaS      \
     --path_dataset datasets/GLaS \
-    --path_trained_models checkpoints/semi_10_seed_24_rgbstain\
+    --path_trained_models checkpoints/semi_10_seed_1337_rgbrgb\
     --labeled_ratio 10 \
-    --input_mode rgb_stain \
-    --sd 24
+    --input_mode rgb_rgb \
+    --sd 1337
 
 # python main.py \
 #     --dataset_name CRAG      \
@@ -73,8 +73,8 @@ python -u main.py \
 python main.py \
     --dataset_name GlaS \
     --path_dataset datasets/GLaS \
-    --path_trained_models checkpoints/k50_margin_calibrated_reverse_1337_1 \
-    --path_seg_results seg_pred/k50_margin_calibrated_reverse_1337_1 \
+    --path_trained_models checkpoints/k50_margin_calibrated_reverse_1337_12 \
+    --path_seg_results seg_pred/k50_margin_calibrated_reverse_1337_12 \
     --labeled_ratio 10 \
     --sd 1337 \
     --batch_size 2 \

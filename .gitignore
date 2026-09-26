@@ -8,4 +8,7 @@ test_results/
 plots/
 fourier_visualization/
 diagnostics/
+__pycache__/
+*.py[cod]
+.env
 tools/

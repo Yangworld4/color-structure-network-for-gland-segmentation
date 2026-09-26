@@ -93,17 +93,17 @@ python main.py --check_data
 Train with the 10% labeled split:
 
 ```bash
-python train.py --labeled_ratio 10 --input_mode rgb_rgb
+python main.py --labeled_ratio 10 --input_mode rgb_rgb
 ```
 
 Choose how inputs are routed to the two CPS students:
 
 ```bash
 # Baseline CPS: both students receive original RGB.
-python train.py --input_mode rgb_rgb
+python main.py --input_mode rgb_rgb
 
 # RGB-Stain CPS: Student1 receives RGB, Student2 receives stain RGB.
-python train.py --input_mode rgb_stain
+python main.py --input_mode rgb_stain
 ```
 
 Both modes keep the same segmentation architecture, CPS loss, optimizer,
@@ -125,7 +125,7 @@ Every epoch is validated and written to the experiment checkpoint directory:
 Use CRAG or the 20% labeled split:
 
 ```bash
-python train.py --dataset_name CRAG --path_dataset datasets/CRAG --labeled_ratio 20 --input_mode rgb_stain
+python main.py --dataset_name CRAG --path_dataset datasets/CRAG --labeled_ratio 20 --input_mode rgb_stain
 ```
 
 The legacy `train_sup_*/train_unsup_*/val` directory format remains supported
