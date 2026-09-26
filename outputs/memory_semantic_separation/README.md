@@ -1,6 +1,8 @@
 # UNI FG/BG Memory Semantic Separation
 
-Input: `/data/mission/models/Exp/DUAL/outputs/native_scale_reference/glas_standard_cps_uni256/token_records.csv`
+    Input: `/data/mission/models/Exp/DUAL/outputs/native_scale_reference/crag_standard_cps_uni256/token_records.csv`
+
+Retrieval Top-K: `50`
 
 The figure uses the existing validation token records and computes `Delta = S_FG - S_BG`.
 No model forward, memory rebuild, training, or CPS modification is performed.

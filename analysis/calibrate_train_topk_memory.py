@@ -44,7 +44,7 @@ def parse_args():
     )
     parser.add_argument('--output-dir', default=str(ROOT / 'outputs/train_topk_calibration'))
     parser.add_argument('--dataset-name', default='GlaS')
-    parser.add_argument('--path-dataset', default=str(ROOT / 'datasets/GLaS'))
+    parser.add_argument('--path-dataset', default=str(ROOT / 'datasets/GlaS'))
     parser.add_argument('--manifest-dir', default='')
     parser.add_argument('--labeled-ratio', type=int, default=10)
     parser.add_argument('--batch-size', type=int, default=2)

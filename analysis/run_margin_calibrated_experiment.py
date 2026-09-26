@@ -156,7 +156,7 @@ def run_training() -> dict:
         raise RuntimeError("Refusing to overwrite {}".format(log_root))
     command = [
         sys.executable, "-u", "main.py",
-        "--dataset_name", "GlaS", "--path_dataset", "datasets/GLaS",
+        "--dataset_name", "GlaS", "--path_dataset", "datasets/GlaS",
         "--path_trained_models", "checkpoints/k50_margin_calibrated_reverse",
         "--path_seg_results", "seg_pred/k50_margin_calibrated_reverse",
         "--labeled_ratio", "10", "--sd", "24", "--batch_size", "2",

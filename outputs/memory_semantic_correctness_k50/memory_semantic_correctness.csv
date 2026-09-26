@@ -1,5 +1,0 @@
-subset,metric,value,num_tokens
-ALL,fg_accuracy,0.9667405764966741,3281
-ALL,bg_accuracy,0.9149377593360996,3281
-ALL,balanced_accuracy,0.9408391679163868,3281
-ALL,overall_accuracy,0.9362999085644621,3281

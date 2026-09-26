@@ -12,7 +12,7 @@ echo "=== 开始运行实验 ==="
 
 python main.py \
     --dataset_name GlaS      \
-    --path_dataset datasets/GLaS \
+    --path_dataset datasets/GlaS \
     --path_trained_models checkpoints/semi_10_seed_24_rgbstain_dis_piexl_entropy \
     --labeled_ratio 10 \
     --sd 24
@@ -28,7 +28,7 @@ python main.py \
 
 python main.py \
     --dataset_name GlaS      \
-    --path_dataset datasets/GLaS \
+    --path_dataset datasets/GlaS \
     --path_trained_models checkpoints/semi_10_seed_1337_rgbrgb\
     --labeled_ratio 10 \
     --input_mode rgb_rgb \
@@ -72,7 +72,7 @@ python -u main.py \
 
 python main.py \
     --dataset_name GlaS \
-    --path_dataset datasets/GLaS \
+    --path_dataset datasets/GlaS \
     --path_trained_models checkpoints/k50_margin_calibrated_reverse_1337_12 \
     --path_seg_results seg_pred/k50_margin_calibrated_reverse_1337_12 \
     --labeled_ratio 10 \

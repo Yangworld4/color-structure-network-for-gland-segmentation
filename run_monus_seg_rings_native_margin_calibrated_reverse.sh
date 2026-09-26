@@ -39,7 +39,7 @@ run_experiment() {
 
 echo "=== GlaS：开始运行 10% 标注实验 ==="
 # MoNuSeg 10% 只有 3 张 labeled 图；image-level LOO 后无法支持 K=50。
-# K=5 保持 train-only LOO 校准协议，并使用当前任务目录独立保存校准文件。
+# K=50 保持 train-only LOO 校准协议，并使用当前任务目录独立保存校准文件。
 run_experiment GlaS 10 1337 semi_10_seed_1337_rgbstain_coarse2fine
 
 echo "=== GlaS：开始运行 20% 标注实验 ==="

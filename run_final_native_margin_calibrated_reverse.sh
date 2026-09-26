@@ -14,16 +14,29 @@ echo "=== 开始运行实验 ==="
 python main.py \
     --dataset_name GlaS      \
     --path_dataset datasets/GlaS \
-    --path_trained_models checkpoints/semi_20_seed_1337_rgbstain \
-    --input_mode rgb_stain \
+    --path_trained_models checkpoints/semi_10_seed_1337_rgb \
+    --labeled_ratio 10 \
+    --sd 1337
+
+python main.py \
+    --dataset_name GlaS      \
+    --path_dataset datasets/GlaS \
+    --path_trained_models checkpoints/semi_20_seed_1337_rgb \
     --labeled_ratio 20 \
     --sd 1337
 
 python main.py \
     --dataset_name CRAG      \
     --path_dataset datasets/CRAG \
-    --path_trained_models checkpoints/semi_20_seed_1337_rgbstain \
-    --input_mode rgb_stain \
-    --labeled_ratio 20 \
+    --path_trained_models checkpoints/semi_10_seed_1337_rgb\
+    --input_mode rgb_rgb \
+    --labeled_ratio 10 \
     --sd 1337
 
+python main.py \
+    --dataset_name CRAG      \
+    --path_dataset datasets/CRAG \
+    --path_trained_models checkpoints/semi_20_seed_1337_rgb\
+    --input_mode rgb_rgb \
+    --labeled_ratio 20 \
+    --sd 1337

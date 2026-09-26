@@ -52,8 +52,8 @@ def seed_everything(seed: int) -> None:
 def make_args(memory_path: Path) -> SimpleNamespace:
     return SimpleNamespace(
         dataset_name="GlaS",
-        path_dataset=str(ROOT / "datasets/GLaS"),
-        manifest_dir=str(ROOT / "datasets/GLaS/manifests/paper_seed_2026"),
+        path_dataset=str(ROOT / "datasets/GlaS"),
+        manifest_dir=str(ROOT / "datasets/GlaS/manifests/paper_seed_2026"),
         input1="image",
         input_mode="rgb_stain",
         labeled_ratio=10,

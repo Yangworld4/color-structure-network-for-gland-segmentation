@@ -48,7 +48,7 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Exact milestones directory; overrides --checkpoint-root discovery.",
     )
-    parser.add_argument("--path-dataset", default="datasets/GLaS")
+    parser.add_argument("--path-dataset", default="datasets/GlaS")
     parser.add_argument("--dataset-name", default="GlaS")
     parser.add_argument("--labeled-ratio", type=int, default=10)
     parser.add_argument("--seed", type=int, default=24)

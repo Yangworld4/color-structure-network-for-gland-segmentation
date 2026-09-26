@@ -1,40 +1,43 @@
 {
-  "input": "/data/mission/models/Exp/DUAL/outputs/native_scale_reference/glas_standard_cps_uni256/token_records.csv",
+  "input": "/data/mission/models/Exp/DUAL/outputs/native_scale_reference/crag_standard_cps_uni256/token_records.csv",
   "output_dir": "/data/mission/models/Exp/DUAL/outputs/memory_semantic_separation",
+  "top_k": 50,
   "total_tokens": 3281,
   "fg_tokens": 1353,
   "bg_tokens": 1928,
   "margin": {
     "formula": "S_FG - S_BG",
-    "full_min": -0.5186637490987778,
-    "full_max": 0.5533537119626999,
+    "full_min": -0.4044814705848694,
+    "full_max": 0.27456343173980713,
     "visual_range_p0.5_p99.5": [
-      -0.4379081666469574,
-      0.4893928259611129
+      -0.3610859811306,
+      0.2234159260988235
     ]
   },
   "fg": {
     "n": 1353,
-    "mean_delta": 0.18630224381520497,
-    "median_delta": 0.1650083363056183,
-    "min_delta": -0.17577716708183289,
-    "max_delta": 0.5533537119626999,
-    "correct_sign_rate": 0.9512195121951219
+    "mean_delta": 0.10444592405867771,
+    "median_delta": 0.11231529712677002,
+    "min_delta": -0.25422152876853943,
+    "max_delta": 0.27456343173980713,
+    "correct_sign_rate": 0.9416112342941612
   },
   "bg": {
     "n": 1928,
-    "mean_delta": -0.1647010763558362,
-    "median_delta": -0.16210971027612686,
-    "min_delta": -0.5186637490987778,
-    "max_delta": 0.3313644230365753,
-    "correct_sign_rate": 0.9087136929460581
+    "mean_delta": -0.07746806954076181,
+    "median_delta": -0.0809730812907219,
+    "min_delta": -0.4044814705848694,
+    "max_delta": 0.20512719452381134,
+    "correct_sign_rate": 0.9164937759336099
   },
-  "balanced_accuracy": 0.9299666025705899,
+  "balanced_accuracy": 0.9290525051138856,
+  "auroc": 0.9514265210551013,
   "source_columns": {
     "s_fg": "S_FG",
     "s_bg": "S_BG",
     "gt_class": "gt_class",
     "gt_ratio": "fg_ratio",
+    "top_k": "top_k",
     "gt_rule": "direct gt class"
   },
   "kde_available": true,

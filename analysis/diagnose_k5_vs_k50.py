@@ -55,7 +55,7 @@ def parse_args():
     p.add_argument('--k5-all-records', type=Path, default=DEFAULT_K5_ALL_RECORDS)
     p.add_argument('--k50-all-records', type=Path, default=DEFAULT_K50_ALL_RECORDS)
     p.add_argument('--output-dir', type=Path, default=DEFAULT_OUTPUT)
-    p.add_argument('--path-dataset', default=str(ROOT / 'datasets/GLaS'))
+    p.add_argument('--path-dataset', default=str(ROOT / 'datasets/GlaS'))
     p.add_argument('--dataset-name', default='GlaS')
     p.add_argument('--labeled-ratio', type=int, default=10)
     p.add_argument('--batch-size', type=int, default=2)

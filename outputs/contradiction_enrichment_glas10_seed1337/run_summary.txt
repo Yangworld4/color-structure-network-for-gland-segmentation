@@ -1,0 +1,60 @@
+[Experiment]
+Dataset: GlaS
+Labeled ratio: 10%
+Seed: 1337
+Input mode: rgb_rgb (Vanilla CPS)
+Validation manifest: /data/mission/models/Exp/DUAL/datasets/GlaS/manifests/paper_seed_2026/validation.csv
+
+[Checkpoint]
+Actual checkpoint path: /data/mission/models/Exp/DUAL/checkpoints/semi_10_seed_1337_rgb/GlaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image-input_mode=rgb_rgb-cps_mode=standard/best_synchronized_mean_val.pth
+Checkpoint epoch: 194
+Student A test.py validation-best path: /data/mission/models/Exp/DUAL/checkpoints/semi_10_seed_1337_rgb/GlaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image-input_mode=rgb_rgb-cps_mode=standard/best_result1_Jc_0.7130.pth
+Student B test.py default-selected path: /data/mission/models/Exp/DUAL/checkpoints/semi_10_seed_1337_rgb/GlaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image-input_mode=rgb_rgb-cps_mode=standard/best_result2_Jc_0.7228.pth
+Paired checkpoint states verified against both validation-best branch files: yes
+
+[Semantic Memory]
+Memory path: /data/mission/models/Exp/DUAL/checkpoints/semi_10_seed_1337_rgbstain_coarse2fine/GlaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5.0-w=20-7-61-image-input_mode=rgb_stain-cps_mode=native_fine_margin_calibrated_reverse/reference_memory_uni256.npz
+FG tokens: 437
+BG tokens: 355
+Top-K: 50
+UNI input size: 256
+Native grid: 16x16
+Labeled split: /data/mission/models/Exp/DUAL/datasets/GlaS/manifests/paper_seed_2026/labeled_10.csv
+Memory class anchors: FG occupancy >= 0.90; BG occupancy <= 0.10
+Memory constructed during this run: False
+Memory construction source: labeled training images and GT only; validation GT excluded
+Memory token-selection RNG seed: 2026 (project memory rule; experiment seed remains 1337)
+
+[Population]
+Validation images: 17
+Agreement tokens: 4256
+Contradiction tokens: 651
+Contradiction ratio: 15.2961%
+
+[WW]
+P(WW | Agreement): 13.3929%
+P(WW | Contradiction): 63.2873%
+WW enrichment: 4.725448x
+
+WW contradiction coverage: 72.2807%
+WW contradiction precision: 63.2873%
+[HC90WW]
+P(HC90WW | Agreement): 7.4718%
+P(HC90WW | Contradiction): 37.0200%
+HC90WW enrichment: 4.954622x
+
+HC90WW contradiction coverage: 75.7862%
+HC90WW contradiction precision: 37.0200%
+[CC]
+P(CC | Agreement): 86.6071%
+P(CC | Contradiction): 36.7127%
+
+[Outputs]
+Token CSV: /data/mission/models/Exp/DUAL/outputs/contradiction_enrichment_glas10_seed1337/contradiction_token_records.csv
+Summary CSV: /data/mission/models/Exp/DUAL/outputs/contradiction_enrichment_glas10_seed1337/contradiction_enrichment_summary.csv
+Figure PNG: /data/mission/models/Exp/DUAL/outputs/contradiction_enrichment_glas10_seed1337/contradiction_enrichment.png
+Figure PDF: /data/mission/models/Exp/DUAL/outputs/contradiction_enrichment_glas10_seed1337/contradiction_enrichment.pdf
+Horizontal figure PNG: /data/mission/models/Exp/DUAL/outputs/contradiction_enrichment_glas10_seed1337/contradiction_enrichment_horizontal.png
+Horizontal figure PDF: /data/mission/models/Exp/DUAL/outputs/contradiction_enrichment_glas10_seed1337/contradiction_enrichment_horizontal.pdf
+Coverage figure PNG: /data/mission/models/Exp/DUAL/outputs/contradiction_enrichment_glas10_seed1337/contradiction_coverage_horizontal.png
+Coverage figure PDF: /data/mission/models/Exp/DUAL/outputs/contradiction_enrichment_glas10_seed1337/contradiction_coverage_horizontal.pdf

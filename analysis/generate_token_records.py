@@ -31,16 +31,23 @@ from config.uni_config.uni_config import (
     UNI_CONFIG_DEFAULT,
     UNI_WEIGHTS_DEFAULT,
 )
+from models.uni import load_uni
+from utils.native_reference import (
+    _get_rgb_view,
+    _reconstruct_rgb,
+    _reference_scores,
+    _uni_dense_features,
+)
 
 
-DEFAULT_MEMORY = ROOT / "checkpoints/glas_labeled10_seed24/reference_memory_uni256.npz"
-DEFAULT_OUTPUT = ROOT / "outputs/native_scale_reference/glas_standard_cps_uni256/token_records.csv"
+DEFAULT_MEMORY = ROOT / "/data/mission/models/Exp/DUAL/checkpoints/semi_20_seed_1337_rgbstain_coarse2fine/CRAG/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5.0-w=20-31-122-image-input_mode=rgb_stain-cps_mode=native_fine_margin_calibrated_reverse/reference_memory_uni256.npz"
+DEFAULT_OUTPUT = ROOT / "outputs/native_scale_reference/crag_standard_cps_uni256/token_records.csv"
 
 
 def _build_args() -> SimpleNamespace:
     return SimpleNamespace(
         dataset_name="GlaS",
-        path_dataset=str(ROOT / "datasets/GLaS"),
+        path_dataset=str(ROOT / "datasets/GlaS"),
         manifest_dir=None,
         labeled_ratio=10,
         input1="image",
@@ -110,7 +117,7 @@ def main() -> None:
         pin_memory=True,
     )
 
-    uni, weights_path, config_path = project.load_uni(
+    uni, weights_path, config_path = load_uni(
         UNI_WEIGHTS_DEFAULT,
         UNI_CONFIG_DEFAULT,
         expected_sha256=EXPECTED_UNI_SHA256,
@@ -137,11 +144,9 @@ def main() -> None:
         writer.writeheader()
         with torch.inference_mode():
             for batch in validation_loader:
-                rgb = project._reconstruct_rgb(
-                    project._get_rgb_view(batch).cuda(non_blocking=True), cfg
-                )
-                tokens = project._uni_dense_features(uni, rgb, 256)
-                score_fg, score_bg = project._reference_scores(
+                rgb = _reconstruct_rgb(_get_rgb_view(batch).cuda(non_blocking=True), cfg)
+                tokens = _uni_dense_features(uni, rgb, 256)
+                score_fg, score_bg = _reference_scores(
                     tokens,
                     {"memory_fg": memory_fg, "memory_bg": memory_bg},
                     top_k,

@@ -4,9 +4,9 @@ With ``--threshold auto``, the threshold is selected on the validation
 manifest and then applied unchanged to the selected evaluation split.
 
 python test.py \
---dataset_name CRAG \
+--dataset_name GlaS \
 --split test \
---checkpoint /data/mission/models/Exp/DUAL/checkpoints/k50_margin_calibrated_reverse_1337/CRAG/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5.0-w=20-16-137-image-input_mode=rgb_stain-cps_mode=native_fine_margin_calibrated_reverse/best_result2_Jc_0.8214.pth  \
+--checkpoint /data/mission/models/Exp/DUAL/checkpoints/semi_10_seed_1337_rgbstain/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image-input_mode=rgb_stain-cps_mode=standard/best_result1_Jc_0.7372.pth  \
 --input_view auto \
 --input_mode rgb_stain \
 --threshold auto

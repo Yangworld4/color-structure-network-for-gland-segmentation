@@ -42,7 +42,7 @@ We present **Feature Diversified Collaborative Learning (FDCL)**, a straightforw
 The repository also supports the prepared manifest layout directly:
 
 ```text
-datasets/GLaS/
+datasets/GlaS/
 ├── images/{train,test}/
 ├── masks/{train,test}/
 └── manifests/paper_seed_2026/
@@ -136,7 +136,7 @@ when no manifest directory is found.
 After training, test the checkpoint with the highest validation Jaccard:
 
 ```bash
-python test.py --dataset_name GlaS --path_dataset datasets/GLaS
+python test.py --dataset_name GlaS --path_dataset datasets/GlaS
 ```
 
 Evaluate the same checkpoint on the validation split instead:
@@ -144,7 +144,7 @@ Evaluate the same checkpoint on the validation split instead:
 ```bash
 python test.py \
   --dataset_name GlaS \
-  --path_dataset datasets/GLaS \
+  --path_dataset datasets/GlaS \
   --split validation
 ```
 

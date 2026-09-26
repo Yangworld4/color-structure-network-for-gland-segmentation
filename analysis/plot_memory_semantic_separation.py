@@ -24,12 +24,13 @@ from typing import Iterable
 
 import matplotlib.pyplot as plt
 import numpy as np
+from sklearn.metrics import roc_auc_score
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "outputs" / "memory_semantic_separation"
 DEFAULT_INPUT_CANDIDATES = [
-    PROJECT_ROOT / "outputs/native_scale_reference/glas_standard_cps_uni256/token_records.csv",
+    PROJECT_ROOT / "outputs/native_scale_reference/crag_standard_cps_uni256/token_records.csv",
     PROJECT_ROOT / "outputs/e4/token_records.csv",
 ]
 
@@ -215,8 +216,8 @@ def _kde(ax, values: np.ndarray, color: str) -> bool:
 def _plot(
     fg_values: np.ndarray,
     bg_values: np.ndarray,
-    fg_stats: dict[str, float | int],
-    bg_stats: dict[str, float | int],
+    balanced_accuracy: float,
+    auroc: float,
     output_dir: Path,
 ) -> None:
     all_values = np.concatenate([fg_values, bg_values])
@@ -228,42 +229,64 @@ def _plot(
     pad = max((upper - lower) * 0.05, 1e-3)
     x_range = (lower - pad, upper + pad)
 
-    fig, ax = plt.subplots(figsize=(6.5, 4.5), facecolor="white")
+    fig, ax = plt.subplots(figsize=(6.8, 4.8), facecolor="white")
     bins = np.linspace(x_range[0], x_range[1], 45)
     ax.hist(
-        bg_values, bins=bins, density=True, alpha=0.35,
+        bg_values, bins=bins, density=True, alpha=0.22,
         color="#377eb8", edgecolor="none", label="GT Background",
     )
     ax.hist(
-        fg_values, bins=bins, density=True, alpha=0.35,
+        fg_values, bins=bins, density=True, alpha=0.22,
         color="#e41a1c", edgecolor="none", label="GT Gland",
     )
     kde_bg = _kde(ax, bg_values, "#377eb8")
     kde_fg = _kde(ax, fg_values, "#e41a1c")
     ax.axvline(
         0.0, color="black", linestyle="--", linewidth=1.4,
-        label="Semantic decision boundary (Δ=0)",
+        label=r"Decision boundary ($\Delta = 0$)",
     )
     ax.set_xlim(*x_range)
-    ax.set_xlabel(r"Memory similarity margin $\Delta = S_{FG} - S_{BG}$", fontsize=11)
-    ax.set_ylabel("Density", fontsize=11)
-    ax.set_title("UNI FG/BG Memory Semantic Separation", fontsize=13, pad=10)
-    ax.legend(frameon=False, fontsize=8.5, loc="upper left")
+    ax.set_xlabel(r"Semantic margin $\Delta = S_{FG} - S_{BG}$", fontsize=10.5, labelpad=43)
+    ax.set_ylabel("Density", fontsize=10.5)
+    fig.suptitle(
+        "Semantic Separation of Unseen Validation Tokens by UNI FG/BG Memory",
+        fontsize=12,
+        y=0.98,
+    )
+    ax.legend(
+        frameon=False,
+        fontsize=8.5,
+        loc="lower center",
+        bbox_to_anchor=(0.5, 1.02),
+        ncol=3,
+        handlelength=1.8,
+        columnspacing=1.2,
+    )
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
-    ax.tick_params(labelsize=9)
+    ax.tick_params(labelsize=9, direction="out", length=3)
+    ax.margins(y=0.32)
     ax.text(
         0.98, 0.97,
-        "FG correct sign: {:.1f}%\nBG correct sign: {:.1f}%\nBalanced acc.: {:.1f}%".format(
-            100.0 * float(fg_stats["correct_sign_rate"]),
-            100.0 * float(bg_stats["correct_sign_rate"]),
-            50.0 * (float(fg_stats["correct_sign_rate"]) + float(bg_stats["correct_sign_rate"])),
+        "Balanced Accuracy: {:.1f}%\nAUROC: {:.1f}%".format(
+            100.0 * balanced_accuracy,
+            100.0 * auroc,
         ),
         transform=ax.transAxes,
         ha="right", va="top", fontsize=9,
         bbox=dict(boxstyle="round,pad=0.35", facecolor="white", edgecolor="#bbbbbb", alpha=0.9),
     )
-    fig.tight_layout()
+    ax.text(
+        0.01, -0.19, r"$\Delta < 0$: BG-favoring",
+        transform=ax.transAxes, ha="left", va="top", fontsize=8,
+        color="#377eb8", clip_on=False,
+    )
+    ax.text(
+        0.99, -0.19, r"$\Delta > 0$: FG-favoring",
+        transform=ax.transAxes, ha="right", va="top", fontsize=8,
+        color="#e41a1c", clip_on=False,
+    )
+    fig.tight_layout(rect=(0, 0.015, 1, 0.88))
     fig.savefig(output_dir / "memory_margin_distribution.png", dpi=300, bbox_inches="tight")
     fig.savefig(output_dir / "memory_margin_distribution.pdf", bbox_inches="tight")
     plt.close(fig)
@@ -314,6 +337,7 @@ def main() -> None:
     balanced_accuracy = 0.5 * (
         float(fg_stats["correct_sign_rate"]) + float(bg_stats["correct_sign_rate"])
     )
+    auroc = float(roc_auc_score(classes, margins))
 
     all_stats = _stats_for(margins, True)
     all_stats["correct_sign_rate"] = float(balanced_accuracy)
@@ -343,7 +367,7 @@ def main() -> None:
         ["subset", "gt_class", "n", "mean_delta", "median_delta", "min_delta", "max_delta", "correct_sign_rate"],
     )
 
-    has_kde = _plot(fg_values, bg_values, fg_stats, bg_stats, output_dir)
+    has_kde = _plot(fg_values, bg_values, balanced_accuracy, auroc, output_dir)
     summary = {
         "input": str(input_path),
         "output_dir": str(output_dir),
@@ -360,6 +384,7 @@ def main() -> None:
         "fg": fg_stats,
         "bg": bg_stats,
         "balanced_accuracy": float(balanced_accuracy),
+        "auroc": auroc,
         "source_columns": column_info,
         "kde_available": bool(has_kde),
         "plot_forward_performed": False,
@@ -422,6 +447,7 @@ Outputs:
     print(f"  median: {bg_stats['median_delta']:.6f}")
     print(f"  correct-sign rate P(Δ<0): {bg_stats['correct_sign_rate']:.6f}")
     print(f"Balanced semantic accuracy: {balanced_accuracy:.6f}")
+    print(f"AUROC: {auroc:.6f}")
     print("\nOutput:")
     print(output_dir)
 
