@@ -1,0 +1,67 @@
+==============================================================
+UNI Reference Retrieval Diagnostic
+K = 50
+tau = 0.1
+==============================================================
+
+Memory path: /data/mission/models/Exp/DUAL/checkpoints/semi_10_seed_1337_rgbstain_coarse2fine/GlaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5.0-w=20-7-61-image-input_mode=rgb_stain-cps_mode=native_fine_margin_calibrated_reverse/reference_memory_uni256.npz
+Memory FG tokens: 437
+Memory BG tokens: 355
+Total memory size: 792
+Checkpoint: /data/mission/models/Exp/DUAL/checkpoints/semi_10_seed_1337_rgb/GlaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image-input_mode=rgb_rgb-cps_mode=standard/best_synchronized_mean_val.pth
+Checkpoint epoch: 194
+Selected synchronized raw CPS checkpoint: /data/mission/models/Exp/DUAL/checkpoints/semi_10_seed_1337_rgb/GlaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image-input_mode=rgb_rgb-cps_mode=standard/best_synchronized_mean_val.pth
+Student A validation-best branch: /data/mission/models/Exp/DUAL/checkpoints/semi_10_seed_1337_rgb/GlaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image-input_mode=rgb_rgb-cps_mode=standard/best_result1_Jc_0.7130.pth
+Student B validation-best branch: /data/mission/models/Exp/DUAL/checkpoints/semi_10_seed_1337_rgb/GlaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image-input_mode=rgb_rgb-cps_mode=standard/best_result2_Jc_0.7228.pth
+Validation manifest: /data/mission/models/Exp/DUAL/datasets/GlaS/manifests/paper_seed_2026/validation.csv
+Validation images: 17
+Agreement tokens recorded: 4256
+UNI weights: /home/yangorange/.cache/huggingface/hub/models--MahmoodLab--UNI/blobs/56ef09b44a25dc5c7eedc55551b3d47bcd17659a7a33837cf9abc9ec4e2ffb40
+UNI config: /home/yangorange/.cache/huggingface/hub/models--MahmoodLab--UNI/blobs/d1eeee30ef2ce2f029894755d37229ad9f2d026d
+Region masks: reused token-level definitions from diagnose_contradiction_enrichment.py; agreement tokens form ALL.
+CC = student agreement and token prediction equals GT; WW = agreement and token prediction differs from GT; HC90WW = WW and both pooled student confidences >= 0.90.
+Shared FP/FN use the same WW mask and the agreed prediction relative to GT.
+
+[Direction accuracy: correct / valid (uncertain ties excluded; counts shown)]
+Metric             ClassTopK   GlobalMajority   GlobalWeighted
+ALL                  90.6720%         91.3785%         90.5310% | N=4256 valid=4256/4222/4256 uncertain=0/34/0
+CC                   93.5160%         94.5791%         93.1362% | N=3686 valid=3686/3671/3686 uncertain=0/15/0
+WW                   72.2807%         70.0544%         73.6842% | N=570 valid=570/551/570 uncertain=0/19/0
+HC90WW               75.7862%         71.1921%         76.7296% | N=318 valid=318/302/318 uncertain=0/16/0
+Shared FP            66.6667%         61.1307%         69.0236% | N=297 valid=297/283/297 uncertain=0/14/0
+Shared FN            78.3883%         79.4776%         78.7546% | N=273 valid=273/268/273 uncertain=0/5/0
+
+[Delta vs Current Class-wise Top-K, percentage points]
+ALL                Global Majority +0.71 pp | Global Weighted -0.14 pp
+CC                 Global Majority +1.06 pp | Global Weighted -0.38 pp
+WW                 Global Majority -2.23 pp | Global Weighted +1.40 pp
+HC90WW             Global Majority -4.59 pp | Global Weighted +0.94 pp
+Shared FP          Global Majority -5.54 pp | Global Weighted +2.36 pp
+Shared FN          Global Majority +1.09 pp | Global Weighted +0.37 pp
+
+[Global Top-K retrieval statistics; Methods B and C share retrieved neighbors]
+Region | mean FG neighbor ratio | mean BG neighbor ratio | mean majority ratio | mean Top50 cosine | mean max cosine
+CC | 47.0114% | 52.9886% | 92.1183% | 0.401127 | 0.515202
+WW | 56.1860% | 43.8140% | 80.3193% | 0.349385 | 0.491586
+HC90WW | 57.4088% | 42.5912% | 78.6164% | 0.357341 | 0.516901
+Shared FP | 42.2761% | 57.7239% | 77.6835% | 0.313720 | 0.476413
+Shared FN | 71.3187% | 28.6813% | 83.1868% | 0.388185 | 0.508092
+
+[Weighted confidence statistics]
+Region | mean P_ref(FG) | mean C_prob | median C_prob | mean C_vote | mean S_mean | correct mean C_prob (N) | wrong mean C_prob (N)
+CC | 0.465271 | 0.858395 | 0.970328 | 0.921183 | 0.401127 | 0.885962 (3433) | 0.484339 (253)
+WW | 0.527679 | 0.717961 | 0.791668 | 0.803193 | 0.349385 | 0.747003 (420) | 0.636643 (150)
+HC90WW | 0.513700 | 0.752172 | 0.835311 | 0.786164 | 0.357341 | 0.762087 (244) | 0.719480 (74)
+Shared FP | 0.342853 | 0.723181 | 0.819384 | 0.776835 | 0.313720 | 0.751536 (205) | 0.659997 (92)
+Shared FN | 0.728754 | 0.712282 | 0.767911 | 0.831868 | 0.388185 | 0.742681 (215) | 0.599599 (58)
+
+[Sanity checks]
+1. Global memory = FG + BG: PASS (792 = 437 + 355)
+2. Every global retrieval has K=50: PASS
+3. softmax weights sum to one within 1e-5: PASS
+4. weighted P(FG)+P(BG)=1 within 1e-5: PASS
+5. Classwise Top-K reproduces existing raw CPS diagnostic: PASS against /data/mission/models/Exp/DUAL/outputs/contradiction_enrichment_glas10_seed1337/contradiction_token_records.csv: population/masks exact; max FG score diff=1.79e-07; max BG score diff=1.19e-07; ALL direction accuracy=0.906720
+Method A scores also matched utils.native_reference._reference_scores tokenwise (score comparison atol=2e-5, rtol=2e-5).
+
+CSV: /data/mission/models/Exp/DUAL/outputs/global_topk_k50_glas10_seed1337_rawcps/global_topk_k50_token_records.csv
+Summary: /data/mission/models/Exp/DUAL/outputs/global_topk_k50_glas10_seed1337_rawcps/global_topk_k50_summary.txt
