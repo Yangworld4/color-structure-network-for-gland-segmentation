@@ -61,6 +61,23 @@ NATIVE_TRAINING_FIELDS = [
     'q_risk_p75', 'q_risk_p90', 'mean_CPS_weight_risk',
     'mean_opposite_weight_risk', 'risk_budget', 'risk_weight_sum_max_error',
     'loss_risk_severity',
+    'num_K_pixels', 'num_M_corr_pixels', 'num_M_keep_pixels',
+    'num_M_dis_pixels', 'M_dis_over_K', 'aligned_A_pixels',
+    'aligned_B_pixels', 'mean_q_M_dis', 'mean_harmful_weight_M_dis',
+    'fraction_q_gt_0.5_M_dis', 'effective_suppressed_mass_all_valid',
+    'loss_A_from_B_before', 'loss_A_from_B_after',
+    'loss_B_from_A_before', 'loss_B_from_A_after',
+    'num_coarse_agreement_tokens', 'num_coarse_disagreement_tokens',
+    'fraction_coarse_disagreement', 'num_CD_pixels', 'num_CD_agree_U',
+    'num_CD_agree_opp', 'num_CD_dis', 'num_CD_dis_consistent',
+    'num_CD_dis_flip', 'CD_agree_opp_over_CD', 'CD_dis_over_CD',
+    'CD_dis_consistent_over_CD_dis', 'CD_dis_flip_over_CD_dis',
+    'mean_q_cd', 'mean_q_cd_CD_agree_opp',
+    'mean_q_cd_CD_dis_consistent', 'global_cd_agree_suppressed_mass',
+    'global_cd_dis_suppressed_mass', 'CD_agree_CPS_before_suppression',
+    'CD_agree_CPS_after_suppression', 'CD_dis_A_from_B_before',
+    'CD_dis_A_from_B_after', 'CD_dis_B_from_A_before',
+    'CD_dis_B_from_A_after',
 ]
 
 
@@ -190,4 +207,3 @@ def log_epoch(logger, args, metrics):
         metrics['best_val_jaccard'],
         metrics['epoch_seconds'],
     )
-

@@ -305,7 +305,8 @@ def parse_args():
             'native_fine_margin_suppression uses (1-q) CPS only on risky pixels; '
             'native_fine_margin_reverse uses CPS plus q-weighted opposite loss; '
             'native_fine_margin_calibrated_reverse '
-            'uses q=D/(D+tau) with train-only LOO tau.'
+            'uses q=D/(D+tau) with train-only LOO tau; '
+            'native_fine_margin_calibrated_reverse_disroute additionally routes fine disagreement CPS by q.'
         ),
     )
     parser.add_argument(
@@ -399,6 +400,7 @@ def parse_args():
             'native_fine_margin_suppression': 'checkpoints/k50_margin_suppression',
             'native_fine_margin_reverse': 'checkpoints/k50_margin_reverse',
             'native_fine_margin_calibrated_reverse': 'checkpoints/k50_margin_calibrated_reverse',
+            'native_fine_margin_calibrated_reverse_disroute': 'checkpoints/k50_margin_calibrated_reverse_disroute',
         }
         args.path_trained_models = default_checkpoints.get(
             args.reference_mode,
@@ -409,6 +411,7 @@ def parse_args():
             'native_fine_margin_suppression': 'seg_pred/k50_margin_suppression',
             'native_fine_margin_reverse': 'seg_pred/k50_margin_reverse',
             'native_fine_margin_calibrated_reverse': 'seg_pred/k50_margin_calibrated_reverse',
+            'native_fine_margin_calibrated_reverse_disroute': 'seg_pred/k50_margin_calibrated_reverse_disroute',
         }
         args.path_seg_results = default_seg_results.get(
             args.reference_mode,

@@ -67,6 +67,7 @@ def compute_cps_losses(
         'native_fine_margin_suppression',
         'native_fine_margin_reverse',
         'native_fine_margin_calibrated_reverse',
+        'native_fine_margin_calibrated_reverse_disroute',
     }
     if cps_mode not in native_modes:
         raise ValueError('Unsupported CPS mode: {}'.format(cps_mode))
@@ -85,6 +86,7 @@ def compute_cps_losses(
         fine['risk_pixel'][:, 0],
         fine['q_pixel'][:, 0],
         fine['opposite_target_pixel'][:, 0],
+        fine,
         cps_mode,
     )
 
@@ -97,6 +99,7 @@ def compute_native_margin_calibrated_anti_confirmation_losses(
     risk_pixel,
     q_pixel,
     opposite_target_pixel,
+    fine_stats,
     mode,
 ):
     """Margin-calibrated ablations on fine-selective risk pixels.
@@ -123,15 +126,27 @@ def compute_native_margin_calibrated_anti_confirmation_losses(
     current_a = ce_none(prediction1, pseudo2)
     current_b = ce_none(prediction2, pseudo1)
     opposite_target = opposite_target_pixel.long().detach()
-    opposite_a = ce_none(prediction1, opposite_target)
-    opposite_b = ce_none(prediction2, opposite_target)
+    if mode == 'native_fine_margin_calibrated_reverse_disroute':
+        # Outside M_corr, retain student-generated targets even in this
+        # unused intermediate tensor. In particular, never construct a
+        # UNI-equivalent pixel target on M_dis.
+        opposite_target_a = torch.where(risk_pixel, opposite_target, pseudo2)
+        opposite_target_b = torch.where(risk_pixel, opposite_target, pseudo1)
+    else:
+        opposite_target_a = opposite_target
+        opposite_target_b = opposite_target
+    opposite_a = ce_none(prediction1, opposite_target_a)
+    opposite_b = ce_none(prediction2, opposite_target_b)
     if mode == 'native_fine_margin_suppression':
         cps_weight = 1.0 - q_pixel
         opposite_weight = torch.zeros_like(q_pixel)
     elif mode == 'native_fine_margin_reverse':
         cps_weight = torch.ones_like(q_pixel)
         opposite_weight = q_pixel
-    elif mode == 'native_fine_margin_calibrated_reverse':
+    elif mode in (
+        'native_fine_margin_calibrated_reverse',
+        'native_fine_margin_calibrated_reverse_disroute',
+    ):
         cps_weight = 1.0 - q_pixel
         opposite_weight = q_pixel
     else:
@@ -140,6 +155,57 @@ def compute_native_margin_calibrated_anti_confirmation_losses(
     risk_b = cps_weight * current_b + opposite_weight * opposite_b
     effective_a = torch.where(risk_pixel, risk_a, current_a)
     effective_b = torch.where(risk_pixel, risk_b, current_b)
+    routing_metrics = {}
+    if mode == 'native_fine_margin_calibrated_reverse_disroute':
+        m_corr = fine_stats['M_corr_pixel'][:, 0]
+        m_keep = fine_stats['M_keep_pixel'][:, 0]
+        m_dis = fine_stats['M_dis_pixel'][:, 0]
+        aligned_a = fine_stats['aligned_A_pixel'][:, 0]
+        aligned_b = fine_stats['aligned_B_pixel'][:, 0]
+        k_mask = fine_stats['K_pixel'][:, 0]
+        if not torch.equal(m_corr, risk_pixel):
+            raise AssertionError('M_corr differs from the existing risk mask')
+        if torch.any((m_corr & m_keep) | (m_corr & m_dis) | (m_keep & m_dis)):
+            raise AssertionError('Fine contradiction partition overlaps')
+        if not torch.equal(m_corr | m_keep | m_dis, k_mask):
+            raise AssertionError('Fine contradiction partition does not cover K')
+        if m_dis.any().item() and not torch.all(aligned_a[m_dis] ^ aligned_b[m_dis]).item():
+            raise AssertionError('Exactly one Student must align with UNI in M_dis')
+        weight_a = torch.ones_like(q_pixel)
+        weight_b = torch.ones_like(q_pixel)
+        weight_a[aligned_a] = 1.0 - q_pixel[aligned_a]
+        weight_b[aligned_b] = 1.0 - q_pixel[aligned_b]
+        if not (torch.all((weight_a >= 0) & (weight_a <= 1)).item()
+                and torch.all((weight_b >= 0) & (weight_b <= 1)).item()):
+            raise AssertionError('Directional CPS weight escaped [0,1]')
+        routed_a = weight_a * current_a
+        routed_b = weight_b * current_b
+        effective_a = torch.where(m_dis, routed_a, effective_a)
+        effective_b = torch.where(m_dis, routed_b, effective_b)
+        if not torch.equal(effective_a[m_corr], risk_a[m_corr]) or not torch.equal(
+            effective_b[m_corr], risk_b[m_corr]
+        ):
+            raise AssertionError('M_corr loss changed under fine routing')
+        untouched = m_keep | ~k_mask
+        if not torch.equal(effective_a[untouched], current_a[untouched]) or not torch.equal(
+            effective_b[untouched], current_b[untouched]
+        ):
+            raise AssertionError('M_keep/non-K loss changed under fine routing')
+        routing_metrics = {
+            'num_K_pixels': k_mask.sum().detach(),
+            'num_M_corr_pixels': m_corr.sum().detach(),
+            'num_M_keep_pixels': m_keep.sum().detach(),
+            'num_M_dis_pixels': m_dis.sum().detach(),
+            'aligned_A_pixels': aligned_a.sum().detach(),
+            'aligned_B_pixels': aligned_b.sum().detach(),
+            'q_M_dis': q_pixel[m_dis].detach(),
+            'harmful_weight_M_dis': (1.0 - q_pixel[m_dis]).detach(),
+            'effective_suppressed_mass': (m_dis.to(q_pixel.dtype) * q_pixel).detach(),
+            'loss_A_from_B_before': current_a[valid1].detach(),
+            'loss_A_from_B_after': effective_a[valid1].detach(),
+            'loss_B_from_A_before': current_b[valid2].detach(),
+            'loss_B_from_A_after': effective_b[valid2].detach(),
+        }
     loss_a_to_b = 0.5 * effective_a[valid1].mean()
     loss_b_to_a = 0.5 * effective_b[valid2].mean()
     raw_a = 0.5 * current_a[valid1].mean()
@@ -164,4 +230,70 @@ def compute_native_margin_calibrated_anti_confirmation_losses(
         'risk_pixel_count': risk_pixel.sum().detach(),
         'cps_weight_risk': cps_weight[risk_pixel].detach(),
         'opposite_weight_risk': opposite_weight[risk_pixel].detach(),
+        **routing_metrics,
     }
+
+
+def deterministic_disroute_sanity():
+    """Check hand-authored directional CPS weights and endpoint behavior."""
+    q = torch.tensor([0.8, 0.8])
+    uni = torch.tensor([0, 0])  # BG
+    a = torch.tensor([0, 1])
+    b = torch.tensor([1, 0])
+    aligned_a, aligned_b = a.eq(uni), b.eq(uni)
+    weight_a, weight_b = torch.ones_like(q), torch.ones_like(q)
+    weight_a[aligned_a] = 1.0 - q[aligned_a]
+    weight_b[aligned_b] = 1.0 - q[aligned_b]
+    if not torch.allclose(weight_a, torch.tensor([0.2, 1.0])):
+        raise AssertionError('Case A/B A<-B directional weight is reversed')
+    if not torch.allclose(weight_b, torch.tensor([1.0, 0.2])):
+        raise AssertionError('Case A/B B<-A directional weight is reversed')
+    if not torch.equal(1.0 - torch.zeros_like(q), torch.ones_like(q)):
+        raise AssertionError('q=0 must reduce to vanilla CPS')
+    if not torch.equal(1.0 - torch.ones_like(q), torch.zeros_like(q)):
+        raise AssertionError('q=1 must close the harmful direction')
+    # At q=1, only the aligned->opposed incoming direction remains.
+    q_one = torch.ones_like(q)
+    w_a_one = torch.ones_like(q_one)
+    w_b_one = torch.ones_like(q_one)
+    w_a_one[aligned_a] = 1.0 - q_one[aligned_a]
+    w_b_one[aligned_b] = 1.0 - q_one[aligned_b]
+    if not torch.equal(w_a_one, torch.tensor([0.0, 1.0])):
+        raise AssertionError('q=1 must retain only A->B when A is aligned')
+    if not torch.equal(w_b_one, torch.tensor([1.0, 0.0])):
+        raise AssertionError('q=1 must retain only B->A when B is aligned')
+    # At q=0 on M_dis, compare the new mode against the current mode while
+    # keeping q nonzero on M_corr. This covers M_corr, M_keep and non-K.
+    ce_none = torch.nn.CrossEntropyLoss(reduction='none', ignore_index=-1)
+    logits_a = torch.tensor([[[[3., 0., 3., 0., 3.]], [[0., 3., 0., 3., 0.]]]])
+    logits_b = torch.tensor([[[[0., 3., 0., 3., 0.]], [[3., 0., 3., 0., 3.]]]])
+    k = torch.tensor([[[[True, True, True, True, False]]]])
+    corr = torch.tensor([[[[True, False, False, False, False]]]])
+    keep = torch.tensor([[[[False, True, False, False, False]]]])
+    dis = torch.tensor([[[[False, False, True, True, False]]]])
+    q_pixels = torch.tensor([[[[0.6, 0.2, 0., 0., 0.]]]])
+    fine = {
+        'risk_pixel': corr,
+        'q_pixel': q_pixels,
+        'opposite_target_pixel': torch.tensor([[[[1, 0, 0, 0, 0]]]]),
+        'K_pixel': k,
+        'M_corr_pixel': corr,
+        'M_keep_pixel': keep,
+        'M_dis_pixel': dis,
+        'aligned_A_pixel': torch.tensor([[[[False, False, True, False, False]]]]),
+        'aligned_B_pixel': torch.tensor([[[[False, False, False, True, False]]]]),
+    }
+    reference = {'fine_stats': fine}
+    old_loss = compute_cps_losses(
+        ce_none, logits_a, logits_b,
+        cps_mode='native_fine_margin_calibrated_reverse',
+        ce_none=ce_none, reference_targets=reference,
+    )
+    new_loss = compute_cps_losses(
+        ce_none, logits_a, logits_b,
+        cps_mode='native_fine_margin_calibrated_reverse_disroute',
+        ce_none=ce_none, reference_targets=reference,
+    )
+    if not torch.equal(old_loss['total'], new_loss['total']):
+        raise AssertionError('M_corr/M_keep/non-K changed when M_dis q=0')
+    return True

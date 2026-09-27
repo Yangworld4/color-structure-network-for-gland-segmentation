@@ -38,12 +38,14 @@ MARGIN_CALIBRATED_MODES = (
     'native_fine_margin_suppression',
     'native_fine_margin_reverse',
     'native_fine_margin_calibrated_reverse',
+    'native_fine_margin_calibrated_reverse_disroute',
 )
 NATIVE_REFERENCE_MODES = MARGIN_CALIBRATED_MODES
 NATIVE_MODE_TAGS = {
     'native_fine_margin_suppression': 'native_fine_margin_suppression_s',
     'native_fine_margin_reverse': 'native_fine_margin_reverse_s',
     'native_fine_margin_calibrated_reverse': 'native_fine_margin_calibrated_reverse_s',
+    'native_fine_margin_calibrated_reverse_disroute': 'native_fine_margin_calibrated_reverse_disroute_s',
 }
 
 

@@ -51,7 +51,7 @@ from utils.native_reference import (
     _uni_dense_features, _uses_uni_reference,
 )
 from training.cps import (
-    _pixel_entropy, compute_cps_losses,
+    _pixel_entropy, compute_cps_losses, deterministic_disroute_sanity,
     compute_supervised_loss, get_training_views,
 )
 
@@ -311,6 +311,43 @@ def _build_native_reference_targets(logits_a, logits_b, rgb_input, context, cfg,
             'q_pixel': q_pixel,
             'opposite_target_pixel': opposite_target_pixel,
         })
+        if args.cps_mode == 'native_fine_margin_calibrated_reverse_disroute':
+            uni_pixel = F.interpolate(
+                uni_fg.float(), size=prob_a.shape[-2:], mode='nearest'
+            ).ge(0.5)
+            m_corr = risk_pixel[:, 0]
+            m_keep = (
+                contradiction_pixel[:, 0]
+                & hard_a_pixel[:, 0].eq(hard_b_pixel[:, 0])
+                & hard_a_pixel[:, 0].eq(uni_pixel[:, 0])
+            ).detach()
+            m_dis = (
+                contradiction_pixel[:, 0]
+                & hard_a_pixel[:, 0].ne(hard_b_pixel[:, 0])
+            ).detach()
+            aligned_a = (m_dis & hard_a_pixel[:, 0].eq(uni_pixel[:, 0])).detach()
+            aligned_b = (m_dis & hard_b_pixel[:, 0].eq(uni_pixel[:, 0])).detach()
+            k_pixel = contradiction_pixel[:, 0].detach()
+            if not torch.equal(m_corr | m_keep | m_dis, k_pixel):
+                raise AssertionError('Fine M_corr/M_keep/M_dis do not partition K')
+            if torch.any((m_corr & m_keep) | (m_corr & m_dis) | (m_keep & m_dis)):
+                raise AssertionError('Fine K partition has overlapping masks')
+            if not torch.equal(m_corr, risk_pixel[:, 0]):
+                raise AssertionError('M_corr changed from the existing loss mask')
+            if m_dis.any().item():
+                if not torch.all(hard_a_pixel[:, 0][m_dis].ne(hard_b_pixel[:, 0][m_dis])).item():
+                    raise AssertionError('M_dis contains fine Student agreement')
+                if not torch.all(aligned_a[m_dis] ^ aligned_b[m_dis]).item():
+                    raise AssertionError('M_dis must have exactly one UNI-aligned Student')
+            fine_stats.update({
+                'K_pixel': k_pixel[:, None],
+                'M_corr_pixel': m_corr[:, None],
+                'M_keep_pixel': m_keep[:, None],
+                'M_dis_pixel': m_dis[:, None],
+                'aligned_A_pixel': aligned_a[:, None],
+                'aligned_B_pixel': aligned_b[:, None],
+                'Ct_pixel': consensus_pixel.detach(),
+            })
     return {
         'p_a_token': p_a_token, 'p_b_token': p_b_token,
         'hard_a': hard_a, 'hard_b': hard_b,
@@ -368,6 +405,9 @@ def _run_native_startup_checks(args, context, models, optimizers):
         print('Calibration source:   labeled train-only image-level LOO K={}'.format(args.uni_k))
         print('tau:                  {:.8f}'.format(float(calibration['tau'])))
         print('Extra hyperparameters: none')
+    if args.cps_mode == 'native_fine_margin_calibrated_reverse_disroute':
+        deterministic_disroute_sanity()
+        print('Fine disagreement directional CPS sanity: PASS')
 
 def train_one_epoch(
     args,
@@ -420,6 +460,20 @@ def train_one_epoch(
             'sum_unsup_total': 0.0,
             'q_values': [], 'q_d_values': [], 'q_cps_weights': [], 'q_opp_weights': [],
             'q_weight_sum_errors': [], 'q_risk_loss': 0.0,
+            'route_counts': {
+                key: 0.0 for key in (
+                    'num_K_pixels', 'num_M_corr_pixels', 'num_M_keep_pixels',
+                    'num_M_dis_pixels', 'aligned_A_pixels', 'aligned_B_pixels',
+                )
+            },
+            'route_q': [], 'route_harmful_weight': [],
+            'route_suppressed_mass': 0.0, 'route_all_valid_pixels': 0.0,
+            'route_directional_losses': {
+                key: [] for key in (
+                    'loss_A_from_B_before', 'loss_A_from_B_after',
+                    'loss_B_from_A_before', 'loss_B_from_A_after',
+                )
+            },
         }
     mask_list = None
 
@@ -537,6 +591,25 @@ def train_one_epoch(
             native_totals['native_ref_loss'] += float(native_ref_loss.detach().item())
             native_totals['total_loss'] += float(total_loss.detach().item())
             native_totals['batches'] += 1.0
+            if args.cps_mode == 'native_fine_margin_calibrated_reverse_disroute':
+                for name in native_totals['route_counts']:
+                    native_totals['route_counts'][name] += float(
+                        cps_losses[name].item()
+                    )
+                q_dis = cps_losses['q_M_dis'].detach().cpu().tolist()
+                harmful = cps_losses['harmful_weight_M_dis'].detach().cpu().tolist()
+                native_totals['route_q'].extend(q_dis)
+                native_totals['route_harmful_weight'].extend(harmful)
+                native_totals['route_suppressed_mass'] += float(
+                    cps_losses['effective_suppressed_mass'].sum().item()
+                )
+                native_totals['route_all_valid_pixels'] += float(
+                    reference_targets['fine_stats']['all_pixel_count']
+                )
+                for name in native_totals['route_directional_losses']:
+                    native_totals['route_directional_losses'][name].extend(
+                        cps_losses[name].detach().cpu().tolist()
+                    )
             if _is_margin_calibrated_mode(args):
                 fine_stats = reference_targets['fine_stats']
                 native_totals['regionwise_candidate_pixels'] += float(
@@ -844,6 +917,30 @@ def _native_validation_diagnostic(validation, dataloader, context, cfg, args):
                 ('hc_mae_sum', (pca - occ).abs()[hc_token].sum()),
             ):
                 totals[key] += float(value.item())
+            if args.cps_mode == 'native_fine_margin_calibrated_reverse_disroute':
+                fine = targets['fine_stats']
+                m_dis = fine['M_dis_pixel'][:, 0] & valid
+                aligned_a = fine['aligned_A_pixel'][:, 0]
+                aligned_b = fine['aligned_B_pixel'][:, 0]
+                ct_fg = fine['Ct_pixel'][:, 0]
+                for region, region_mask in (
+                    ('all', m_dis),
+                    ('ct_fg', m_dis & ct_fg),
+                    ('ct_bg', m_dis & ~ct_fg),
+                ):
+                    n_dis = region_mask.sum()
+                    totals['m_dis_' + region + '_pixels'] += float(n_dis.item())
+                    if n_dis.item():
+                        # The two masks are XOR within M_dis, so this also
+                        # selects which prediction is UNI-aligned/opposed.
+                        aligned_pred = torch.where(aligned_a, hard_a, hard_b)
+                        opposed_pred = torch.where(aligned_a, hard_b, hard_a)
+                        totals['m_dis_' + region + '_aligned_correct'] += float(
+                            (aligned_pred.eq(gt) & region_mask).sum().item()
+                        )
+                        totals['m_dis_' + region + '_opposed_correct'] += float(
+                            (opposed_pred.eq(gt) & region_mask).sum().item()
+                        )
 
             # Connected-component counts are validation-only diagnostics.
             try:
@@ -920,6 +1017,16 @@ def _native_validation_diagnostic(validation, dataloader, context, cfg, args):
         ),
         'HC_token_MAE': _safe_mean(totals['hc_mae_sum'], hc_tokens),
     }
+    if args.cps_mode == 'native_fine_margin_calibrated_reverse_disroute':
+        for region in ('all', 'ct_fg', 'ct_bg'):
+            count = totals['m_dis_' + region + '_pixels']
+            native['M_dis_' + region + '_pixels'] = int(count)
+            native['M_dis_' + region + '_UNI_aligned_accuracy'] = _safe_mean(
+                totals['m_dis_' + region + '_aligned_correct'], count
+            )
+            native['M_dis_' + region + '_opposed_accuracy'] = _safe_mean(
+                totals['m_dis_' + region + '_opposed_correct'], count
+            )
     event_row = {'epoch': 0}
     for name in ('WW', 'HC90WW', 'Shared_FP', 'Shared_FN'):
         event_row[name + '_events'] = int(events[name])
@@ -1035,6 +1142,16 @@ def train_model(
             adaptive_strategy = 'labeled_train_margin_calibrated_directional_mixture'
             loss_formula = 'w_cps=1-q; w_opp=q on fine risky pixels'
             reverse_target_description = 'opposite detached token consensus; mixed only on fine risky pixels'
+        if args.reference_mode == 'native_fine_margin_calibrated_reverse_disroute':
+            adaptive_strategy = 'existing_margin_calibrated_C2F_plus_fine_disagreement_directional_routing'
+            loss_formula = (
+                'unchanged (1-q) CPS + q opposite risk loss on M_corr; '
+                'M_dis incoming CPS weight is 1-q only for UNI-aligned receiver'
+            )
+            reverse_target_description = (
+                'opposite detached token consensus on M_corr only; '
+                'UNI is a router and never a fine pixel target'
+            )
         if args.reference_mode == 'native_fine_margin_suppression':
             reverse_target_description = 'disabled'
         native_config = {
@@ -1053,7 +1170,12 @@ def train_model(
             'cdf': 'not used',
             'running_buffer': 'disabled',
             'd_adaptive_formula': 'q=D/(D+tau+eps); {}; tau is fixed labeled-train LOO statistic'.format(loss_formula),
-            'pixel_selection': 'token contradiction AND pixel student agreement AND pixel consensus equals token consensus',
+            'pixel_selection': (
+                'K partitioned into M_corr (A=B=Ct), M_keep (A=B=Ut), '
+                'M_dis (A!=B); fine routing only on M_dis'
+                if args.reference_mode == 'native_fine_margin_calibrated_reverse_disroute'
+                else 'token contradiction AND pixel student agreement AND pixel consensus equals token consensus'
+            ),
             'reverse_target': reverse_target_description,
             'contradiction_gate': 'detach pooled pA/pB; agreement and UNI margin sign only; no GT',
             'loss_weight_expansion': 'nearest 16x16 -> student pixel resolution',
@@ -1179,6 +1301,14 @@ def train_model(
             shared_fields = ['epoch', 'valid_pixels', 'CC_rate', 'WW_rate', 'HC90WW_rate', 'Shared_FP_rate', 'Shared_FN_rate', 'WW_pixels', 'HC90WW_pixels', 'Shared_FP_pixels', 'Shared_FN_pixels']
             native_validation_writer = csv.DictWriter(native_validation_file, fieldnames=shared_fields)
             state_fields = ['epoch', 'contradiction_tokens', 'hc_contradiction_tokens', 'contradiction_rate', 'hc_contradiction_rate', 'mean_WW_ratio_contradiction', 'mean_HC90WW_ratio_contradiction', 'mean_CC_ratio_contradiction', 'mean_WW_ratio_hc_contradiction', 'mean_HC90WW_ratio_hc_contradiction', 'mean_CC_ratio_hc_contradiction', 'direction_accuracy', 'HC_token_MAE']
+            if args.cps_mode == 'native_fine_margin_calibrated_reverse_disroute':
+                state_fields += [
+                    'M_dis_all_pixels', 'M_dis_all_UNI_aligned_accuracy',
+                    'M_dis_all_opposed_accuracy', 'M_dis_ct_fg_pixels',
+                    'M_dis_ct_fg_UNI_aligned_accuracy', 'M_dis_ct_fg_opposed_accuracy',
+                    'M_dis_ct_bg_pixels', 'M_dis_ct_bg_UNI_aligned_accuracy',
+                    'M_dis_ct_bg_opposed_accuracy',
+                ]
             native_state_writer = csv.DictWriter(native_state_file, fieldnames=state_fields)
             event_fields = ['epoch'] + [x for name in ('WW', 'HC90WW', 'Shared_FP', 'Shared_FN') for x in (name + '_events', name + '_images', name + '_events_per_image')]
             native_events_writer = csv.DictWriter(native_events_file, fieldnames=event_fields)
@@ -1613,6 +1743,27 @@ def train_model(
                             'risk_weight_sum_max_error': float(q_errors.max()) if q_errors.size else 0.0,
                             'loss_risk_severity': _safe_mean(native['q_risk_loss'], native['batches']),
                         })
+                if args.cps_mode == 'native_fine_margin_calibrated_reverse_disroute':
+                    route_counts = native['route_counts']
+                    route_q = np.asarray(native['route_q'], dtype=np.float64)
+                    route_harmful = np.asarray(native['route_harmful_weight'], dtype=np.float64)
+                    directional = native['route_directional_losses']
+                    k_count = route_counts['num_K_pixels']
+                    dis_count = route_counts['num_M_dis_pixels']
+                    adaptive_stats.update({
+                        **{name: int(value) for name, value in route_counts.items()},
+                        'M_dis_over_K': _safe_mean(dis_count, k_count),
+                        'mean_q_M_dis': float(route_q.mean()) if route_q.size else None,
+                        'mean_harmful_weight_M_dis': float(route_harmful.mean()) if route_harmful.size else None,
+                        'fraction_q_gt_0.5_M_dis': float((route_q > 0.5).mean()) if route_q.size else None,
+                        'effective_suppressed_mass_all_valid': _safe_mean(
+                            native['route_suppressed_mass'], native['route_all_valid_pixels']
+                        ),
+                        'loss_A_from_B_before': float(np.mean(directional['loss_A_from_B_before'])) if directional['loss_A_from_B_before'] else None,
+                        'loss_A_from_B_after': float(np.mean(directional['loss_A_from_B_after'])) if directional['loss_A_from_B_after'] else None,
+                        'loss_B_from_A_before': float(np.mean(directional['loss_B_from_A_before'])) if directional['loss_B_from_A_before'] else None,
+                        'loss_B_from_A_after': float(np.mean(directional['loss_B_from_A_after'])) if directional['loss_B_from_A_after'] else None,
+                    })
                 native_training_writer.writerow({
                     'experiment': args.reference_mode,
                     'epoch': epoch + 1,
