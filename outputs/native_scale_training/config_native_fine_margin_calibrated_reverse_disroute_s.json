@@ -1,15 +1,15 @@
 {
   "experiment": "native_fine_margin_calibrated_reverse_disroute",
-  "dataset_name": "GlaS",
+  "dataset_name": "CRAG",
   "labeled_ratio": 10,
-  "seed": 1337,
+  "seed": 24,
   "cps_mode": "native_fine_margin_calibrated_reverse_disroute",
   "input_mode": "rgb_stain",
   "uni_input_resolution": 256,
   "native_grid": "16x16",
   "feature_dim": 1024,
-  "reference_memory": "/data/mission/models/Exp/DUAL/checkpoints/semi_10_seed_1337_rgbstain_c2f_ca_reverse_disroute/GlaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5.0-w=20-7-61-image-input_mode=rgb_stain-cps_mode=native_fine_margin_calibrated_reverse_disroute/reference_memory_uni256.npz",
-  "margin_calibration_records": "/data/mission/models/Exp/DUAL/checkpoints/semi_10_seed_1337_rgbstain_c2f_ca_reverse_disroute/GlaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5.0-w=20-7-61-image-input_mode=rgb_stain-cps_mode=native_fine_margin_calibrated_reverse_disroute/margin_calibration_k50/selected_k_token_records.csv",
+  "reference_memory": "/data/mission/models/Exp/DUAL/checkpoints/semi_10_seed_24_rgbstain_c2f_ca_reverse_disroute/CRAG/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5.0-w=20-16-137-image-input_mode=rgb_stain-cps_mode=native_fine_margin_calibrated_reverse_disroute/reference_memory_uni256.npz",
+  "margin_calibration_records": "/data/mission/models/Exp/DUAL/checkpoints/semi_10_seed_24_rgbstain_c2f_ca_reverse_disroute/CRAG/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5.0-w=20-16-137-image-input_mode=rgb_stain-cps_mode=native_fine_margin_calibrated_reverse_disroute/margin_calibration_k50/selected_k_token_records.csv",
   "adaptive_strategy": "existing_margin_calibrated_C2F_plus_fine_disagreement_directional_routing",
   "cdf": "not used",
   "running_buffer": "disabled",
@@ -20,5 +20,5 @@
   "loss_weight_expansion": "nearest 16x16 -> student pixel resolution",
   "hc_correction": "disabled",
   "test_evaluation_policy": "not evaluated during training",
-  "command": "main.py --dataset_name GlaS --path_dataset datasets/GlaS --path_trained_models checkpoints/semi_10_seed_1337_rgbstain_c2f_ca_reverse_disroute --path_seg_results seg_pred/semi_10_seed_1337_rgbstain_c2f_ca_reverse_disroute --labeled_ratio 10 --sd 1337 --batch_size 2 --num_epochs 200 --network unet --input_mode rgb_stain --step_size 50 --lr 0.5 --gamma 0.5 --unsup_weight 5.0 --warm_up_duration 20 --momentum 0.9 --cps_mode native_fine_margin_calibrated_reverse_disroute --uni_k 50 --uni_build_reference_memory"
+  "command": "main.py --dataset_name CRAG --path_dataset datasets/CRAG --path_trained_models checkpoints/semi_10_seed_24_rgbstain_c2f_ca_reverse_disroute --path_seg_results seg_pred/semi_10_seed_24_rgbstain_c2f_ca_reverse_disroute --labeled_ratio 10 --sd 24 --batch_size 2 --num_epochs 200 --network unet --input_mode rgb_stain --step_size 50 --lr 0.5 --gamma 0.5 --unsup_weight 5.0 --warm_up_duration 20 --momentum 0.9 --cps_mode native_fine_margin_calibrated_reverse_disroute --uni_k 50 --uni_build_reference_memory"
 }
