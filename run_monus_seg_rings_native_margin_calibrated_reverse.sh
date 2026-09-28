@@ -85,7 +85,7 @@ run_experiment CRAG 20 42 semi_20_seed_42_rgbstain_c2f_ca_reverse_disroute nativ
     # --sd 1337 \
     # --batch_size 2 \
     # --num_epochs 200 \
-    # --network unet \
+    # --network xnet_sb \
     # --input_mode rgb_stain \
     # --step_size 50 \
     # --lr 0.5 \
