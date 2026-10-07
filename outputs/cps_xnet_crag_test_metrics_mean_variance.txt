@@ -1,0 +1,26 @@
+CRAG CPS-XNet test metrics across seeds
+Test split: fixed paper_seed_2026 test manifest; 40 images per run
+Seeds: 24, 42, 1337
+Variance column in CSV: population variance = mean((x - mean)^2)
+Sample variance and sample standard deviation are also provided.
+
+[10% labeled]
+jaccard: 0.836350 | mean squared deviation=0.00001871 | sample std=0.005297
+dice: 0.910877 | mean squared deviation=0.00000659 | sample std=0.003145
+precision: 0.902450 | mean squared deviation=0.00005713 | sample std=0.009257
+recall: 0.919528 | mean squared deviation=0.00001300 | sample std=0.004416
+specificity: 0.928686 | mean squared deviation=0.00004097 | sample std=0.007839
+accuracy: 0.924862 | mean squared deviation=0.00000659 | sample std=0.003145
+loss: 0.216241 | mean squared deviation=0.00001452 | sample std=0.004667
+
+[20% labeled]
+jaccard: 0.848062 | mean squared deviation=0.00002753 | sample std=0.006426
+dice: 0.917776 | mean squared deviation=0.00000947 | sample std=0.003768
+precision: 0.911745 | mean squared deviation=0.00007242 | sample std=0.010423
+recall: 0.924186 | mean squared deviation=0.00021818 | sample std=0.018091
+specificity: 0.935709 | mean squared deviation=0.00006118 | sample std=0.009580
+accuracy: 0.930898 | mean squared deviation=0.00000302 | sample std=0.002129
+loss: 0.194328 | mean squared deviation=0.00002622 | sample std=0.006271
+
+Per-seed CSV: /data/mission/models/Exp/DUAL/outputs/cps_xnet_crag_test_metrics_by_seed.csv
+Mean/variance CSV: /data/mission/models/Exp/DUAL/outputs/cps_xnet_crag_test_metrics_mean_variance.csv

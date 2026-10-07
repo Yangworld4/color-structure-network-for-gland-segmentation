@@ -1,13 +1,13 @@
 #!/bin/bash
 
-# MoNuSeg 与 RINGS 的最终 Native-Scale Margin-Calibrated-Reverse 实验
+# RINGS 的最终 Native-Scale Margin-Calibrated-Reverse 实验
 set -e
 
 cd /data/mission/models/Exp/DUAL
 source /data/software/miniconda3/etc/profile.d/conda.sh
 conda activate cg-seg
 
-echo "=== 开始运行 MoNuSeg 与 RINGS 实验 ==="
+echo "=== 开始运行RINGS 实验 ==="
 
 run_experiment() {
     local dataset="$1"
@@ -25,7 +25,7 @@ run_experiment() {
         --sd "$seed" \
         --batch_size 2 \
         --num_epochs 200 \
-        --network unet \
+        --network xnet_sb \
         --input_mode rgb_stain \
         --step_size 50 \
         --lr 0.5 \
@@ -39,40 +39,61 @@ run_experiment() {
 }
 
 # echo "=== GlaS：开始运行 10% 标注实验 ==="
+run_experiment RINGS 10 1337 semi_10_seed_1337_rgbstain_c2f_ca_reverse_disroute native_fine_margin_calibrated_reverse_disroute
+# echo "=== RINGS：开始运行 20% 标注实验 ==="
+run_experiment RINGS 20 1337 semi_20_seed_1337_rgbstain_c2f_ca_reverse_disroute native_fine_margin_calibrated_reverse_disroute
 
-# run_experiment GlaS 20 1337 semi_20_seed_1337_rgbstain_c2f_ca_reverse_disroute native_fine_margin_calibrated_reverse_disroute
-# echo "=== GlaS：开始运行 20% 标注实验 ==="
-# run_experiment GlaS 20 1337 semi_20_seed_1337_rgbstain_c2f_ca_reverse_disroute native_fine_margin_calibrated_reverse_disroute
-
-# echo "=== CRAG：开始运行 10% 标注实验 ==="
-# run_experiment CRAG 10 1337 semi_10_seed_1337_rgbstain_c2f_ca_reverse_disroute native_fine_margin_calibrated_reverse_disroute
-
-# echo "=== CRAG：开始运行 20% 标注实验 ==="
-# run_experiment CRAG 20 1337 semi_20_seed_1337_rgbstain_c2f_ca_reverse_disroute native_fine_margin_calibrated_reverse_disroute
+# echo "=== GlaS：开始运行 10% 标注实验 ==="
+run_experiment RINGS 10 24 semi_10_seed_24_rgbstain_c2f_ca_reverse_disroute native_fine_margin_calibrated_reverse_disroute
+# echo "=== RINGS：开始运行 20% 标注实验 ==="
+run_experiment RINGS 20 24 semi_20_seed_24_rgbstain_c2f_ca_reverse_disroute native_fine_margin_calibrated_reverse_disroute
 
 
-run_experiment GlaS 10 24 semi_10_seed_24_rgbstain_c2f_ca_reverse_disroute native_fine_margin_calibrated_reverse_disroute
+# echo "=== GlaS：开始运行 10% 标注实验 ==="
+run_experiment RINGS 10 42 semi_10_seed_42_rgbstain_c2f_ca_reverse_disroute native_fine_margin_calibrated_reverse_disroute
+# echo "=== RINGS：开始运行 20% 标注实验 ==="
+run_experiment RINGS 20 42 semi_20_seed_42_rgbstain_c2f_ca_reverse_disroute native_fine_margin_calibrated_reverse_disroute
+
+# echo "=== RINGS：开始运行 10% 标注实验 ==="
+run_experiment RINGS 10 1337 semi_10_seed_1337_rgbstain standard
+
+# echo "=== RINGS：开始运行 20% 标注实验 ==="
+run_experiment RINGS 20 1337 semi_20_seed_1337_rgbstain standard
+
+# echo "=== RINGS：开始运行 10% 标注实验 ==="
+run_experiment RINGS 10 42 semi_10_seed_42_rgbstain standard
+
+# echo "=== RINGS：开始运行 20% 标注实验 ==="
+run_experiment RINGS 20 42 semi_20_seed_42_rgbstain standard
+
+# echo "=== RINGS：开始运行 10% 标注实验 ==="
+run_experiment RINGS 10 24 semi_10_seed_24_rgbstain standard
+
+# echo "=== RINGS：开始运行 20% 标注实验 ==="
+run_experiment RINGS 20 24 semi_20_seed_24_rgbstain standard
+
+# run_experiment GlaS 10 24 semi_10_seed_24_rgbstain_c2f_ca_reverse_disroute native_fine_margin_calibrated_reverse_disroute
 # echo "=== GlaS：开始运行 20% 标注实验 ==="
 # run_experiment GlaS 20 24 semi_20_seed_24_rgbstain_c2f_ca_reverse_disroute native_fine_margin_calibrated_reverse_disroute
 
 # echo "=== CRAG：开始运行 10% 标注实验 ==="
-run_experiment CRAG 10 24 semi_10_seed_24_rgbstain_c2f_ca_reverse_disroute native_fine_margin_calibrated_reverse_disroute
+# run_experiment CRAG 10 24 semi_10_seed_24_rgbstain_c2f_ca_reverse_disroute native_fine_margin_calibrated_reverse_disroute
 
 # echo "=== CRAG：开始运行 20% 标注实验 ==="
-run_experiment CRAG 20 24 semi_20_seed_24_rgbstain_c2f_ca_reverse_disroute native_fine_margin_calibrated_reverse_disroute
+# run_experiment CRAG 20 24 semi_20_seed_24_rgbstain_c2f_ca_reverse_disroute native_fine_margin_calibrated_reverse_disroute
 
 
 
-run_experiment GlaS 10 42 semi_10_seed_42_rgbstain_c2f_ca_reverse_disroute native_fine_margin_calibrated_reverse_disroute
+# run_experiment GlaS 10 42 semi_10_seed_42_rgbstain_c2f_ca_reverse_disroute native_fine_margin_calibrated_reverse_disroute
 
 # echo "=== GlaS：开始运行 20% 标注实验 ==="
-run_experiment GlaS 20 42 semi_20_seed_42_rgbstain_c2f_ca_reverse_disroute native_fine_margin_calibrated_reverse_disroute
+# run_experiment GlaS 20 42 semi_20_seed_42_rgbstain_c2f_ca_reverse_disroute native_fine_margin_calibrated_reverse_disroute
 
 # echo "=== CRAG：开始运行 10% 标注实验 ==="
-run_experiment CRAG 10 42 semi_10_seed_42_rgbstain_c2f_ca_reverse_disroute native_fine_margin_calibrated_reverse_disroute
+# run_experiment CRAG 10 42 semi_10_seed_42_rgbstain_c2f_ca_reverse_disroute native_fine_margin_calibrated_reverse_disroute
 
 # echo "=== CRAG：开始运行 20% 标注实验 ==="
-run_experiment CRAG 20 42 semi_20_seed_42_rgbstain_c2f_ca_reverse_disroute native_fine_margin_calibrated_reverse_disroute
+# run_experiment CRAG 20 42 semi_20_seed_42_rgbstain_c2f_ca_reverse_disroute native_fine_margin_calibrated_reverse_disroute
 
 
 

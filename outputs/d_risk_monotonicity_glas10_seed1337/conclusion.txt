@@ -1,0 +1,120 @@
+[Setup]
+Dataset: GLaS (project key: GlaS)
+Validation images: 17
+Checkpoint: /data/mission/models/Exp/DUAL/checkpoints/semi_10_seed_1337_rgb/GlaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image-input_mode=rgb_rgb-cps_mode=standard/best_synchronized_mean_val.pth
+Epoch: 194
+Checkpoint root supplied in task: /data/mission/models/Exp/DUAL/checkpoints/semi_10_seed_1337_rgb/GLaS
+Student A checkpoint: /data/mission/models/Exp/DUAL/checkpoints/semi_10_seed_1337_rgb/GlaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image-input_mode=rgb_rgb-cps_mode=standard/best_result1_Jc_0.7130.pth
+Student B checkpoint: /data/mission/models/Exp/DUAL/checkpoints/semi_10_seed_1337_rgb/GlaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5-w=20-7-61-image-input_mode=rgb_rgb-cps_mode=standard/best_result2_Jc_0.7228.pth
+Memory: /data/mission/models/Exp/DUAL/checkpoints/semi_10_seed_1337_rgbstain_c2f_ca_reverse_disroute/GlaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5.0-w=20-7-61-image-input_mode=rgb_stain-cps_mode=native_fine_margin_calibrated_reverse_disroute/reference_memory_uni256.npz
+Memory path supplied in task: /data/mission/models/Exp/DUAL/checkpoints/semi_10_seed_1337_rgbstain_c2f_ca_reverse_disroute/GLaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5.0-w=20-7-61-image-input_mode=rgb_stain-cps_mode=native_fine_margin_calibrated_reverse_disroute/reference_memory_uni256.npz
+Memory metadata: {"anchor_bg": 0.1, "anchor_fallback_count": 0, "anchor_fallback_fraction": 0.1, "anchor_fg": 0.9, "feature_dim": 1024, "memory_bg": {"dtype": "float32", "shape": [355, 1024]}, "memory_bg_count": 355, "memory_construction": "class-balanced native UNI token memory", "memory_fg": {"dtype": "float32", "shape": [437, 1024]}, "memory_fg_count": 437, "memory_per_image_class": 64, "reference_resolution": 256, "retrieval_top_k": 50, "seed": 2026, "source_dataset": "GlaS", "source_labeled_ratio": 10, "token_grid": 16, "top_k": 50}
+Memory FG/BG counts: 437 / 355
+Top-K: 50
+UNI resolution: 256
+Token grid: 16x16
+Fine resolution: 256x256
+Memory was loaded from its fixed training-run artifact; it was not built using validation/test data.
+Memory built during this diagnostic: False
+
+[Population]
+Coarse agreement tokens: 4256
+Contradiction tokens D>0: 651
+Tokens with N_corr>0: 651
+Tokens with N_corr=0: 0
+Fine M_corr pixels: 142969
+Fine WW pixels within M_corr: 85783
+Fine HC90WW pixels within M_corr: 74126
+
+[WW]
+Q1 WW prevalence = 33.287%
+Q2 WW prevalence = 40.867%
+Q3 WW prevalence = 62.296%
+Q4 WW prevalence = 78.136%
+Q5 WW prevalence = 82.573%
+Spearman rho = 0.41544
+95% CI = [0.2111, 0.5911]
+Spearman p-value = 1.496e-28
+AUROC = 0.73051; 95% CI = [0.6243, 0.8315]
+AUPRC = 0.77653; 95% CI = [0.6240, 0.8911]
+Q5/Q1 risk ratio = 2.48065
+95% CI = [1.5606, 4.4777]
+
+[HC90WW]
+Q1 HC90WW prevalence = 28.002%
+Q2 HC90WW prevalence = 32.449%
+Q3 HC90WW prevalence = 52.160%
+Q4 HC90WW prevalence = 71.994%
+Q5 HC90WW prevalence = 71.754%
+Spearman rho = 0.40809
+95% CI = [0.2079, 0.5563]
+Spearman p-value = 1.618e-27
+AUROC = 0.70581; 95% CI = [0.6013, 0.7935]
+AUPRC = 0.67535; 95% CI = [0.5003, 0.7963]
+Q5/Q1 risk ratio = 2.56244
+95% CI = [1.5878, 4.8018]
+
+[Directional]
+FG2BG:
+  contradiction tokens = 243
+  N_corr pixels = 54723
+  Spearman WW = 0.41768 [0.0758, 0.6613]
+  Spearman HC90WW = 0.47023 [0.0200, 0.6686]
+  AUROC/AUPRC WW = 0.79756 / 0.91381
+  AUROC/AUPRC HC90WW = 0.75034 / 0.79733
+  WW Q1/Q5 = 46.825% / 93.048%; RR=1.9871
+  HC Q1/Q5 = 35.754% / 84.217%; RR=2.3555
+BG2FG:
+  contradiction tokens = 408
+  N_corr pixels = 88246
+  Spearman WW = 0.45910 [0.2756, 0.6317]
+  Spearman HC90WW = 0.41039 [0.2457, 0.5707]
+  AUROC/AUPRC WW = 0.74078 / 0.71338
+  AUROC/AUPRC HC90WW = 0.70600 / 0.62430
+  WW Q1/Q5 = 24.784% / 77.612%; RR=3.1315
+  HC Q1/Q5 = 23.065% / 65.611%; RR=2.8446
+
+[Conclusion]
+STRONG SUPPORT
+English: Larger semantic contradiction margin D is consistently associated with a higher probability of fine-grained CPS shared errors; this pattern is near-monotonic and both directions agree.
+WW quintile curve near-monotone (allowing 0.5 percentage-point fluctuation): True
+中文总结：
+1. D 与 WW risk 呈正相关，ρ=0.4154。
+2. D 与 HC90WW risk 呈正相关，ρ=0.4081。
+3. WW quintile prevalence 近似单调上升；HC90WW 的 Q4→Q5 变化为 -0.240 个百分点。
+4. FG2BG 与 BG2FG 方向一致；详见上方方向统计。
+5. 数据 支持：D 是否除二值 contradiction 外还携带连续风险强度信息。
+
+[Sanity Checks]
+Memory path matches specified artifact (case normalized): PASS
+Vanilla CPS checkpoint root (case normalized): PASS
+No C2F Student checkpoint: PASS
+Student dense probability = 256x256: PASS
+K_t = coarse agreement and D>0: PASS
+K_t = agreement and U!=C: PASS
+GT = 256x256: PASS
+Fine risk uses original pixel predictions: PASS
+Validation images = 17: PASS
+UNI grid = 16x16: PASS
+N_WW <= N_corr: PASS
+N_HC90WW <= N_WW: PASS
+GT not used to construct D: PASS
+GT is only used post hoc for WW/HC: PASS
+Memory did not use validation/test: PASS
+Bootstrap unit is image: PASS
+No test data: PASS
+No training or parameter modification: PASS
+D quintiles depend only on D: PASS
+Q1-Q5 token counts balanced: PASS
+Overall: PASS
+
+[Figures]
+/data/mission/models/Exp/DUAL/outputs/d_risk_monotonicity_glas10_seed1337/d_risk_curve.png
+/data/mission/models/Exp/DUAL/outputs/d_risk_monotonicity_glas10_seed1337/d_risk_curve.pdf
+/data/mission/models/Exp/DUAL/outputs/d_risk_monotonicity_glas10_seed1337/d_risk_curve_directional.png
+/data/mission/models/Exp/DUAL/outputs/d_risk_monotonicity_glas10_seed1337/d_risk_curve_directional.pdf
+
+[CSVs]
+/data/mission/models/Exp/DUAL/outputs/d_risk_monotonicity_glas10_seed1337/d_risk_token_records.csv
+/data/mission/models/Exp/DUAL/outputs/d_risk_monotonicity_glas10_seed1337/d_risk_quintile_summary.csv
+/data/mission/models/Exp/DUAL/outputs/d_risk_monotonicity_glas10_seed1337/d_risk_association_summary.csv

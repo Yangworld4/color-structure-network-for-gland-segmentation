@@ -1,0 +1,56 @@
+[Evaluation Scale]
+Coarse semantic contradiction: 16×16 token level
+Fine CPS errors: 256×256 pixel level
+Memory contradiction: train-only Semantic Memory
+Evaluation: validation only
+
+WW definition: A(x)=B(x)≠GT(x)
+HC90WW definition: WW and conf_A(x)>=0.90 and conf_B(x)>=0.90
+Correction population: M_corr = K & (A=B=C)
+
+Validation images: 17
+Fine Agreement pixels: 1086370
+Coarse Contradiction pixels K: 166656
+Fine Correction pixels M_corr: 142969
+WW P(WW | Agreement): 13.7304%
+WW P(WW | M_corr): 60.0011%
+WW enrichment: 4.369945x
+WW coverage: 57.5096%
+HC90WW P(HC90WW | Agreement): 11.2232%
+HC90WW P(HC90WW | M_corr): 51.8476%
+HC90WW enrichment: 4.619699x
+HC90WW coverage: 60.7964%
+CC exposure: 6.1017%
+P(CC | M_corr): 39.9989%
+K / all pixels: 14.9586%
+M_corr / K: 85.7869%
+M_keep / K: 10.6189%
+M_dis / K: 3.5942%
+FG2BG correction pixels: 54723
+FG2BG direction-matched WW rate: 76.4304%
+FG2BG direction-matched WW enrichment: 1.073935x
+FG2BG WW coverage: 99.4247%
+FG2BG HC90WW rate: 64.1467%
+FG2BG HC90WW enrichment: 1.074791x
+FG2BG HC90WW coverage: 99.5039%
+FG2BG CC exposure: 75.6836%
+BG2FG correction pixels: 88246
+BG2FG direction-matched WW rate: 49.8130%
+BG2FG direction-matched WW enrichment: 1.099633x
+BG2FG WW coverage: 95.5505%
+BG2FG HC90WW rate: 44.2207%
+BG2FG HC90WW enrichment: 1.116339x
+BG2FG HC90WW coverage: 97.0022%
+BG2FG CC exposure: 79.7235%
+Sanity checks: PASS
+
+[Sanity Checks]
+All shape, raw fine probability/confidence, partition, semantic and pixel denominator checks passed: True
+
+[Outputs]
+/data/mission/models/Exp/DUAL/outputs/contradiction_enrichment_glas10_seed1337_pixel/pixel_contradiction_per_image.csv
+/data/mission/models/Exp/DUAL/outputs/contradiction_enrichment_glas10_seed1337_pixel/pixel_contradiction_enrichment_summary.csv
+/data/mission/models/Exp/DUAL/outputs/contradiction_enrichment_glas10_seed1337_pixel/pixel_contradiction_enrichment_horizontal.png
+/data/mission/models/Exp/DUAL/outputs/contradiction_enrichment_glas10_seed1337_pixel/pixel_contradiction_enrichment_horizontal.pdf
+/data/mission/models/Exp/DUAL/outputs/contradiction_enrichment_glas10_seed1337_pixel/pixel_contradiction_coverage_horizontal.png
+/data/mission/models/Exp/DUAL/outputs/contradiction_enrichment_glas10_seed1337_pixel/pixel_contradiction_coverage_horizontal.pdf
