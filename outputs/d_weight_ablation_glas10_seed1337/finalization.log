@@ -1,0 +1,14 @@
+/data/software/miniconda3/envs/cg-seg/lib/python3.10/site-packages/torch/_utils.py:776: UserWarning: TypedStorage is deprecated. It will be removed in the future and UntypedStorage will be the only storage class. This should only matter to you if you are using storages directly.  To access UntypedStorage directly, use tensor.untyped_storage() instead of tensor.storage()
+  return self.fget.__get__(instance, owner)()
+/data/software/miniconda3/envs/cg-seg/lib/python3.10/site-packages/torch/nn/modules/conv.py:459: UserWarning: Applied workaround for CuDNN issue, install nvrtc.so (Triggered internally at ../aten/src/ATen/native/cudnn/Conv_v8.cpp:80.)
+  return F.conv2d(input, weight, bias, self.stride,
+Margin calibration | FG tokens=700 | BG tokens=510 | fallback=none | m_FG=0.20482177 | m_BG=0.18015571 | tau=0.19248874
+initialize network with kaiming
+initialize network with kaiming
+Mean-Matched Constant epoch=191 test Dice A/B=0.9067/0.9124, IoU A/B=0.8293/0.8389
+Margin calibration | FG tokens=700 | BG tokens=510 | fallback=none | m_FG=0.20482177 | m_BG=0.18015571 | tau=0.19248874
+initialize network with kaiming
+initialize network with kaiming
+D-Adaptive epoch=195 test Dice A/B=0.9091/0.9090, IoU A/B=0.8334/0.8332
+Conclusion: NOT SUPPORTED
+Outputs: /data/mission/models/Exp/DUAL/outputs/d_weight_ablation_glas10_seed1337

@@ -1,0 +1,1007 @@
+/data/software/miniconda3/envs/cg-seg/lib/python3.10/site-packages/torch/_utils.py:776: UserWarning: TypedStorage is deprecated. It will be removed in the future and UntypedStorage will be the only storage class. This should only matter to you if you are using storages directly.  To access UntypedStorage directly, use tensor.untyped_storage() instead of tensor.storage()
+  return self.fget.__get__(instance, owner)()
+/data/software/miniconda3/envs/cg-seg/lib/python3.10/site-packages/torch/nn/modules/conv.py:459: UserWarning: Applied workaround for CuDNN issue, install nvrtc.so (Triggered internally at ../aten/src/ATen/native/cudnn/Conv_v8.cpp:80.)
+  return F.conv2d(input, weight, bias, self.stride,
+Data source: /data/mission/models/Exp/DUAL/datasets/GlaS/manifests/paper_seed_2026
+Input mode: rgb_stain
+Unique samples: supervised=7, unsupervised=61, validation=17, test=deferred
+Effective epoch samples after supervised oversampling: supervised=61
+Supervised image: (3, 256, 256) torch.float32
+Supervised RGB/Stain views: (3, 256, 256) (3, 256, 256) (256, 256)
+Supervised mask: (256, 256) torch.int64 classes=[0, 1]
+Unsupervised image: (3, 256, 256) torch.float32
+Unsupervised RGB/Stain views: (3, 256, 256) (3, 256, 256)
+Validation image/mask: (3, 256, 256) (256, 256)
+Training log: /data/mission/models/Exp/DUAL/checkpoints/ablation_d_weight_glas10_seed1337/constant/GlaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5.0-w=20-7-61-image-input_mode=rgb_stain-cps_mode=native_fine_margin_calibrated_reverse_disroute/train.log
+Metrics CSV: /data/mission/models/Exp/DUAL/checkpoints/ablation_d_weight_glas10_seed1337/constant/GlaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5.0-w=20-7-61-image-input_mode=rgb_stain-cps_mode=native_fine_margin_calibrated_reverse_disroute/metrics.csv
+Diagnostic log: /data/mission/models/Exp/DUAL/checkpoints/ablation_d_weight_glas10_seed1337/constant/GlaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5.0-w=20-7-61-image-input_mode=rgb_stain-cps_mode=native_fine_margin_calibrated_reverse_disroute/diagnostics_20261007-231633.log
+Margin calibration | FG tokens=700 | BG tokens=510 | fallback=none | m_FG=0.20482177 | m_BG=0.18015571 | tau=0.19248874
+initialize network with kaiming
+initialize network with kaiming
+UNI input shape       = [B,3,256,256]
+UNI patch-token shape = [B,256,1024]
+native grid           = 16x16
+feature dim           = 1024
+Reference mode:       native_fine_margin_calibrated_reverse_disroute
+Intervention ablation: direction-matched mean q
+Weight formula:       (1-q) CPS + q opposite on M_corr; routed CPS on M_dis
+Severity assignment:  direction-matched batch mean of q_original
+Opposite target:      1 - detached token consensus
+Pixel selection:      token contradiction AND pixel agreement AND pixel consensus=token consensus
+Calibration source:   labeled train-only image-level LOO K=50
+tau:                  0.19248874
+Extra hyperparameters: none
+Fine disagreement directional CPS sanity: PASS
+Input shapes | student1=(2, 3, 256, 256) | student2=(2, 3, 256, 256) | mask=(2, 256, 256)
+[Motivation][Epoch 001] Agreement=0.455646 SoftDisagreement=0.265485 WW|Agree=0.462092 HC90WW|WW=0.005107
+[Motivation][Epoch 002] Agreement=0.913571 SoftDisagreement=0.097650 WW|Agree=0.377329 HC90WW|WW=0.648411
+[Motivation][Epoch 003] Agreement=0.893464 SoftDisagreement=0.107751 WW|Agree=0.404867 HC90WW|WW=0.791478
+[Motivation][Epoch 004] Agreement=0.875351 SoftDisagreement=0.118937 WW|Agree=0.379728 HC90WW|WW=0.745214
+===============================================================
+| Epoch 5/200                                                 |
+---------------------------------------------------------------
+| Train Sup Loss 1: 0.1413     | Train Sup Loss 2: 0.1410     |
+| Train Unsup Loss: 0.0451     | Train Total Loss: 0.3274     |
+---------------------------------------------------------------
+| Train Thr 1: 0.8800          | Train Thr 2: 0.8400          |
+| Train  Jc 1: 0.8429          | Train  Jc 2: 0.8332          |
+| Train  Dc 1: 0.9147          | Train  Dc 2: 0.9090          |
+---------------------------------------------------------------
+| Val Sup Loss 1: 0.3815       | Val Sup Loss 2: 0.3767       |
+---------------------------------------------------------------
+| Val Thr 1: 0.0200            | Val Thr 2: 0.0800            |
+| Val  Jc 1: 0.4528            | Val  Jc 2: 0.4740            |
+| Val  Dc 1: 0.6234            | Val  Dc 2: 0.6432            |
+[Motivation][Epoch 005] Agreement=0.790531 SoftDisagreement=0.207351 WW|Agree=0.354862 HC90WW|WW=0.469618
+| Val diversity: disagreement=0.2340 | dice_similarity=0.7660 | complementary_error=0.2095
+---------------------------------------------------------------
+| Epoch Time: 10.7600s                                        |
+[Motivation][Epoch 006] Agreement=0.746893 SoftDisagreement=0.218576 WW|Agree=0.219614 HC90WW|WW=0.208349
+[Motivation][Epoch 007] Agreement=0.898389 SoftDisagreement=0.105544 WW|Agree=0.338682 HC90WW|WW=0.647095
+[Motivation][Epoch 008] Agreement=0.802350 SoftDisagreement=0.173142 WW|Agree=0.309160 HC90WW|WW=0.273400
+[Motivation][Epoch 009] Agreement=0.862499 SoftDisagreement=0.151672 WW|Agree=0.367412 HC90WW|WW=0.180610
+===============================================================
+| Epoch 10/200                                                |
+---------------------------------------------------------------
+| Train Sup Loss 1: 0.1200     | Train Sup Loss 2: 0.1186     |
+| Train Unsup Loss: 0.1029     | Train Total Loss: 0.3415     |
+---------------------------------------------------------------
+| Train Thr 1: 0.0200          | Train Thr 2: 0.0200          |
+| Train  Jc 1: 0.9259          | Train  Jc 2: 0.9337          |
+| Train  Dc 1: 0.9615          | Train  Dc 2: 0.9657          |
+---------------------------------------------------------------
+| Val Sup Loss 1: 0.3128       | Val Sup Loss 2: 0.2472       |
+---------------------------------------------------------------
+| Val Thr 1: 0.8400            | Val Thr 2: 0.7000            |
+| Val  Jc 1: 0.6166            | Val  Jc 2: 0.5878            |
+| Val  Dc 1: 0.7629            | Val  Dc 2: 0.7404            |
+[Motivation][Epoch 010] Agreement=0.799558 SoftDisagreement=0.167432 WW|Agree=0.261109 HC90WW|WW=0.176306
+| Val diversity: disagreement=0.1539 | dice_similarity=0.8461 | complementary_error=0.2004
+| Current student weights saved at epoch 10                   |
+| Periodic best student weights saved at epoch 10             |
+---------------------------------------------------------------
+| Epoch Time: 14.1251s                                        |
+[Motivation][Epoch 011] Agreement=0.877624 SoftDisagreement=0.120452 WW|Agree=0.300018 HC90WW|WW=0.268339
+[Motivation][Epoch 012] Agreement=0.847961 SoftDisagreement=0.130052 WW|Agree=0.254461 HC90WW|WW=0.335693
+[Motivation][Epoch 013] Agreement=0.789642 SoftDisagreement=0.173149 WW|Agree=0.207899 HC90WW|WW=0.112975
+[Motivation][Epoch 014] Agreement=0.851452 SoftDisagreement=0.125274 WW|Agree=0.278456 HC90WW|WW=0.094572
+===============================================================
+| Epoch 15/200                                                |
+---------------------------------------------------------------
+| Train Sup Loss 1: 0.0768     | Train Sup Loss 2: 0.0832     |
+| Train Unsup Loss: 0.1297     | Train Total Loss: 0.2897     |
+---------------------------------------------------------------
+| Train Thr 1: 0.7000          | Train Thr 2: 0.5200          |
+| Train  Jc 1: 0.8585          | Train  Jc 2: 0.8446          |
+| Train  Dc 1: 0.9239          | Train  Dc 2: 0.9158          |
+---------------------------------------------------------------
+| Val Sup Loss 1: 0.2616       | Val Sup Loss 2: 0.3145       |
+---------------------------------------------------------------
+| Val Thr 1: 0.6600            | Val Thr 2: 0.2600            |
+| Val  Jc 1: 0.5788            | Val  Jc 2: 0.5198            |
+| Val  Dc 1: 0.7332            | Val  Dc 2: 0.6841            |
+[Motivation][Epoch 015] Agreement=0.860671 SoftDisagreement=0.129051 WW|Agree=0.280649 HC90WW|WW=0.189175
+| Val diversity: disagreement=0.1143 | dice_similarity=0.8857 | complementary_error=0.1393
+---------------------------------------------------------------
+| Epoch Time: 10.7311s                                        |
+[Motivation][Epoch 016] Agreement=0.841131 SoftDisagreement=0.134916 WW|Agree=0.258071 HC90WW|WW=0.382791
+[Motivation][Epoch 017] Agreement=0.827703 SoftDisagreement=0.152900 WW|Agree=0.201501 HC90WW|WW=0.210715
+[Motivation][Epoch 018] Agreement=0.874818 SoftDisagreement=0.120087 WW|Agree=0.216185 HC90WW|WW=0.329870
+[Motivation][Epoch 019] Agreement=0.857977 SoftDisagreement=0.122741 WW|Agree=0.255721 HC90WW|WW=0.339230
+===============================================================
+| Epoch 20/200                                                |
+---------------------------------------------------------------
+| Train Sup Loss 1: 0.0669     | Train Sup Loss 2: 0.0764     |
+| Train Unsup Loss: 0.1545     | Train Total Loss: 0.2977     |
+---------------------------------------------------------------
+| Train Thr 1: 0.7400          | Train Thr 2: 0.8000          |
+| Train  Jc 1: 0.9183          | Train  Jc 2: 0.9129          |
+| Train  Dc 1: 0.9574          | Train  Dc 2: 0.9545          |
+---------------------------------------------------------------
+| Val Sup Loss 1: 0.1664       | Val Sup Loss 2: 0.2666       |
+---------------------------------------------------------------
+| Val Thr 1: 0.4600            | Val Thr 2: 0.8400            |
+| Val  Jc 1: 0.6742            | Val  Jc 2: 0.6318            |
+| Val  Dc 1: 0.8054            | Val  Dc 2: 0.7744            |
+[Motivation][Epoch 020] Agreement=0.788638 SoftDisagreement=0.197235 WW|Agree=0.146490 HC90WW|WW=0.253669
+| Val diversity: disagreement=0.1935 | dice_similarity=0.8065 | complementary_error=0.2114
+| Current student weights saved at epoch 20                   |
+| Periodic best student weights saved at epoch 20             |
+---------------------------------------------------------------
+| Epoch Time: 22.3740s                                        |
+[Motivation][Epoch 021] Agreement=0.831652 SoftDisagreement=0.162428 WW|Agree=0.211022 HC90WW|WW=0.217800
+[Motivation][Epoch 022] Agreement=0.859991 SoftDisagreement=0.114505 WW|Agree=0.202635 HC90WW|WW=0.283173
+[Motivation][Epoch 023] Agreement=0.891165 SoftDisagreement=0.109164 WW|Agree=0.209995 HC90WW|WW=0.299652
+[Motivation][Epoch 024] Agreement=0.832775 SoftDisagreement=0.155782 WW|Agree=0.143638 HC90WW|WW=0.218650
+===============================================================
+| Epoch 25/200                                                |
+---------------------------------------------------------------
+| Train Sup Loss 1: 0.0580     | Train Sup Loss 2: 0.0583     |
+| Train Unsup Loss: 0.1876     | Train Total Loss: 0.3039     |
+---------------------------------------------------------------
+| Train Thr 1: 0.7400          | Train Thr 2: 0.6400          |
+| Train  Jc 1: 0.9050          | Train  Jc 2: 0.8970          |
+| Train  Dc 1: 0.9501          | Train  Dc 2: 0.9457          |
+---------------------------------------------------------------
+| Val Sup Loss 1: 0.1745       | Val Sup Loss 2: 0.1663       |
+---------------------------------------------------------------
+| Val Thr 1: 0.6400            | Val Thr 2: 0.6200            |
+| Val  Jc 1: 0.6733            | Val  Jc 2: 0.6888            |
+| Val  Dc 1: 0.8048            | Val  Dc 2: 0.8157            |
+[Motivation][Epoch 025] Agreement=0.890392 SoftDisagreement=0.101387 WW|Agree=0.141018 HC90WW|WW=0.256818
+| Val diversity: disagreement=0.1189 | dice_similarity=0.8811 | complementary_error=0.1096
+---------------------------------------------------------------
+| Epoch Time: 12.3994s                                        |
+[Motivation][Epoch 026] Agreement=0.921571 SoftDisagreement=0.083566 WW|Agree=0.232125 HC90WW|WW=0.295087
+[Motivation][Epoch 027] Agreement=0.924969 SoftDisagreement=0.085069 WW|Agree=0.131780 HC90WW|WW=0.342955
+[Motivation][Epoch 028] Agreement=0.821995 SoftDisagreement=0.172559 WW|Agree=0.164910 HC90WW|WW=0.247146
+[Motivation][Epoch 029] Agreement=0.901124 SoftDisagreement=0.098562 WW|Agree=0.118838 HC90WW|WW=0.266504
+===============================================================
+| Epoch 30/200                                                |
+---------------------------------------------------------------
+| Train Sup Loss 1: 0.0505     | Train Sup Loss 2: 0.0519     |
+| Train Unsup Loss: 0.1791     | Train Total Loss: 0.2814     |
+---------------------------------------------------------------
+| Train Thr 1: 0.2800          | Train Thr 2: 0.4000          |
+| Train  Jc 1: 0.9375          | Train  Jc 2: 0.9280          |
+| Train  Dc 1: 0.9678          | Train  Dc 2: 0.9626          |
+---------------------------------------------------------------
+| Val Sup Loss 1: 0.1679       | Val Sup Loss 2: 0.1246       |
+---------------------------------------------------------------
+| Val Thr 1: 0.4600            | Val Thr 2: 0.5000            |
+| Val  Jc 1: 0.6810            | Val  Jc 2: 0.7365            |
+| Val  Dc 1: 0.8102            | Val  Dc 2: 0.8483            |
+[Motivation][Epoch 030] Agreement=0.890946 SoftDisagreement=0.110097 WW|Agree=0.110107 HC90WW|WW=0.362874
+| Val diversity: disagreement=0.1196 | dice_similarity=0.8804 | complementary_error=0.1091
+| Current student weights saved at epoch 30                   |
+| Periodic best student weights saved at epoch 30             |
+---------------------------------------------------------------
+| Epoch Time: 22.8070s                                        |
+[Motivation][Epoch 031] Agreement=0.913336 SoftDisagreement=0.112040 WW|Agree=0.098746 HC90WW|WW=0.274134
+[Motivation][Epoch 032] Agreement=0.840233 SoftDisagreement=0.144422 WW|Agree=0.156523 HC90WW|WW=0.217440
+[Motivation][Epoch 033] Agreement=0.820653 SoftDisagreement=0.118012 WW|Agree=0.115761 HC90WW|WW=0.205943
+[Motivation][Epoch 034] Agreement=0.822191 SoftDisagreement=0.157600 WW|Agree=0.129698 HC90WW|WW=0.240663
+===============================================================
+| Epoch 35/200                                                |
+---------------------------------------------------------------
+| Train Sup Loss 1: 0.0540     | Train Sup Loss 2: 0.0477     |
+| Train Unsup Loss: 0.2326     | Train Total Loss: 0.3343     |
+---------------------------------------------------------------
+| Train Thr 1: 0.5600          | Train Thr 2: 0.3000          |
+| Train  Jc 1: 0.9306          | Train  Jc 2: 0.9338          |
+| Train  Dc 1: 0.9640          | Train  Dc 2: 0.9658          |
+---------------------------------------------------------------
+| Val Sup Loss 1: 0.2102       | Val Sup Loss 2: 0.1907       |
+---------------------------------------------------------------
+| Val Thr 1: 0.8800            | Val Thr 2: 0.8800            |
+| Val  Jc 1: 0.6890            | Val  Jc 2: 0.6774            |
+| Val  Dc 1: 0.8159            | Val  Dc 2: 0.8076            |
+[Motivation][Epoch 035] Agreement=0.888126 SoftDisagreement=0.103845 WW|Agree=0.181880 HC90WW|WW=0.322846
+| Val diversity: disagreement=0.1013 | dice_similarity=0.8987 | complementary_error=0.1119
+---------------------------------------------------------------
+| Epoch Time: 11.0491s                                        |
+[Motivation][Epoch 036] Agreement=0.890997 SoftDisagreement=0.116763 WW|Agree=0.114080 HC90WW|WW=0.353405
+[Motivation][Epoch 037] Agreement=0.874753 SoftDisagreement=0.091770 WW|Agree=0.170518 HC90WW|WW=0.205335
+[Motivation][Epoch 038] Agreement=0.940839 SoftDisagreement=0.065833 WW|Agree=0.098528 HC90WW|WW=0.288757
+[Motivation][Epoch 039] Agreement=0.921085 SoftDisagreement=0.087749 WW|Agree=0.098321 HC90WW|WW=0.403019
+===============================================================
+| Epoch 40/200                                                |
+---------------------------------------------------------------
+| Train Sup Loss 1: 0.0433     | Train Sup Loss 2: 0.0447     |
+| Train Unsup Loss: 0.2314     | Train Total Loss: 0.3194     |
+---------------------------------------------------------------
+| Train Thr 1: 0.4600          | Train Thr 2: 0.2400          |
+| Train  Jc 1: 0.9567          | Train  Jc 2: 0.9607          |
+| Train  Dc 1: 0.9779          | Train  Dc 2: 0.9800          |
+---------------------------------------------------------------
+| Val Sup Loss 1: 0.1125       | Val Sup Loss 2: 0.1294       |
+---------------------------------------------------------------
+| Val Thr 1: 0.3000            | Val Thr 2: 0.4400            |
+| Val  Jc 1: 0.7524            | Val  Jc 2: 0.7277            |
+| Val  Dc 1: 0.8587            | Val  Dc 2: 0.8424            |
+[Motivation][Epoch 040] Agreement=0.922450 SoftDisagreement=0.092722 WW|Agree=0.099474 HC90WW|WW=0.263883
+| Val diversity: disagreement=0.0939 | dice_similarity=0.9061 | complementary_error=0.0775
+| Current student weights saved at epoch 40                   |
+| Periodic best student weights saved at epoch 40             |
+---------------------------------------------------------------
+| Epoch Time: 21.3657s                                        |
+[Motivation][Epoch 041] Agreement=0.944470 SoftDisagreement=0.072479 WW|Agree=0.116112 HC90WW|WW=0.388417
+[Motivation][Epoch 042] Agreement=0.910822 SoftDisagreement=0.100361 WW|Agree=0.098168 HC90WW|WW=0.254946
+[Motivation][Epoch 043] Agreement=0.927760 SoftDisagreement=0.077911 WW|Agree=0.092562 HC90WW|WW=0.253232
+[Motivation][Epoch 044] Agreement=0.936646 SoftDisagreement=0.075092 WW|Agree=0.092352 HC90WW|WW=0.378481
+===============================================================
+| Epoch 45/200                                                |
+---------------------------------------------------------------
+| Train Sup Loss 1: 0.0466     | Train Sup Loss 2: 0.0512     |
+| Train Unsup Loss: 0.2455     | Train Total Loss: 0.3433     |
+---------------------------------------------------------------
+| Train Thr 1: 0.4400          | Train Thr 2: 0.2800          |
+| Train  Jc 1: 0.9373          | Train  Jc 2: 0.9295          |
+| Train  Dc 1: 0.9677          | Train  Dc 2: 0.9635          |
+---------------------------------------------------------------
+| Val Sup Loss 1: 0.1249       | Val Sup Loss 2: 0.1148       |
+---------------------------------------------------------------
+| Val Thr 1: 0.3600            | Val Thr 2: 0.4800            |
+| Val  Jc 1: 0.7260            | Val  Jc 2: 0.7507            |
+| Val  Dc 1: 0.8413            | Val  Dc 2: 0.8576            |
+[Motivation][Epoch 045] Agreement=0.924910 SoftDisagreement=0.094644 WW|Agree=0.100618 HC90WW|WW=0.316979
+| Val diversity: disagreement=0.0906 | dice_similarity=0.9094 | complementary_error=0.0751
+---------------------------------------------------------------
+| Epoch Time: 10.6742s                                        |
+[Motivation][Epoch 046] Agreement=0.908802 SoftDisagreement=0.096378 WW|Agree=0.097216 HC90WW|WW=0.331701
+[Motivation][Epoch 047] Agreement=0.889117 SoftDisagreement=0.113038 WW|Agree=0.087894 HC90WW|WW=0.379253
+[Motivation][Epoch 048] Agreement=0.940629 SoftDisagreement=0.067049 WW|Agree=0.095319 HC90WW|WW=0.361664
+[Motivation][Epoch 049] Agreement=0.947933 SoftDisagreement=0.058920 WW|Agree=0.086803 HC90WW|WW=0.447373
+===============================================================
+| Epoch 50/200                                                |
+---------------------------------------------------------------
+| Train Sup Loss 1: 0.0384     | Train Sup Loss 2: 0.0409     |
+| Train Unsup Loss: 0.2495     | Train Total Loss: 0.3287     |
+---------------------------------------------------------------
+| Train Thr 1: 0.4800          | Train Thr 2: 0.6400          |
+| Train  Jc 1: 0.9430          | Train  Jc 2: 0.9426          |
+| Train  Dc 1: 0.9707          | Train  Dc 2: 0.9705          |
+---------------------------------------------------------------
+| Val Sup Loss 1: 0.1156       | Val Sup Loss 2: 0.1096       |
+---------------------------------------------------------------
+| Val Thr 1: 0.2600            | Val Thr 2: 0.3200            |
+| Val  Jc 1: 0.7470            | Val  Jc 2: 0.7522            |
+| Val  Dc 1: 0.8552            | Val  Dc 2: 0.8586            |
+[Motivation][Epoch 050] Agreement=0.938317 SoftDisagreement=0.077722 WW|Agree=0.100659 HC90WW|WW=0.251264
+| Val diversity: disagreement=0.0767 | dice_similarity=0.9233 | complementary_error=0.0617
+| Current student weights saved at epoch 50                   |
+| Periodic best student weights saved at epoch 50             |
+---------------------------------------------------------------
+| Epoch Time: 21.6605s                                        |
+[Motivation][Epoch 051] Agreement=0.919411 SoftDisagreement=0.085716 WW|Agree=0.095638 HC90WW|WW=0.387587
+[Motivation][Epoch 052] Agreement=0.944652 SoftDisagreement=0.063784 WW|Agree=0.098704 HC90WW|WW=0.429751
+[Motivation][Epoch 053] Agreement=0.797404 SoftDisagreement=0.172971 WW|Agree=0.126016 HC90WW|WW=0.160605
+[Motivation][Epoch 054] Agreement=0.913538 SoftDisagreement=0.091418 WW|Agree=0.097487 HC90WW|WW=0.339585
+===============================================================
+| Epoch 55/200                                                |
+---------------------------------------------------------------
+| Train Sup Loss 1: 0.0543     | Train Sup Loss 2: 0.0498     |
+| Train Unsup Loss: 0.3076     | Train Total Loss: 0.4117     |
+---------------------------------------------------------------
+| Train Thr 1: 0.4200          | Train Thr 2: 0.3800          |
+| Train  Jc 1: 0.9222          | Train  Jc 2: 0.9164          |
+| Train  Dc 1: 0.9595          | Train  Dc 2: 0.9564          |
+---------------------------------------------------------------
+| Val Sup Loss 1: 0.1268       | Val Sup Loss 2: 0.1378       |
+---------------------------------------------------------------
+| Val Thr 1: 0.2400            | Val Thr 2: 0.5800            |
+| Val  Jc 1: 0.7375            | Val  Jc 2: 0.7272            |
+| Val  Dc 1: 0.8489            | Val  Dc 2: 0.8421            |
+[Motivation][Epoch 055] Agreement=0.888223 SoftDisagreement=0.114766 WW|Agree=0.097283 HC90WW|WW=0.358745
+| Val diversity: disagreement=0.1333 | dice_similarity=0.8667 | complementary_error=0.1118
+---------------------------------------------------------------
+| Epoch Time: 10.8943s                                        |
+[Motivation][Epoch 056] Agreement=0.937494 SoftDisagreement=0.071427 WW|Agree=0.104822 HC90WW|WW=0.496155
+[Motivation][Epoch 057] Agreement=0.912268 SoftDisagreement=0.091808 WW|Agree=0.092465 HC90WW|WW=0.373690
+[Motivation][Epoch 058] Agreement=0.942030 SoftDisagreement=0.071438 WW|Agree=0.088696 HC90WW|WW=0.361536
+[Motivation][Epoch 059] Agreement=0.902410 SoftDisagreement=0.114496 WW|Agree=0.084772 HC90WW|WW=0.340424
+===============================================================
+| Epoch 60/200                                                |
+---------------------------------------------------------------
+| Train Sup Loss 1: 0.0441     | Train Sup Loss 2: 0.0426     |
+| Train Unsup Loss: 0.2901     | Train Total Loss: 0.3768     |
+---------------------------------------------------------------
+| Train Thr 1: 0.7600          | Train Thr 2: 0.5400          |
+| Train  Jc 1: 0.9006          | Train  Jc 2: 0.9326          |
+| Train  Dc 1: 0.9477          | Train  Dc 2: 0.9651          |
+---------------------------------------------------------------
+| Val Sup Loss 1: 0.1326       | Val Sup Loss 2: 0.1125       |
+---------------------------------------------------------------
+| Val Thr 1: 0.1200            | Val Thr 2: 0.2000            |
+| Val  Jc 1: 0.7358            | Val  Jc 2: 0.7627            |
+| Val  Dc 1: 0.8478            | Val  Dc 2: 0.8654            |
+[Motivation][Epoch 060] Agreement=0.938988 SoftDisagreement=0.069217 WW|Agree=0.108260 HC90WW|WW=0.461384
+| Val diversity: disagreement=0.0833 | dice_similarity=0.9167 | complementary_error=0.0610
+| Current student weights saved at epoch 60                   |
+| Periodic best student weights saved at epoch 60             |
+---------------------------------------------------------------
+| Epoch Time: 22.3105s                                        |
+[Motivation][Epoch 061] Agreement=0.946597 SoftDisagreement=0.066483 WW|Agree=0.092196 HC90WW|WW=0.360914
+[Motivation][Epoch 062] Agreement=0.912029 SoftDisagreement=0.091818 WW|Agree=0.106758 HC90WW|WW=0.384588
+[Motivation][Epoch 063] Agreement=0.948553 SoftDisagreement=0.067843 WW|Agree=0.090146 HC90WW|WW=0.374320
+[Motivation][Epoch 064] Agreement=0.937209 SoftDisagreement=0.091291 WW|Agree=0.095023 HC90WW|WW=0.252683
+===============================================================
+| Epoch 65/200                                                |
+---------------------------------------------------------------
+| Train Sup Loss 1: 0.0459     | Train Sup Loss 2: 0.0439     |
+| Train Unsup Loss: 0.3084     | Train Total Loss: 0.3983     |
+---------------------------------------------------------------
+| Train Thr 1: 0.4600          | Train Thr 2: 0.5800          |
+| Train  Jc 1: 0.9277          | Train  Jc 2: 0.9333          |
+| Train  Dc 1: 0.9625          | Train  Dc 2: 0.9655          |
+---------------------------------------------------------------
+| Val Sup Loss 1: 0.1144       | Val Sup Loss 2: 0.1111       |
+---------------------------------------------------------------
+| Val Thr 1: 0.2400            | Val Thr 2: 0.4800            |
+| Val  Jc 1: 0.7516            | Val  Jc 2: 0.7587            |
+| Val  Dc 1: 0.8582            | Val  Dc 2: 0.8628            |
+[Motivation][Epoch 065] Agreement=0.940941 SoftDisagreement=0.069710 WW|Agree=0.098047 HC90WW|WW=0.437276
+| Val diversity: disagreement=0.0703 | dice_similarity=0.9297 | complementary_error=0.0591
+---------------------------------------------------------------
+| Epoch Time: 11.5248s                                        |
+[Motivation][Epoch 066] Agreement=0.944608 SoftDisagreement=0.067676 WW|Agree=0.093087 HC90WW|WW=0.183392
+[Motivation][Epoch 067] Agreement=0.927391 SoftDisagreement=0.086536 WW|Agree=0.097224 HC90WW|WW=0.277381
+[Motivation][Epoch 068] Agreement=0.940285 SoftDisagreement=0.068502 WW|Agree=0.087755 HC90WW|WW=0.289619
+[Motivation][Epoch 069] Agreement=0.935571 SoftDisagreement=0.083396 WW|Agree=0.096903 HC90WW|WW=0.310232
+===============================================================
+| Epoch 70/200                                                |
+---------------------------------------------------------------
+| Train Sup Loss 1: 0.0377     | Train Sup Loss 2: 0.0391     |
+| Train Unsup Loss: 0.3401     | Train Total Loss: 0.4169     |
+---------------------------------------------------------------
+| Train Thr 1: 0.4200          | Train Thr 2: 0.6400          |
+| Train  Jc 1: 0.9369          | Train  Jc 2: 0.8986          |
+| Train  Dc 1: 0.9674          | Train  Dc 2: 0.9466          |
+---------------------------------------------------------------
+| Val Sup Loss 1: 0.1117       | Val Sup Loss 2: 0.1087       |
+---------------------------------------------------------------
+| Val Thr 1: 0.4800            | Val Thr 2: 0.3400            |
+| Val  Jc 1: 0.7665            | Val  Jc 2: 0.7639            |
+| Val  Dc 1: 0.8678            | Val  Dc 2: 0.8662            |
+[Motivation][Epoch 070] Agreement=0.930627 SoftDisagreement=0.084247 WW|Agree=0.088227 HC90WW|WW=0.223600
+| Val diversity: disagreement=0.0825 | dice_similarity=0.9175 | complementary_error=0.0694
+| Current student weights saved at epoch 70                   |
+| Periodic best student weights saved at epoch 70             |
+---------------------------------------------------------------
+| Epoch Time: 21.9960s                                        |
+[Motivation][Epoch 071] Agreement=0.903599 SoftDisagreement=0.120618 WW|Agree=0.093349 HC90WW|WW=0.313211
+[Motivation][Epoch 072] Agreement=0.940296 SoftDisagreement=0.066911 WW|Agree=0.092925 HC90WW|WW=0.382340
+[Motivation][Epoch 073] Agreement=0.946656 SoftDisagreement=0.060759 WW|Agree=0.087116 HC90WW|WW=0.378385
+[Motivation][Epoch 074] Agreement=0.967824 SoftDisagreement=0.037731 WW|Agree=0.091930 HC90WW|WW=0.428802
+===============================================================
+| Epoch 75/200                                                |
+---------------------------------------------------------------
+| Train Sup Loss 1: 0.0321     | Train Sup Loss 2: 0.0329     |
+| Train Unsup Loss: 0.2328     | Train Total Loss: 0.2978     |
+---------------------------------------------------------------
+| Train Thr 1: 0.5800          | Train Thr 2: 0.4800          |
+| Train  Jc 1: 0.9288          | Train  Jc 2: 0.9329          |
+| Train  Dc 1: 0.9631          | Train  Dc 2: 0.9653          |
+---------------------------------------------------------------
+| Val Sup Loss 1: 0.0957       | Val Sup Loss 2: 0.0929       |
+---------------------------------------------------------------
+| Val Thr 1: 0.2000            | Val Thr 2: 0.2800            |
+| Val  Jc 1: 0.7952            | Val  Jc 2: 0.7925            |
+| Val  Dc 1: 0.8859            | Val  Dc 2: 0.8843            |
+[Motivation][Epoch 075] Agreement=0.966957 SoftDisagreement=0.039556 WW|Agree=0.092241 HC90WW|WW=0.379155
+| Val diversity: disagreement=0.0411 | dice_similarity=0.9589 | complementary_error=0.0330
+---------------------------------------------------------------
+| Epoch Time: 12.8909s                                        |
+[Motivation][Epoch 076] Agreement=0.965154 SoftDisagreement=0.042610 WW|Agree=0.090457 HC90WW|WW=0.413682
+[Motivation][Epoch 077] Agreement=0.960286 SoftDisagreement=0.049421 WW|Agree=0.083975 HC90WW|WW=0.421696
+[Motivation][Epoch 078] Agreement=0.959269 SoftDisagreement=0.050168 WW|Agree=0.082193 HC90WW|WW=0.356515
+[Motivation][Epoch 079] Agreement=0.969157 SoftDisagreement=0.035916 WW|Agree=0.094176 HC90WW|WW=0.441565
+===============================================================
+| Epoch 80/200                                                |
+---------------------------------------------------------------
+| Train Sup Loss 1: 0.0284     | Train Sup Loss 2: 0.0286     |
+| Train Unsup Loss: 0.2127     | Train Total Loss: 0.2696     |
+---------------------------------------------------------------
+| Train Thr 1: 0.4600          | Train Thr 2: 0.5000          |
+| Train  Jc 1: 0.9303          | Train  Jc 2: 0.9313          |
+| Train  Dc 1: 0.9639          | Train  Dc 2: 0.9644          |
+---------------------------------------------------------------
+| Val Sup Loss 1: 0.0957       | Val Sup Loss 2: 0.0930       |
+---------------------------------------------------------------
+| Val Thr 1: 0.2200            | Val Thr 2: 0.1800            |
+| Val  Jc 1: 0.7893            | Val  Jc 2: 0.7962            |
+| Val  Dc 1: 0.8822            | Val  Dc 2: 0.8865            |
+[Motivation][Epoch 080] Agreement=0.968179 SoftDisagreement=0.035781 WW|Agree=0.092793 HC90WW|WW=0.387963
+| Val diversity: disagreement=0.0404 | dice_similarity=0.9596 | complementary_error=0.0318
+| Current student weights saved at epoch 80                   |
+| Periodic best student weights saved at epoch 80             |
+---------------------------------------------------------------
+| Epoch Time: 21.7915s                                        |
+[Motivation][Epoch 081] Agreement=0.963474 SoftDisagreement=0.044584 WW|Agree=0.089849 HC90WW|WW=0.358916
+[Motivation][Epoch 082] Agreement=0.969471 SoftDisagreement=0.036344 WW|Agree=0.091797 HC90WW|WW=0.385577
+[Motivation][Epoch 083] Agreement=0.954851 SoftDisagreement=0.055003 WW|Agree=0.080350 HC90WW|WW=0.397183
+[Motivation][Epoch 084] Agreement=0.966118 SoftDisagreement=0.039560 WW|Agree=0.090557 HC90WW|WW=0.400700
+===============================================================
+| Epoch 85/200                                                |
+---------------------------------------------------------------
+| Train Sup Loss 1: 0.0299     | Train Sup Loss 2: 0.0288     |
+| Train Unsup Loss: 0.2368     | Train Total Loss: 0.2954     |
+---------------------------------------------------------------
+| Train Thr 1: 0.7000          | Train Thr 2: 0.4000          |
+| Train  Jc 1: 0.9372          | Train  Jc 2: 0.9388          |
+| Train  Dc 1: 0.9676          | Train  Dc 2: 0.9684          |
+---------------------------------------------------------------
+| Val Sup Loss 1: 0.0897       | Val Sup Loss 2: 0.1003       |
+---------------------------------------------------------------
+| Val Thr 1: 0.2600            | Val Thr 2: 0.2200            |
+| Val  Jc 1: 0.7975            | Val  Jc 2: 0.7834            |
+| Val  Dc 1: 0.8873            | Val  Dc 2: 0.8786            |
+[Motivation][Epoch 085] Agreement=0.962098 SoftDisagreement=0.045840 WW|Agree=0.090791 HC90WW|WW=0.359865
+| Val diversity: disagreement=0.0472 | dice_similarity=0.9528 | complementary_error=0.0379
+---------------------------------------------------------------
+| Epoch Time: 10.7282s                                        |
+[Motivation][Epoch 086] Agreement=0.957778 SoftDisagreement=0.047966 WW|Agree=0.082530 HC90WW|WW=0.386941
+[Motivation][Epoch 087] Agreement=0.945838 SoftDisagreement=0.057946 WW|Agree=0.082535 HC90WW|WW=0.375116
+[Motivation][Epoch 088] Agreement=0.960654 SoftDisagreement=0.045263 WW|Agree=0.088029 HC90WW|WW=0.387433
+[Motivation][Epoch 089] Agreement=0.953926 SoftDisagreement=0.049145 WW|Agree=0.089533 HC90WW|WW=0.443071
+===============================================================
+| Epoch 90/200                                                |
+---------------------------------------------------------------
+| Train Sup Loss 1: 0.0279     | Train Sup Loss 2: 0.0288     |
+| Train Unsup Loss: 0.2550     | Train Total Loss: 0.3117     |
+---------------------------------------------------------------
+| Train Thr 1: 0.6000          | Train Thr 2: 0.5800          |
+| Train  Jc 1: 0.9489          | Train  Jc 2: 0.9466          |
+| Train  Dc 1: 0.9738          | Train  Dc 2: 0.9726          |
+---------------------------------------------------------------
+| Val Sup Loss 1: 0.0901       | Val Sup Loss 2: 0.0860       |
+---------------------------------------------------------------
+| Val Thr 1: 0.3800            | Val Thr 2: 0.4000            |
+| Val  Jc 1: 0.7923            | Val  Jc 2: 0.8033            |
+| Val  Dc 1: 0.8841            | Val  Dc 2: 0.8909            |
+[Motivation][Epoch 090] Agreement=0.959219 SoftDisagreement=0.048317 WW|Agree=0.080749 HC90WW|WW=0.405238
+| Val diversity: disagreement=0.0477 | dice_similarity=0.9523 | complementary_error=0.0408
+| Current student weights saved at epoch 90                   |
+| Periodic best student weights saved at epoch 90             |
+---------------------------------------------------------------
+| Epoch Time: 21.5129s                                        |
+[Motivation][Epoch 091] Agreement=0.953565 SoftDisagreement=0.054757 WW|Agree=0.085937 HC90WW|WW=0.352363
+[Motivation][Epoch 092] Agreement=0.964790 SoftDisagreement=0.041025 WW|Agree=0.089207 HC90WW|WW=0.446400
+[Motivation][Epoch 093] Agreement=0.954523 SoftDisagreement=0.048387 WW|Agree=0.082032 HC90WW|WW=0.447322
+[Motivation][Epoch 094] Agreement=0.956879 SoftDisagreement=0.050402 WW|Agree=0.084719 HC90WW|WW=0.406849
+===============================================================
+| Epoch 95/200                                                |
+---------------------------------------------------------------
+| Train Sup Loss 1: 0.0314     | Train Sup Loss 2: 0.0315     |
+| Train Unsup Loss: 0.3510     | Train Total Loss: 0.4139     |
+---------------------------------------------------------------
+| Train Thr 1: 0.7200          | Train Thr 2: 0.5400          |
+| Train  Jc 1: 0.9420          | Train  Jc 2: 0.9475          |
+| Train  Dc 1: 0.9701          | Train  Dc 2: 0.9731          |
+---------------------------------------------------------------
+| Val Sup Loss 1: 0.0996       | Val Sup Loss 2: 0.0919       |
+---------------------------------------------------------------
+| Val Thr 1: 0.3600            | Val Thr 2: 0.3000            |
+| Val  Jc 1: 0.7783            | Val  Jc 2: 0.7936            |
+| Val  Dc 1: 0.8753            | Val  Dc 2: 0.8850            |
+[Motivation][Epoch 095] Agreement=0.952866 SoftDisagreement=0.072690 WW|Agree=0.088180 HC90WW|WW=0.225527
+| Val diversity: disagreement=0.0573 | dice_similarity=0.9427 | complementary_error=0.0471
+---------------------------------------------------------------
+| Epoch Time: 11.0116s                                        |
+[Motivation][Epoch 096] Agreement=0.955486 SoftDisagreement=0.048084 WW|Agree=0.086398 HC90WW|WW=0.414311
+[Motivation][Epoch 097] Agreement=0.952954 SoftDisagreement=0.050283 WW|Agree=0.088170 HC90WW|WW=0.369886
+[Motivation][Epoch 098] Agreement=0.964082 SoftDisagreement=0.041382 WW|Agree=0.087502 HC90WW|WW=0.444401
+[Motivation][Epoch 099] Agreement=0.952408 SoftDisagreement=0.049875 WW|Agree=0.078753 HC90WW|WW=0.412642
+===============================================================
+| Epoch 100/200                                               |
+---------------------------------------------------------------
+| Train Sup Loss 1: 0.0307     | Train Sup Loss 2: 0.0295     |
+| Train Unsup Loss: 0.3200     | Train Total Loss: 0.3802     |
+---------------------------------------------------------------
+| Train Thr 1: 0.4200          | Train Thr 2: 0.5800          |
+| Train  Jc 1: 0.9425          | Train  Jc 2: 0.9409          |
+| Train  Dc 1: 0.9704          | Train  Dc 2: 0.9696          |
+---------------------------------------------------------------
+| Val Sup Loss 1: 0.0965       | Val Sup Loss 2: 0.0849       |
+---------------------------------------------------------------
+| Val Thr 1: 0.5800            | Val Thr 2: 0.3800            |
+| Val  Jc 1: 0.7836            | Val  Jc 2: 0.8047            |
+| Val  Dc 1: 0.8787            | Val  Dc 2: 0.8918            |
+[Motivation][Epoch 100] Agreement=0.944060 SoftDisagreement=0.065637 WW|Agree=0.077164 HC90WW|WW=0.325037
+| Val diversity: disagreement=0.0654 | dice_similarity=0.9346 | complementary_error=0.0559
+| Current student weights saved at epoch 100                  |
+| Periodic best student weights saved at epoch 100            |
+---------------------------------------------------------------
+| Epoch Time: 21.5329s                                        |
+[Motivation][Epoch 101] Agreement=0.950764 SoftDisagreement=0.054317 WW|Agree=0.082319 HC90WW|WW=0.358831
+[Motivation][Epoch 102] Agreement=0.919579 SoftDisagreement=0.080555 WW|Agree=0.077862 HC90WW|WW=0.336965
+[Motivation][Epoch 103] Agreement=0.954172 SoftDisagreement=0.058353 WW|Agree=0.086152 HC90WW|WW=0.323888
+[Motivation][Epoch 104] Agreement=0.920379 SoftDisagreement=0.083928 WW|Agree=0.081998 HC90WW|WW=0.326626
+===============================================================
+| Epoch 105/200                                               |
+---------------------------------------------------------------
+| Train Sup Loss 1: 0.0296     | Train Sup Loss 2: 0.0288     |
+| Train Unsup Loss: 0.3011     | Train Total Loss: 0.3595     |
+---------------------------------------------------------------
+| Train Thr 1: 0.3800          | Train Thr 2: 0.5600          |
+| Train  Jc 1: 0.9394          | Train  Jc 2: 0.9379          |
+| Train  Dc 1: 0.9688          | Train  Dc 2: 0.9680          |
+---------------------------------------------------------------
+| Val Sup Loss 1: 0.1008       | Val Sup Loss 2: 0.0868       |
+---------------------------------------------------------------
+| Val Thr 1: 0.1800            | Val Thr 2: 0.3600            |
+| Val  Jc 1: 0.7845            | Val  Jc 2: 0.8058            |
+| Val  Dc 1: 0.8792            | Val  Dc 2: 0.8924            |
+[Motivation][Epoch 105] Agreement=0.952321 SoftDisagreement=0.052775 WW|Agree=0.081531 HC90WW|WW=0.422397
+| Val diversity: disagreement=0.0572 | dice_similarity=0.9428 | complementary_error=0.0477
+---------------------------------------------------------------
+| Epoch Time: 11.1789s                                        |
+[Motivation][Epoch 106] Agreement=0.962262 SoftDisagreement=0.040123 WW|Agree=0.080817 HC90WW|WW=0.452811
+[Motivation][Epoch 107] Agreement=0.944699 SoftDisagreement=0.062466 WW|Agree=0.073611 HC90WW|WW=0.316072
+[Motivation][Epoch 108] Agreement=0.909685 SoftDisagreement=0.099512 WW|Agree=0.076867 HC90WW|WW=0.263619
+[Motivation][Epoch 109] Agreement=0.961004 SoftDisagreement=0.047876 WW|Agree=0.091180 HC90WW|WW=0.355439
+===============================================================
+| Epoch 110/200                                               |
+---------------------------------------------------------------
+| Train Sup Loss 1: 0.0309     | Train Sup Loss 2: 0.0326     |
+| Train Unsup Loss: 0.3802     | Train Total Loss: 0.4437     |
+---------------------------------------------------------------
+| Train Thr 1: 0.6400          | Train Thr 2: 0.3600          |
+| Train  Jc 1: 0.9430          | Train  Jc 2: 0.9386          |
+| Train  Dc 1: 0.9707          | Train  Dc 2: 0.9683          |
+---------------------------------------------------------------
+| Val Sup Loss 1: 0.1035       | Val Sup Loss 2: 0.0886       |
+---------------------------------------------------------------
+| Val Thr 1: 0.3400            | Val Thr 2: 0.3200            |
+| Val  Jc 1: 0.7703            | Val  Jc 2: 0.7932            |
+| Val  Dc 1: 0.8703            | Val  Dc 2: 0.8847            |
+[Motivation][Epoch 110] Agreement=0.928017 SoftDisagreement=0.074320 WW|Agree=0.076162 HC90WW|WW=0.369458
+| Val diversity: disagreement=0.0868 | dice_similarity=0.9132 | complementary_error=0.0720
+| Current student weights saved at epoch 110                  |
+| Periodic best student weights saved at epoch 110            |
+---------------------------------------------------------------
+| Epoch Time: 21.4918s                                        |
+[Motivation][Epoch 111] Agreement=0.942287 SoftDisagreement=0.059281 WW|Agree=0.083282 HC90WW|WW=0.352690
+[Motivation][Epoch 112] Agreement=0.945379 SoftDisagreement=0.060488 WW|Agree=0.085231 HC90WW|WW=0.483413
+[Motivation][Epoch 113] Agreement=0.951823 SoftDisagreement=0.053924 WW|Agree=0.078509 HC90WW|WW=0.380594
+[Motivation][Epoch 114] Agreement=0.961459 SoftDisagreement=0.042592 WW|Agree=0.088975 HC90WW|WW=0.488458
+===============================================================
+| Epoch 115/200                                               |
+---------------------------------------------------------------
+| Train Sup Loss 1: 0.0309     | Train Sup Loss 2: 0.0311     |
+| Train Unsup Loss: 0.3515     | Train Total Loss: 0.4135     |
+---------------------------------------------------------------
+| Train Thr 1: 0.6400          | Train Thr 2: 0.5000          |
+| Train  Jc 1: 0.9289          | Train  Jc 2: 0.9289          |
+| Train  Dc 1: 0.9632          | Train  Dc 2: 0.9632          |
+---------------------------------------------------------------
+| Val Sup Loss 1: 0.1024       | Val Sup Loss 2: 0.0947       |
+---------------------------------------------------------------
+| Val Thr 1: 0.2600            | Val Thr 2: 0.3800            |
+| Val  Jc 1: 0.7800            | Val  Jc 2: 0.7884            |
+| Val  Dc 1: 0.8764            | Val  Dc 2: 0.8817            |
+[Motivation][Epoch 115] Agreement=0.938967 SoftDisagreement=0.072924 WW|Agree=0.080043 HC90WW|WW=0.377947
+| Val diversity: disagreement=0.0738 | dice_similarity=0.9262 | complementary_error=0.0610
+---------------------------------------------------------------
+| Epoch Time: 11.2895s                                        |
+[Motivation][Epoch 116] Agreement=0.912372 SoftDisagreement=0.107193 WW|Agree=0.073286 HC90WW|WW=0.395737
+[Motivation][Epoch 117] Agreement=0.955971 SoftDisagreement=0.046886 WW|Agree=0.090214 HC90WW|WW=0.491950
+[Motivation][Epoch 118] Agreement=0.952017 SoftDisagreement=0.054879 WW|Agree=0.085204 HC90WW|WW=0.367227
+[Motivation][Epoch 119] Agreement=0.936363 SoftDisagreement=0.065131 WW|Agree=0.074743 HC90WW|WW=0.429161
+===============================================================
+| Epoch 120/200                                               |
+---------------------------------------------------------------
+| Train Sup Loss 1: 0.0372     | Train Sup Loss 2: 0.0334     |
+| Train Unsup Loss: 0.4705     | Train Total Loss: 0.5411     |
+---------------------------------------------------------------
+| Train Thr 1: 0.3600          | Train Thr 2: 0.5200          |
+| Train  Jc 1: 0.9651          | Train  Jc 2: 0.9661          |
+| Train  Dc 1: 0.9822          | Train  Dc 2: 0.9828          |
+---------------------------------------------------------------
+| Val Sup Loss 1: 0.0954       | Val Sup Loss 2: 0.0984       |
+---------------------------------------------------------------
+| Val Thr 1: 0.3000            | Val Thr 2: 0.4400            |
+| Val  Jc 1: 0.7812            | Val  Jc 2: 0.7756            |
+| Val  Dc 1: 0.8772            | Val  Dc 2: 0.8736            |
+[Motivation][Epoch 120] Agreement=0.937812 SoftDisagreement=0.072531 WW|Agree=0.084528 HC90WW|WW=0.234983
+| Val diversity: disagreement=0.0749 | dice_similarity=0.9251 | complementary_error=0.0622
+| Current student weights saved at epoch 120                  |
+| Periodic best student weights saved at epoch 120            |
+---------------------------------------------------------------
+| Epoch Time: 21.2150s                                        |
+[Motivation][Epoch 121] Agreement=0.930558 SoftDisagreement=0.079647 WW|Agree=0.080825 HC90WW|WW=0.149997
+[Motivation][Epoch 122] Agreement=0.956828 SoftDisagreement=0.048402 WW|Agree=0.087381 HC90WW|WW=0.444997
+[Motivation][Epoch 123] Agreement=0.958019 SoftDisagreement=0.044266 WW|Agree=0.083019 HC90WW|WW=0.432017
+[Motivation][Epoch 124] Agreement=0.964709 SoftDisagreement=0.037723 WW|Agree=0.085561 HC90WW|WW=0.463897
+===============================================================
+| Epoch 125/200                                               |
+---------------------------------------------------------------
+| Train Sup Loss 1: 0.0279     | Train Sup Loss 2: 0.0269     |
+| Train Unsup Loss: 0.2927     | Train Total Loss: 0.3475     |
+---------------------------------------------------------------
+| Train Thr 1: 0.5400          | Train Thr 2: 0.6200          |
+| Train  Jc 1: 0.9509          | Train  Jc 2: 0.9528          |
+| Train  Dc 1: 0.9748          | Train  Dc 2: 0.9758          |
+---------------------------------------------------------------
+| Val Sup Loss 1: 0.0927       | Val Sup Loss 2: 0.0883       |
+---------------------------------------------------------------
+| Val Thr 1: 0.2200            | Val Thr 2: 0.2600            |
+| Val  Jc 1: 0.7929            | Val  Jc 2: 0.8043            |
+| Val  Dc 1: 0.8845            | Val  Dc 2: 0.8915            |
+[Motivation][Epoch 125] Agreement=0.960268 SoftDisagreement=0.043717 WW|Agree=0.085432 HC90WW|WW=0.402630
+| Val diversity: disagreement=0.0483 | dice_similarity=0.9517 | complementary_error=0.0397
+---------------------------------------------------------------
+| Epoch Time: 11.2712s                                        |
+[Motivation][Epoch 126] Agreement=0.969047 SoftDisagreement=0.034682 WW|Agree=0.085624 HC90WW|WW=0.435830
+[Motivation][Epoch 127] Agreement=0.968457 SoftDisagreement=0.033080 WW|Agree=0.084906 HC90WW|WW=0.484756
+[Motivation][Epoch 128] Agreement=0.967398 SoftDisagreement=0.034934 WW|Agree=0.081858 HC90WW|WW=0.452010
+[Motivation][Epoch 129] Agreement=0.966949 SoftDisagreement=0.035384 WW|Agree=0.085430 HC90WW|WW=0.439332
+===============================================================
+| Epoch 130/200                                               |
+---------------------------------------------------------------
+| Train Sup Loss 1: 0.0261     | Train Sup Loss 2: 0.0263     |
+| Train Unsup Loss: 0.2820     | Train Total Loss: 0.3344     |
+---------------------------------------------------------------
+| Train Thr 1: 0.7000          | Train Thr 2: 0.6800          |
+| Train  Jc 1: 0.9542          | Train  Jc 2: 0.9536          |
+| Train  Dc 1: 0.9766          | Train  Dc 2: 0.9762          |
+---------------------------------------------------------------
+| Val Sup Loss 1: 0.0932       | Val Sup Loss 2: 0.0840       |
+---------------------------------------------------------------
+| Val Thr 1: 0.1600            | Val Thr 2: 0.1800            |
+| Val  Jc 1: 0.7945            | Val  Jc 2: 0.8202            |
+| Val  Dc 1: 0.8855            | Val  Dc 2: 0.9012            |
+[Motivation][Epoch 130] Agreement=0.963518 SoftDisagreement=0.041243 WW|Agree=0.080583 HC90WW|WW=0.450285
+| Val diversity: disagreement=0.0447 | dice_similarity=0.9553 | complementary_error=0.0365
+| Current student weights saved at epoch 130                  |
+| Periodic best student weights saved at epoch 130            |
+---------------------------------------------------------------
+| Epoch Time: 22.8047s                                        |
+[Motivation][Epoch 131] Agreement=0.966566 SoftDisagreement=0.038486 WW|Agree=0.080816 HC90WW|WW=0.347693
+[Motivation][Epoch 132] Agreement=0.969259 SoftDisagreement=0.034317 WW|Agree=0.084001 HC90WW|WW=0.458075
+[Motivation][Epoch 133] Agreement=0.970203 SoftDisagreement=0.033821 WW|Agree=0.079356 HC90WW|WW=0.470487
+[Motivation][Epoch 134] Agreement=0.956981 SoftDisagreement=0.041174 WW|Agree=0.074183 HC90WW|WW=0.473506
+===============================================================
+| Epoch 135/200                                               |
+---------------------------------------------------------------
+| Train Sup Loss 1: 0.0251     | Train Sup Loss 2: 0.0250     |
+| Train Unsup Loss: 0.2745     | Train Total Loss: 0.3245     |
+---------------------------------------------------------------
+| Train Thr 1: 0.4600          | Train Thr 2: 0.6000          |
+| Train  Jc 1: 0.9707          | Train  Jc 2: 0.9721          |
+| Train  Dc 1: 0.9851          | Train  Dc 2: 0.9859          |
+---------------------------------------------------------------
+| Val Sup Loss 1: 0.0880       | Val Sup Loss 2: 0.0817       |
+---------------------------------------------------------------
+| Val Thr 1: 0.2800            | Val Thr 2: 0.2000            |
+| Val  Jc 1: 0.8053            | Val  Jc 2: 0.8185            |
+| Val  Dc 1: 0.8922            | Val  Dc 2: 0.9002            |
+[Motivation][Epoch 135] Agreement=0.961131 SoftDisagreement=0.041098 WW|Agree=0.076116 HC90WW|WW=0.452617
+| Val diversity: disagreement=0.0465 | dice_similarity=0.9535 | complementary_error=0.0389
+---------------------------------------------------------------
+| Epoch Time: 12.9741s                                        |
+[Motivation][Epoch 136] Agreement=0.973070 SoftDisagreement=0.028432 WW|Agree=0.082482 HC90WW|WW=0.472858
+[Motivation][Epoch 137] Agreement=0.967178 SoftDisagreement=0.039506 WW|Agree=0.081789 HC90WW|WW=0.371731
+[Motivation][Epoch 138] Agreement=0.947530 SoftDisagreement=0.051777 WW|Agree=0.071220 HC90WW|WW=0.428243
+[Motivation][Epoch 139] Agreement=0.959392 SoftDisagreement=0.042315 WW|Agree=0.075735 HC90WW|WW=0.443095
+===============================================================
+| Epoch 140/200                                               |
+---------------------------------------------------------------
+| Train Sup Loss 1: 0.0265     | Train Sup Loss 2: 0.0264     |
+| Train Unsup Loss: 0.3171     | Train Total Loss: 0.3700     |
+---------------------------------------------------------------
+| Train Thr 1: 0.1200          | Train Thr 2: 0.4200          |
+| Train  Jc 1: 0.9850          | Train  Jc 2: 0.9862          |
+| Train  Dc 1: 0.9925          | Train  Dc 2: 0.9931          |
+---------------------------------------------------------------
+| Val Sup Loss 1: 0.0911       | Val Sup Loss 2: 0.0828       |
+---------------------------------------------------------------
+| Val Thr 1: 0.3200            | Val Thr 2: 0.2600            |
+| Val  Jc 1: 0.7964            | Val  Jc 2: 0.8072            |
+| Val  Dc 1: 0.8866            | Val  Dc 2: 0.8933            |
+[Motivation][Epoch 140] Agreement=0.963181 SoftDisagreement=0.040156 WW|Agree=0.080710 HC90WW|WW=0.411863
+| Val diversity: disagreement=0.0438 | dice_similarity=0.9562 | complementary_error=0.0368
+| Current student weights saved at epoch 140                  |
+| Periodic best student weights saved at epoch 140            |
+---------------------------------------------------------------
+| Epoch Time: 21.5032s                                        |
+[Motivation][Epoch 141] Agreement=0.967064 SoftDisagreement=0.036625 WW|Agree=0.084336 HC90WW|WW=0.451615
+[Motivation][Epoch 142] Agreement=0.956197 SoftDisagreement=0.046210 WW|Agree=0.078378 HC90WW|WW=0.407045
+[Motivation][Epoch 143] Agreement=0.958717 SoftDisagreement=0.043795 WW|Agree=0.080779 HC90WW|WW=0.417612
+[Motivation][Epoch 144] Agreement=0.957877 SoftDisagreement=0.047521 WW|Agree=0.074894 HC90WW|WW=0.484260
+===============================================================
+| Epoch 145/200                                               |
+---------------------------------------------------------------
+| Train Sup Loss 1: 0.0251     | Train Sup Loss 2: 0.0255     |
+| Train Unsup Loss: 0.2810     | Train Total Loss: 0.3316     |
+---------------------------------------------------------------
+| Train Thr 1: 0.3800          | Train Thr 2: 0.6000          |
+| Train  Jc 1: 0.9385          | Train  Jc 2: 0.9406          |
+| Train  Dc 1: 0.9683          | Train  Dc 2: 0.9694          |
+---------------------------------------------------------------
+| Val Sup Loss 1: 0.0932       | Val Sup Loss 2: 0.0948       |
+---------------------------------------------------------------
+| Val Thr 1: 0.1200            | Val Thr 2: 0.4000            |
+| Val  Jc 1: 0.8053            | Val  Jc 2: 0.7811            |
+| Val  Dc 1: 0.8921            | Val  Dc 2: 0.8771            |
+[Motivation][Epoch 145] Agreement=0.952782 SoftDisagreement=0.053362 WW|Agree=0.083027 HC90WW|WW=0.454490
+| Val diversity: disagreement=0.0573 | dice_similarity=0.9427 | complementary_error=0.0472
+---------------------------------------------------------------
+| Epoch Time: 10.9308s                                        |
+[Motivation][Epoch 146] Agreement=0.965740 SoftDisagreement=0.037403 WW|Agree=0.078631 HC90WW|WW=0.444186
+[Motivation][Epoch 147] Agreement=0.969993 SoftDisagreement=0.040775 WW|Agree=0.079181 HC90WW|WW=0.367212
+[Motivation][Epoch 148] Agreement=0.969361 SoftDisagreement=0.034316 WW|Agree=0.075042 HC90WW|WW=0.498606
+[Motivation][Epoch 149] Agreement=0.962882 SoftDisagreement=0.040696 WW|Agree=0.078650 HC90WW|WW=0.464645
+===============================================================
+| Epoch 150/200                                               |
+---------------------------------------------------------------
+| Train Sup Loss 1: 0.0247     | Train Sup Loss 2: 0.0252     |
+| Train Unsup Loss: 0.2960     | Train Total Loss: 0.3459     |
+---------------------------------------------------------------
+| Train Thr 1: 0.2800          | Train Thr 2: 0.6400          |
+| Train  Jc 1: 0.9461          | Train  Jc 2: 0.9480          |
+| Train  Dc 1: 0.9723          | Train  Dc 2: 0.9733          |
+---------------------------------------------------------------
+| Val Sup Loss 1: 0.0861       | Val Sup Loss 2: 0.0920       |
+---------------------------------------------------------------
+| Val Thr 1: 0.3000            | Val Thr 2: 0.2000            |
+| Val  Jc 1: 0.8040            | Val  Jc 2: 0.8041            |
+| Val  Dc 1: 0.8913            | Val  Dc 2: 0.8914            |
+[Motivation][Epoch 150] Agreement=0.955104 SoftDisagreement=0.046715 WW|Agree=0.077696 HC90WW|WW=0.452247
+| Val diversity: disagreement=0.0538 | dice_similarity=0.9462 | complementary_error=0.0449
+| Current student weights saved at epoch 150                  |
+| Periodic best student weights saved at epoch 150            |
+---------------------------------------------------------------
+| Epoch Time: 21.8510s                                        |
+[Motivation][Epoch 151] Agreement=0.961307 SoftDisagreement=0.040986 WW|Agree=0.074608 HC90WW|WW=0.441519
+[Motivation][Epoch 152] Agreement=0.936613 SoftDisagreement=0.064925 WW|Agree=0.068818 HC90WW|WW=0.395371
+[Motivation][Epoch 153] Agreement=0.928445 SoftDisagreement=0.079214 WW|Agree=0.076570 HC90WW|WW=0.326894
+[Motivation][Epoch 154] Agreement=0.955693 SoftDisagreement=0.049958 WW|Agree=0.080147 HC90WW|WW=0.439193
+===============================================================
+| Epoch 155/200                                               |
+---------------------------------------------------------------
+| Train Sup Loss 1: 0.0299     | Train Sup Loss 2: 0.0276     |
+| Train Unsup Loss: 0.4373     | Train Total Loss: 0.4948     |
+---------------------------------------------------------------
+| Train Thr 1: 0.8200          | Train Thr 2: 0.6000          |
+| Train  Jc 1: 0.9253          | Train  Jc 2: 0.9504          |
+| Train  Dc 1: 0.9612          | Train  Dc 2: 0.9746          |
+---------------------------------------------------------------
+| Val Sup Loss 1: 0.0858       | Val Sup Loss 2: 0.0930       |
+---------------------------------------------------------------
+| Val Thr 1: 0.4200            | Val Thr 2: 0.2800            |
+| Val  Jc 1: 0.8057            | Val  Jc 2: 0.7934            |
+| Val  Dc 1: 0.8924            | Val  Dc 2: 0.8848            |
+[Motivation][Epoch 155] Agreement=0.940236 SoftDisagreement=0.065266 WW|Agree=0.076956 HC90WW|WW=0.295854
+| Val diversity: disagreement=0.0738 | dice_similarity=0.9262 | complementary_error=0.0598
+---------------------------------------------------------------
+| Epoch Time: 11.5349s                                        |
+[Motivation][Epoch 156] Agreement=0.946507 SoftDisagreement=0.062072 WW|Agree=0.084848 HC90WW|WW=0.440340
+[Motivation][Epoch 157] Agreement=0.961807 SoftDisagreement=0.040485 WW|Agree=0.080984 HC90WW|WW=0.420090
+[Motivation][Epoch 158] Agreement=0.961192 SoftDisagreement=0.042841 WW|Agree=0.083759 HC90WW|WW=0.472139
+[Motivation][Epoch 159] Agreement=0.958459 SoftDisagreement=0.048112 WW|Agree=0.082374 HC90WW|WW=0.423092
+===============================================================
+| Epoch 160/200                                               |
+---------------------------------------------------------------
+| Train Sup Loss 1: 0.0286     | Train Sup Loss 2: 0.0262     |
+| Train Unsup Loss: 0.3648     | Train Total Loss: 0.4196     |
+---------------------------------------------------------------
+| Train Thr 1: 0.5000          | Train Thr 2: 0.3000          |
+| Train  Jc 1: 0.9610          | Train  Jc 2: 0.9613          |
+| Train  Dc 1: 0.9801          | Train  Dc 2: 0.9803          |
+---------------------------------------------------------------
+| Val Sup Loss 1: 0.0910       | Val Sup Loss 2: 0.0889       |
+---------------------------------------------------------------
+| Val Thr 1: 0.3400            | Val Thr 2: 0.2600            |
+| Val  Jc 1: 0.7950            | Val  Jc 2: 0.7969            |
+| Val  Dc 1: 0.8858            | Val  Dc 2: 0.8870            |
+[Motivation][Epoch 160] Agreement=0.959432 SoftDisagreement=0.045600 WW|Agree=0.083323 HC90WW|WW=0.384034
+| Val diversity: disagreement=0.0484 | dice_similarity=0.9516 | complementary_error=0.0406
+| Current student weights saved at epoch 160                  |
+| Periodic best student weights saved at epoch 160            |
+---------------------------------------------------------------
+| Epoch Time: 22.4901s                                        |
+[Motivation][Epoch 161] Agreement=0.954520 SoftDisagreement=0.047554 WW|Agree=0.082303 HC90WW|WW=0.431916
+[Motivation][Epoch 162] Agreement=0.961455 SoftDisagreement=0.044428 WW|Agree=0.084891 HC90WW|WW=0.391123
+[Motivation][Epoch 163] Agreement=0.969233 SoftDisagreement=0.033185 WW|Agree=0.089009 HC90WW|WW=0.443417
+[Motivation][Epoch 164] Agreement=0.950220 SoftDisagreement=0.052226 WW|Agree=0.077876 HC90WW|WW=0.429339
+===============================================================
+| Epoch 165/200                                               |
+---------------------------------------------------------------
+| Train Sup Loss 1: 0.0255     | Train Sup Loss 2: 0.0248     |
+| Train Unsup Loss: 0.3244     | Train Total Loss: 0.3747     |
+---------------------------------------------------------------
+| Train Thr 1: 0.5000          | Train Thr 2: 0.6800          |
+| Train  Jc 1: 0.9708          | Train  Jc 2: 0.9709          |
+| Train  Dc 1: 0.9852          | Train  Dc 2: 0.9852          |
+---------------------------------------------------------------
+| Val Sup Loss 1: 0.0947       | Val Sup Loss 2: 0.0871       |
+---------------------------------------------------------------
+| Val Thr 1: 0.3000            | Val Thr 2: 0.3000            |
+| Val  Jc 1: 0.7928            | Val  Jc 2: 0.8022            |
+| Val  Dc 1: 0.8844            | Val  Dc 2: 0.8903            |
+[Motivation][Epoch 165] Agreement=0.965073 SoftDisagreement=0.038334 WW|Agree=0.084545 HC90WW|WW=0.473252
+| Val diversity: disagreement=0.0414 | dice_similarity=0.9586 | complementary_error=0.0349
+---------------------------------------------------------------
+| Epoch Time: 10.9561s                                        |
+[Motivation][Epoch 166] Agreement=0.959165 SoftDisagreement=0.045263 WW|Agree=0.079508 HC90WW|WW=0.420531
+[Motivation][Epoch 167] Agreement=0.960841 SoftDisagreement=0.039713 WW|Agree=0.078676 HC90WW|WW=0.484945
+[Motivation][Epoch 168] Agreement=0.963246 SoftDisagreement=0.039385 WW|Agree=0.085752 HC90WW|WW=0.459044
+[Motivation][Epoch 169] Agreement=0.940564 SoftDisagreement=0.065149 WW|Agree=0.080280 HC90WW|WW=0.376808
+===============================================================
+| Epoch 170/200                                               |
+---------------------------------------------------------------
+| Train Sup Loss 1: 0.0262     | Train Sup Loss 2: 0.0302     |
+| Train Unsup Loss: 0.4034     | Train Total Loss: 0.4598     |
+---------------------------------------------------------------
+| Train Thr 1: 0.1600          | Train Thr 2: 0.5000          |
+| Train  Jc 1: 0.9627          | Train  Jc 2: 0.9626          |
+| Train  Dc 1: 0.9810          | Train  Dc 2: 0.9809          |
+---------------------------------------------------------------
+| Val Sup Loss 1: 0.0933       | Val Sup Loss 2: 0.0976       |
+---------------------------------------------------------------
+| Val Thr 1: 0.2600            | Val Thr 2: 0.2000            |
+| Val  Jc 1: 0.7948            | Val  Jc 2: 0.7889            |
+| Val  Dc 1: 0.8857            | Val  Dc 2: 0.8820            |
+[Motivation][Epoch 170] Agreement=0.958541 SoftDisagreement=0.046594 WW|Agree=0.088505 HC90WW|WW=0.399541
+| Val diversity: disagreement=0.0521 | dice_similarity=0.9479 | complementary_error=0.0415
+| Current student weights saved at epoch 170                  |
+| Periodic best student weights saved at epoch 170            |
+---------------------------------------------------------------
+| Epoch Time: 21.2106s                                        |
+[Motivation][Epoch 171] Agreement=0.954409 SoftDisagreement=0.050952 WW|Agree=0.080659 HC90WW|WW=0.461080
+[Motivation][Epoch 172] Agreement=0.971453 SoftDisagreement=0.030914 WW|Agree=0.084797 HC90WW|WW=0.520528
+[Motivation][Epoch 173] Agreement=0.961726 SoftDisagreement=0.041105 WW|Agree=0.083286 HC90WW|WW=0.489909
+[Motivation][Epoch 174] Agreement=0.967001 SoftDisagreement=0.032292 WW|Agree=0.078943 HC90WW|WW=0.542311
+===============================================================
+| Epoch 175/200                                               |
+---------------------------------------------------------------
+| Train Sup Loss 1: 0.0238     | Train Sup Loss 2: 0.0237     |
+| Train Unsup Loss: 0.2656     | Train Total Loss: 0.3131     |
+---------------------------------------------------------------
+| Train Thr 1: 0.4000          | Train Thr 2: 0.5200          |
+| Train  Jc 1: 0.9412          | Train  Jc 2: 0.9403          |
+| Train  Dc 1: 0.9697          | Train  Dc 2: 0.9692          |
+---------------------------------------------------------------
+| Val Sup Loss 1: 0.0843       | Val Sup Loss 2: 0.0917       |
+---------------------------------------------------------------
+| Val Thr 1: 0.2000            | Val Thr 2: 0.2200            |
+| Val  Jc 1: 0.8123            | Val  Jc 2: 0.8003            |
+| Val  Dc 1: 0.8964            | Val  Dc 2: 0.8891            |
+[Motivation][Epoch 175] Agreement=0.969018 SoftDisagreement=0.031851 WW|Agree=0.082846 HC90WW|WW=0.514311
+| Val diversity: disagreement=0.0374 | dice_similarity=0.9626 | complementary_error=0.0310
+---------------------------------------------------------------
+| Epoch Time: 10.9988s                                        |
+[Motivation][Epoch 176] Agreement=0.973421 SoftDisagreement=0.028352 WW|Agree=0.084898 HC90WW|WW=0.549907
+[Motivation][Epoch 177] Agreement=0.972396 SoftDisagreement=0.028521 WW|Agree=0.083017 HC90WW|WW=0.586877
+[Motivation][Epoch 178] Agreement=0.976912 SoftDisagreement=0.024366 WW|Agree=0.083924 HC90WW|WW=0.556557
+[Motivation][Epoch 179] Agreement=0.966308 SoftDisagreement=0.035741 WW|Agree=0.079975 HC90WW|WW=0.552655
+===============================================================
+| Epoch 180/200                                               |
+---------------------------------------------------------------
+| Train Sup Loss 1: 0.0234     | Train Sup Loss 2: 0.0232     |
+| Train Unsup Loss: 0.2557     | Train Total Loss: 0.3024     |
+---------------------------------------------------------------
+| Train Thr 1: 0.4600          | Train Thr 2: 0.4600          |
+| Train  Jc 1: 0.9425          | Train  Jc 2: 0.9429          |
+| Train  Dc 1: 0.9704          | Train  Dc 2: 0.9706          |
+---------------------------------------------------------------
+| Val Sup Loss 1: 0.0850       | Val Sup Loss 2: 0.0872       |
+---------------------------------------------------------------
+| Val Thr 1: 0.2200            | Val Thr 2: 0.3600            |
+| Val  Jc 1: 0.8090            | Val  Jc 2: 0.8066            |
+| Val  Dc 1: 0.8944            | Val  Dc 2: 0.8929            |
+[Motivation][Epoch 180] Agreement=0.972645 SoftDisagreement=0.028863 WW|Agree=0.081141 HC90WW|WW=0.539413
+| Val diversity: disagreement=0.0322 | dice_similarity=0.9678 | complementary_error=0.0274
+| Current student weights saved at epoch 180                  |
+| Periodic best student weights saved at epoch 180            |
+---------------------------------------------------------------
+| Epoch Time: 21.7934s                                        |
+[Motivation][Epoch 181] Agreement=0.972241 SoftDisagreement=0.031131 WW|Agree=0.083177 HC90WW|WW=0.471974
+[Motivation][Epoch 182] Agreement=0.972808 SoftDisagreement=0.029473 WW|Agree=0.082670 HC90WW|WW=0.545140
+[Motivation][Epoch 183] Agreement=0.963790 SoftDisagreement=0.042716 WW|Agree=0.079612 HC90WW|WW=0.416588
+[Motivation][Epoch 184] Agreement=0.969183 SoftDisagreement=0.031515 WW|Agree=0.082354 HC90WW|WW=0.501428
+===============================================================
+| Epoch 185/200                                               |
+---------------------------------------------------------------
+| Train Sup Loss 1: 0.0232     | Train Sup Loss 2: 0.0233     |
+| Train Unsup Loss: 0.2695     | Train Total Loss: 0.3160     |
+---------------------------------------------------------------
+| Train Thr 1: 0.4400          | Train Thr 2: 0.7000          |
+| Train  Jc 1: 0.9555          | Train  Jc 2: 0.9568          |
+| Train  Dc 1: 0.9773          | Train  Dc 2: 0.9779          |
+---------------------------------------------------------------
+| Val Sup Loss 1: 0.0864       | Val Sup Loss 2: 0.0882       |
+---------------------------------------------------------------
+| Val Thr 1: 0.1600            | Val Thr 2: 0.3200            |
+| Val  Jc 1: 0.8087            | Val  Jc 2: 0.8063            |
+| Val  Dc 1: 0.8942            | Val  Dc 2: 0.8927            |
+[Motivation][Epoch 185] Agreement=0.976129 SoftDisagreement=0.024495 WW|Agree=0.082613 HC90WW|WW=0.579633
+| Val diversity: disagreement=0.0282 | dice_similarity=0.9718 | complementary_error=0.0239
+---------------------------------------------------------------
+| Epoch Time: 11.1854s                                        |
+[Motivation][Epoch 186] Agreement=0.968089 SoftDisagreement=0.033141 WW|Agree=0.081330 HC90WW|WW=0.499584
+[Motivation][Epoch 187] Agreement=0.975085 SoftDisagreement=0.026229 WW|Agree=0.082735 HC90WW|WW=0.564519
+[Motivation][Epoch 188] Agreement=0.972094 SoftDisagreement=0.028094 WW|Agree=0.080708 HC90WW|WW=0.574014
+[Motivation][Epoch 189] Agreement=0.973566 SoftDisagreement=0.026381 WW|Agree=0.080628 HC90WW|WW=0.590036
+===============================================================
+| Epoch 190/200                                               |
+---------------------------------------------------------------
+| Train Sup Loss 1: 0.0233     | Train Sup Loss 2: 0.0227     |
+| Train Unsup Loss: 0.2508     | Train Total Loss: 0.2968     |
+---------------------------------------------------------------
+| Train Thr 1: 0.5000          | Train Thr 2: 0.4600          |
+| Train  Jc 1: 0.9324          | Train  Jc 2: 0.9341          |
+| Train  Dc 1: 0.9650          | Train  Dc 2: 0.9659          |
+---------------------------------------------------------------
+| Val Sup Loss 1: 0.0900       | Val Sup Loss 2: 0.0839       |
+---------------------------------------------------------------
+| Val Thr 1: 0.2000            | Val Thr 2: 0.2600            |
+| Val  Jc 1: 0.8075            | Val  Jc 2: 0.8132            |
+| Val  Dc 1: 0.8935            | Val  Dc 2: 0.8970            |
+[Motivation][Epoch 190] Agreement=0.970074 SoftDisagreement=0.031918 WW|Agree=0.080134 HC90WW|WW=0.555654
+| Val diversity: disagreement=0.0355 | dice_similarity=0.9645 | complementary_error=0.0299
+| Current student weights saved at epoch 190                  |
+| Periodic best student weights saved at epoch 190            |
+---------------------------------------------------------------
+| Epoch Time: 22.5055s                                        |
+[Motivation][Epoch 191] Agreement=0.977450 SoftDisagreement=0.024026 WW|Agree=0.079843 HC90WW|WW=0.604062
+[Motivation][Epoch 192] Agreement=0.978751 SoftDisagreement=0.024627 WW|Agree=0.081767 HC90WW|WW=0.528319
+[Motivation][Epoch 193] Agreement=0.972115 SoftDisagreement=0.029767 WW|Agree=0.078497 HC90WW|WW=0.524419
+[Motivation][Epoch 194] Agreement=0.972191 SoftDisagreement=0.029098 WW|Agree=0.079447 HC90WW|WW=0.541272
+===============================================================
+| Epoch 195/200                                               |
+---------------------------------------------------------------
+| Train Sup Loss 1: 0.0226     | Train Sup Loss 2: 0.0223     |
+| Train Unsup Loss: 0.2378     | Train Total Loss: 0.2828     |
+---------------------------------------------------------------
+| Train Thr 1: 0.5000          | Train Thr 2: 0.5800          |
+| Train  Jc 1: 0.9522          | Train  Jc 2: 0.9548          |
+| Train  Dc 1: 0.9755          | Train  Dc 2: 0.9769          |
+---------------------------------------------------------------
+| Val Sup Loss 1: 0.0891       | Val Sup Loss 2: 0.0829       |
+---------------------------------------------------------------
+| Val Thr 1: 0.5800            | Val Thr 2: 0.4200            |
+| Val  Jc 1: 0.8062            | Val  Jc 2: 0.8177            |
+| Val  Dc 1: 0.8927            | Val  Dc 2: 0.8997            |
+[Motivation][Epoch 195] Agreement=0.974425 SoftDisagreement=0.025866 WW|Agree=0.079392 HC90WW|WW=0.606806
+| Val diversity: disagreement=0.0297 | dice_similarity=0.9703 | complementary_error=0.0256
+---------------------------------------------------------------
+| Epoch Time: 10.6593s                                        |
+[Motivation][Epoch 196] Agreement=0.978026 SoftDisagreement=0.025040 WW|Agree=0.082656 HC90WW|WW=0.533970
+[Motivation][Epoch 197] Agreement=0.973579 SoftDisagreement=0.028458 WW|Agree=0.082504 HC90WW|WW=0.509565
+[Motivation][Epoch 198] Agreement=0.981833 SoftDisagreement=0.020808 WW|Agree=0.084814 HC90WW|WW=0.553753
+[Motivation][Epoch 199] Agreement=0.976548 SoftDisagreement=0.025867 WW|Agree=0.079834 HC90WW|WW=0.545004
+===============================================================
+| Epoch 200/200                                               |
+---------------------------------------------------------------
+| Train Sup Loss 1: 0.0224     | Train Sup Loss 2: 0.0221     |
+| Train Unsup Loss: 0.2742     | Train Total Loss: 0.3187     |
+---------------------------------------------------------------
+| Train Thr 1: 0.6400          | Train Thr 2: 0.4000          |
+| Train  Jc 1: 0.9666          | Train  Jc 2: 0.9690          |
+| Train  Dc 1: 0.9830          | Train  Dc 2: 0.9843          |
+---------------------------------------------------------------
+| Val Sup Loss 1: 0.0859       | Val Sup Loss 2: 0.0842       |
+---------------------------------------------------------------
+| Val Thr 1: 0.2000            | Val Thr 2: 0.1800            |
+| Val  Jc 1: 0.8137            | Val  Jc 2: 0.8190            |
+| Val  Dc 1: 0.8973            | Val  Dc 2: 0.9005            |
+[Motivation][Epoch 200] Agreement=0.976503 SoftDisagreement=0.025934 WW|Agree=0.078997 HC90WW|WW=0.582735
+| Val diversity: disagreement=0.0279 | dice_similarity=0.9721 | complementary_error=0.0235
+| Current student weights saved at epoch 200                  |
+| Periodic best student weights saved at epoch 200            |
+---------------------------------------------------------------
+| Epoch Time: 21.0900s                                        |
+===============================================================
+| Training Completed In 0h 44mins 56s                         |
+---------------------------------------------------------------
+| Best Result1 Epoch: 151                                     |
+| Best Result1 Val Thr: 0.2800                                |
+| Best Result1 Val  Jc: 0.8202                                |
+| Best Result1 Val  Dc: 0.9012                                |
+| Best Result2 Epoch: 191                                     |
+| Best Result2 Val Thr: 0.2000                                |
+| Best Result2 Val  Jc: 0.8244                                |
+| Best Result2 Val  Dc: 0.9037                                |
+===============================================================

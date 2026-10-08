@@ -52,10 +52,10 @@ echo "=== 所有实验已全部完成！ ==="
 
 
 python -u main.py \
-    --dataset_name RINGS \
-    --path_dataset datasets/RINGS \
-    --path_trained_models checkpoints/semi_10_seed_24_rgbstain \
-    --path_seg_results seg_pred/semi_10_seed_24_rgbstain \
+    --dataset_name GlaS \
+    --path_dataset datasets/GlaS \
+    --path_trained_models checkpoints/semi_10_seed_24_rgbstain_dda \
+    --path_seg_results seg_pred/semi_10_seed_24_rgbstain_dda \
     --labeled_ratio 10 \
     --sd 24 \
     --batch_size 2 \
@@ -73,8 +73,8 @@ python -u main.py \
 python main.py \
     --dataset_name GlaS \
     --path_dataset datasets/GlaS \
-    --path_trained_models checkpoints/k50_margin_calibrated_reverse_1337_12 \
-    --path_seg_results seg_pred/k50_margin_calibrated_reverse_1337_12 \
+    --path_trained_models checkpoints/d \
+    --path_seg_results seg_pred/d \
     --labeled_ratio 10 \
     --sd 1337 \
     --batch_size 2 \
@@ -89,4 +89,7 @@ python main.py \
     --momentum 0.9 \
     --cps_mode native_fine_margin_calibrated_reverse \
     --uni_k 50 \
-    --uni_build_reference_memory
+    --uni_build_reference_memory \
+    --uni-loader hf-hub \
+    --uni-hub-id MahmoodLab/UNI2-h \
+    --uni-input-size 224 

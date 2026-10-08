@@ -30,7 +30,7 @@ from sklearn.metrics import roc_auc_score
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "outputs" / "memory_semantic_separation"
 DEFAULT_INPUT_CANDIDATES = [
-    PROJECT_ROOT / "outputs/native_scale_reference/crag_standard_cps_uni256/token_records.csv",
+    PROJECT_ROOT / "outputs/native_scale_reference/glas_standard_cps_uni2224/token_records.csv",
     PROJECT_ROOT / "outputs/e4/token_records.csv",
 ]
 

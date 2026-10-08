@@ -310,6 +310,16 @@ def parse_args():
         ),
     )
     parser.add_argument(
+        '--d-weight-ablation',
+        choices=['adaptive', 'constant'],
+        default='adaptive',
+        help=(
+            'q assignment for native_fine_margin_calibrated_reverse_disroute: '
+            'adaptive keeps q=D/(D+tau); constant uses direction-matched '
+            'batch-mean q. Defaults to adaptive for backward compatibility.'
+        ),
+    )
+    parser.add_argument(
         '--uni_reference_memory', '--reference-memory', '--reference_memory',
         dest='uni_reference_memory',
         default=None,
@@ -324,6 +334,33 @@ def parse_args():
         help=(
             'build the missing reference memory from the current labeled GT split; '
             'native CPS modes require this flag when the memory is absent'
+        ),
+    )
+    parser.add_argument(
+        '--build-reference-memory-only', action='store_true',
+        help=(
+            'build the frozen pathology reference memory from the labeled train '
+            'split, then exit without constructing Students or training.'
+        ),
+    )
+    parser.add_argument(
+        '--uni-loader', choices=('local', 'hf-hub'), default='local',
+        help=(
+            'UNI weight source: local uses the configured checkpoint files; '
+            'hf-hub uses timm pretrained=True with a Hugging Face Hub model id.'
+        ),
+    )
+    parser.add_argument(
+        '--uni-hub-id', default='MahmoodLab/UNI',
+        help='Hugging Face Hub model id used when --uni-loader hf-hub.',
+    )
+    parser.add_argument(
+        '--reference-backbone',
+        choices=('uni', 'uni2-h', 'kaiko-vitb8'),
+        default=None,
+        help=(
+            'Frozen pathology feature backend. kaiko-vitb8 loads the official '
+            'Kaiko ViT-B/8 through torch.hub.'
         ),
     )
     parser.add_argument(
@@ -349,12 +386,15 @@ def parse_args():
     parser.add_argument(
         '--reference-resolution', '--reference_resolution',
         dest='reference_resolution', type=int, default=None,
-        choices=list(SUPPORTED_REFERENCE_RESOLUTIONS),
-        help='Frozen UNI reference input resolution; native CPS modes default to 256.',
+        choices=sorted(set(SUPPORTED_REFERENCE_RESOLUTIONS + (128,))),
+        help=(
+            'Frozen pathology encoder input resolution. Native defaults are '
+            'UNI=256, UNI2-h=224, and Kaiko ViT-B/8=224.'
+        ),
     )
     parser.add_argument(
         '--uni-input-size', dest='uni_input_size', type=int, default=None,
-        help='Alias for the frozen UNI reference resolution; native modes require 256.',
+        help='Alias for the frozen pathology encoder input resolution.',
     )
     parser.add_argument(
         '--resume', action='store_true',
@@ -368,12 +408,31 @@ def parse_args():
     parser.add_argument('-n', '--network', default='unet')
 
     args = parser.parse_args()
+    if args.build_reference_memory_only:
+        args.uni_build_reference_memory = True
+    if args.reference_backbone is None:
+        args.reference_backbone = (
+            'uni2-h'
+            if args.uni_loader == 'hf-hub'
+            and args.uni_hub_id.lower() == 'mahmoodlab/uni2-h'
+            else 'uni'
+        )
+    if (
+        args.d_weight_ablation != 'adaptive'
+        and args.cps_mode != 'native_fine_margin_calibrated_reverse_disroute'
+    ):
+        parser.error('--d-weight-ablation constant requires the disroute CPS mode')
     # The CPS mode is now the single public method selector.  The internal
     # reference_mode alias keeps the native implementation and metadata
     # paths normalized without exposing a second CLI selector.
     args.reference_mode = (
         'none' if args.cps_mode == 'standard' else args.cps_mode
     )
+    if args.build_reference_memory_only and args.cps_mode not in NATIVE_REFERENCE_MODES:
+        parser.error(
+            '--build-reference-memory-only requires a native CPS mode so the '
+            'reference memory builder can use the configured train split'
+        )
     if args.uni_input_size is not None:
         if (
             args.reference_resolution is not None
@@ -382,19 +441,36 @@ def parse_args():
             parser.error('--uni-input-size conflicts with --reference-resolution')
         args.reference_resolution = int(args.uni_input_size)
     elif args.reference_resolution is None:
+        is_uni2_h = args.reference_backbone == 'uni2-h'
+        is_kaiko_vitb8 = args.reference_backbone == 'kaiko-vitb8'
         args.reference_resolution = (
-            256 if args.cps_mode in NATIVE_REFERENCE_MODES
+            (224 if is_uni2_h or is_kaiko_vitb8 else 256)
+            if args.cps_mode in NATIVE_REFERENCE_MODES
             else DEFAULT_REFERENCE_RESOLUTION
         )
     if args.reference_mode in NATIVE_REFERENCE_MODES:
-        if args.reference_resolution != 256:
-            parser.error('native reference modes require --uni-input-size 256')
+        patch_size = {'uni': 16, 'uni2-h': 14, 'kaiko-vitb8': 8}[
+            args.reference_backbone
+        ]
+        if args.reference_resolution % patch_size:
+            parser.error('reference input size must be divisible by the selected patch size')
+        args.reference_grid = args.reference_resolution // patch_size
+        if args.reference_backbone == 'kaiko-vitb8' and not args.build_reference_memory_only:
+            parser.error(
+                'Kaiko ViT-B/8 currently supports native 28x28 memory-bank '
+                'construction only; pass --build-reference-memory-only'
+            )
+        if not args.build_reference_memory_only and args.reference_grid != 16:
+            parser.error(
+                'native reference mode requires a 16x16 encoder grid; '
+                'UNI uses 256 input and UNI2-h uses 224 input'
+            )
     if args.milestone_interval < 0:
         parser.error('--milestone_interval must be non-negative')
     if args.best_save_interval < 0:
         parser.error('--best_save_interval must be non-negative')
     if _is_native_reference_mode(args):
-        args.reference_grid = _reference_grid(args.reference_resolution)
+        args.reference_grid = _reference_grid(args.reference_resolution, patch_size)
     if args.path_trained_models is None:
         default_checkpoints = {
             'native_fine_margin_suppression': 'checkpoints/k50_margin_suppression',

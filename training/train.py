@@ -185,15 +185,15 @@ def _safe_mean(total, count):
     return float(total) / float(count) if count else float('nan')
 
 def _build_native_reference_targets(logits_a, logits_b, rgb_input, context, cfg, args):
-    """Build detached UNI-256 native token gating for S/SC.
+    """Build detached pathology-backbone native token gating for S/SC.
 
-    The UNI margin remains at its native 16x16 scale.  Only the boolean
+    The pathology margin remains at its native 16x16 scale. Only boolean
     contradiction/HC masks are later expanded as *loss weights* with nearest
     neighbour replication; no semantic UNI value is interpolated here.
     """
-    if context['token_grid'] != 16 or context['reference_resolution'] != 256:
+    if context['token_grid'] != 16:
         raise AssertionError(
-            'Native reference modes require UNI-256/16x16, got resolution={} grid={}'.format(
+            'Native reference modes require a 16x16 pathology token grid, got resolution={} grid={}'.format(
                 context['reference_resolution'], context['token_grid']
             )
         )
@@ -210,10 +210,12 @@ def _build_native_reference_targets(logits_a, logits_b, rgb_input, context, cfg,
     agreement = hard_a.eq(hard_b)
     with torch.inference_mode():
         tokens = _uni_dense_features(
-            context['uni'], _reconstruct_rgb(rgb_input, cfg), 256
+            context['uni'],
+            _reconstruct_rgb(rgb_input, cfg),
+            context['reference_resolution'],
         )
-        if tokens.shape[1:] != (256, 1024):
-            raise AssertionError('UNI native token shape must be [B,256,1024], got {}'.format(tuple(tokens.shape)))
+        if tokens.shape[1:] != (context['token_grid'] ** 2, context['feature_dim']):
+            raise AssertionError('Native pathology tokens have unexpected shape: {}'.format(tuple(tokens.shape)))
         score_fg, score_bg = _reference_scores(tokens, context, args.uni_k)
         margin = (score_fg - score_bg).reshape(-1, 1, 16, 16)
         score_fg = score_fg.reshape(-1, 1, 16, 16)
@@ -347,6 +349,7 @@ def _build_native_reference_targets(logits_a, logits_b, rgb_input, context, cfg,
                 'aligned_A_pixel': aligned_a[:, None],
                 'aligned_B_pixel': aligned_b[:, None],
                 'Ct_pixel': consensus_pixel.detach(),
+                'd_weight_ablation': args.d_weight_ablation,
             })
     return {
         'p_a_token': p_a_token, 'p_b_token': p_b_token,
@@ -365,10 +368,23 @@ def _run_native_startup_checks(args, context, models, optimizers):
     """Protocol checks for the native-scale mode (no training smoke run)."""
     if not _is_native_reference_mode(args):
         raise AssertionError('Native startup check called for non-native mode')
-    if context['reference_resolution'] != 256 or context['token_grid'] != 16:
-        raise AssertionError('Native UNI geometry must be 256/16x16')
-    if context['feature_dim'] != 1024:
-        raise AssertionError('Unexpected native UNI feature configuration')
+    if context['token_grid'] != 16:
+        raise AssertionError('Native pathology geometry must have a 16x16 token grid')
+    expected_resolution = {
+        'uni': 256,
+        'uni2-h': 224,
+    }.get(context['reference_backbone'])
+    if expected_resolution is not None and context['reference_resolution'] != expected_resolution:
+        raise AssertionError(
+            '{} native mode expects {}x{} input for a 16x16 grid, got {}'.format(
+                context['reference_backbone'],
+                expected_resolution,
+                expected_resolution,
+                context['reference_resolution'],
+            )
+        )
+    if context['feature_dim'] not in (768, 1024, 1536):
+        raise AssertionError('Unsupported native pathology feature dimension: {}'.format(context['feature_dim']))
     if args.uni_k < 1:
         raise AssertionError('Requested native UNI Top-K must be positive')
     if any(parameter.requires_grad for parameter in context['uni'].parameters()):
@@ -381,10 +397,14 @@ def _run_native_startup_checks(args, context, models, optimizers):
     }
     if any(id(parameter) in optimizer_ids for parameter in context['uni'].parameters()):
         raise AssertionError('UNI parameters entered CPS optimizer')
-    print('UNI input shape       = [B,3,256,256]')
-    print('UNI patch-token shape = [B,256,1024]')
-    print('native grid           = 16x16')
-    print('feature dim           = 1024')
+    print('Reference input       = {}x{}'.format(
+        context['reference_resolution'], context['reference_resolution']
+    ))
+    print('Dense patch tokens    = [B,{},{}]'.format(
+        context['token_grid'] ** 2, context['feature_dim']
+    ))
+    print('native grid           = {}x{}'.format(context['token_grid'], context['token_grid']))
+    print('feature dim           = {}'.format(context['feature_dim']))
     if _is_margin_calibrated_mode(args):
         calibration = context.get('margin_calibration')
         if not calibration:
@@ -396,10 +416,19 @@ def _run_native_startup_checks(args, context, models, optimizers):
         elif args.reference_mode == 'native_fine_margin_reverse':
             print('Adaptive strategy:    labeled-train margin-calibrated reverse-only')
             print('Weight formula:       CPS + q opposite on risky pixels')
+        elif (
+            args.reference_mode == 'native_fine_margin_calibrated_reverse_disroute'
+            and args.d_weight_ablation == 'constant'
+        ):
+            print('Intervention ablation: direction-matched mean q')
+            print('Weight formula:       (1-q) CPS + q opposite on M_corr; routed CPS on M_dis')
         else:
             print('Adaptive strategy:    labeled-train margin-calibrated Anti-Confirmation')
             print('Weight formula:       (1-q) CPS + q opposite on risky pixels')
-        print('Severity formula:     q=D/(D+tau+eps)')
+        if args.cps_mode == 'native_fine_margin_calibrated_reverse_disroute' and args.d_weight_ablation == 'constant':
+            print('Severity assignment:  direction-matched batch mean of q_original')
+        else:
+            print('Severity formula:     q=D/(D+tau+eps)')
         print('Opposite target:      1 - detached token consensus')
         print('Pixel selection:      token contradiction AND pixel agreement AND pixel consensus=token consensus')
         print('Calibration source:   labeled train-only image-level LOO K={}'.format(args.uni_k))
@@ -474,6 +503,7 @@ def train_one_epoch(
                     'loss_B_from_A_before', 'loss_B_from_A_after',
                 )
             },
+            'd_weight_sums': defaultdict(float),
         }
     mask_list = None
 
@@ -558,6 +588,9 @@ def train_one_epoch(
         )
         if _is_native_reference_mode(args):
             native_cps = cps_losses
+            if args.cps_mode == 'native_fine_margin_calibrated_reverse_disroute':
+                for key, value in cps_losses['d_weight_stats'].items():
+                    native_totals['d_weight_sums'][key] += float(value.item())
         unsup_loss = cps_losses['total']
 
         model1_loss = (
@@ -636,7 +669,7 @@ def train_one_epoch(
                 native_totals['risk_pixels'] += risk_count
                 native_totals['risk_all_pixel_count'] += float(risk.numel())
                 if risk.any().item():
-                    q_px = fine_stats['q_pixel'][:, 0][risk]
+                    q_px = native_cps['q_risk']
                     d_px = fine_stats['d_pixel'][:, 0][risk]
                     w_px = native_cps['cps_weight_risk']
                     r_px = native_cps['opposite_weight_risk']
@@ -1046,19 +1079,23 @@ def _native_checkpoint_metadata(args, context, best_val_eval_lists, best_epochs)
         'network': args.network,
         'cps_mode': args.cps_mode,
         'reference_mode': args.reference_mode,
+        'd_weight_ablation': getattr(args, 'd_weight_ablation', 'adaptive'),
         'selection_split': 'validation',
         'selection_metric': 'jaccard',
         'best_val_metrics': [list(values) for values in best_val_eval_lists],
         'best_epochs': list(best_epochs),
         'reference_memory_path': context['memory_path'],
         'reference_memory_sha256': context['memory_sha256'],
-        'reference_resolution': 256,
+        'reference_resolution': context['reference_resolution'],
         'reference_grid': 16,
         'reference_memory_source': 'labeled_{} GT only'.format(
             args.labeled_ratio
         ),
         'uni_sha256': context['weights_sha256'],
         'uni_weights': context['weights_path'],
+        'uni_loader': context.get('uni_loader', 'local'),
+        'uni_hub_id': context.get('uni_hub_id'),
+        'reference_backbone': context.get('reference_backbone', 'uni'),
         'uni_k': args.uni_k,
         'margin_calibration_records': (
             str(Path(args.margin_calibration_records).resolve())
@@ -1105,7 +1142,7 @@ def train_model(
             / 'margin_calibration_k{}'.format(args.uni_k)
             / 'selected_k_token_records.csv'
         )
-    if _uses_uni_reference(args):
+    if _uses_uni_reference(args) and not getattr(args, 'build_reference_memory_only', False):
         existing_training_artifacts = [
             path for path in Path(trained_models_path).rglob('*')
             if path.is_file()
@@ -1124,8 +1161,13 @@ def train_model(
             raise RuntimeError('Requested resume but resume_checkpoint.pth is missing: {}'.format(trained_models_path))
     if _is_native_reference_mode(args):
         if args.uni_reference_memory is None:
+            backbone_tag = {
+                'uni': 'uni256',
+                'uni2-h': 'uni2h224',
+                'kaiko-vitb8': 'kaiko_vitb8_224',
+            }[args.reference_backbone]
             args.uni_reference_memory = str(
-                Path(trained_models_path) / 'reference_memory_uni256.npz'
+                Path(trained_models_path) / 'reference_memory_{}.npz'.format(backbone_tag)
             )
     logger, metrics_path, diagnostic_logger = create_run_outputs(
         args, trained_models_path
@@ -1161,15 +1203,25 @@ def train_model(
             'seed': args.sd,
             'cps_mode': args.cps_mode,
             'input_mode': args.input_mode,
-            'uni_input_resolution': 256,
-            'native_grid': '16x16',
-            'feature_dim': 1024,
+            'uni_input_resolution': args.reference_resolution,
+            'native_grid': '{}x{}'.format(args.reference_grid, args.reference_grid),
+            'feature_dim': {'uni': 1024, 'uni2-h': 1536, 'kaiko-vitb8': 768}[
+                args.reference_backbone
+            ],
             'reference_memory': str(Path(args.uni_reference_memory).resolve()) if args.uni_reference_memory else 'fixed_uni256',
+            'uni_loader': getattr(args, 'uni_loader', 'local'),
+            'uni_hub_id': getattr(args, 'uni_hub_id', 'MahmoodLab/UNI'),
+            'reference_backbone': args.reference_backbone,
             'margin_calibration_records': str(Path(args.margin_calibration_records).resolve()) if args.margin_calibration_records else None,
             'adaptive_strategy': adaptive_strategy,
+            'd_weight_ablation': getattr(args, 'd_weight_ablation', 'adaptive'),
             'cdf': 'not used',
             'running_buffer': 'disabled',
-            'd_adaptive_formula': 'q=D/(D+tau+eps); {}; tau is fixed labeled-train LOO statistic'.format(loss_formula),
+            'd_adaptive_formula': (
+                'q=D/(D+tau+eps); {}; tau is fixed labeled-train LOO statistic'.format(loss_formula)
+                if getattr(args, 'd_weight_ablation', 'adaptive') == 'adaptive'
+                else 'q is replaced by direction-matched per-batch mean of q_original separately within M_corr and M_dis; ' + loss_formula
+            ),
             'pixel_selection': (
                 'K partitioned into M_corr (A=B=Ct), M_keep (A=B=Ut), '
                 'M_dis (A!=B); fine routing only on M_dis'
@@ -1183,7 +1235,10 @@ def train_model(
             'test_evaluation_policy': 'not evaluated during training',
             'command': ' '.join(sys.argv),
         }
-        for root in (Path(trained_models_path), Path('outputs/native_scale_training')):
+        config_roots = [Path(trained_models_path)]
+        if getattr(args, 'native_metrics_dir', None) is None:
+            config_roots.append(Path('outputs/native_scale_training'))
+        for root in config_roots:
             root.mkdir(parents=True, exist_ok=True)
             (root / 'config_{}.json'.format(NATIVE_MODE_TAGS[args.reference_mode])).write_text(
                 json.dumps(native_config, indent=2, ensure_ascii=False), encoding='utf-8'
@@ -1197,6 +1252,8 @@ def train_model(
     native_state_file = None
     native_events_writer = None
     native_events_file = None
+    d_weight_file = None
+    d_weight_writer = None
     motivation_writer = None
     motivation_file = None
     motivation_logged_epochs = set()
@@ -1210,6 +1267,24 @@ def train_model(
         )
         reference_context['reference_build_rng_isolated'] = False
         reference_context['cfg'] = cfg
+
+        if getattr(args, 'build_reference_memory_only', False):
+            message = (
+                'Reference memory ready | backbone={} | input={}x{} | grid={}x{} '
+                '| tokens={} | feature_dim={} | memory={}'
+            ).format(
+                reference_context['reference_backbone'],
+                reference_context['reference_resolution'],
+                reference_context['reference_resolution'],
+                reference_context['token_grid'],
+                reference_context['token_grid'],
+                reference_context['token_grid'] ** 2,
+                reference_context['feature_dim'],
+                reference_context['memory_path'],
+            )
+            logger.info(message)
+            print(message)
+            return
 
     models, optimizers, schedulers, losses = build_training_components(args, cfg)
     model1, model2 = models
@@ -1234,8 +1309,8 @@ def train_model(
     if reference_context is not None and _is_native_reference_mode(args):
         _run_native_startup_checks(args, reference_context, models, optimizers)
         logger.info(
-            'Native-scale reference startup checks passed | mode=%s | UNI input=256 | token grid=16x16',
-            args.reference_mode,
+            'Native-scale reference startup checks passed | mode=%s | reference input=%d | token grid=16x16',
+            args.reference_mode, reference_context['reference_resolution'],
         )
     best_val_eval_lists = (
         [0 for _ in range(4)],
@@ -1312,8 +1387,27 @@ def train_model(
             native_state_writer = csv.DictWriter(native_state_file, fieldnames=state_fields)
             event_fields = ['epoch'] + [x for name in ('WW', 'HC90WW', 'Shared_FP', 'Shared_FN') for x in (name + '_events', name + '_images', name + '_events_per_image')]
             native_events_writer = csv.DictWriter(native_events_file, fieldnames=event_fields)
+            if args.cps_mode == 'native_fine_margin_calibrated_reverse_disroute':
+                d_weight_file = stack.enter_context(open(
+                    Path(trained_models_path) / 'd_weight_training_stats.csv',
+                    'a' if args.resume else 'w', newline='', encoding='utf-8'
+                ))
+                d_weight_fields = [
+                    'epoch', 'method', 'num_K', 'num_Mcorr', 'num_Mdis',
+                    'mean_D_corr', 'mean_D_dis',
+                    'mean_q_original_corr', 'mean_q_used_corr',
+                    'sum_q_original_corr', 'sum_q_used_corr', 'budget_error_corr',
+                    'mean_q_original_dis', 'mean_q_used_dis',
+                    'sum_q_original_dis', 'sum_q_used_dis', 'budget_error_dis',
+                    'FG2BG_mean_q_original', 'FG2BG_mean_q_used',
+                    'BG2FG_mean_q_original', 'BG2FG_mean_q_used',
+                    'mean_q_original', 'mean_q_used', 'total_intervention_budget',
+                ]
+                d_weight_writer = csv.DictWriter(d_weight_file, fieldnames=d_weight_fields)
             if not args.resume:
                 native_training_writer.writeheader(); native_validation_writer.writeheader(); native_state_writer.writeheader(); native_events_writer.writeheader()
+                if d_weight_writer is not None:
+                    d_weight_writer.writeheader(); d_weight_file.flush()
         metrics_writer = csv.DictWriter(
             metrics_file, fieldnames=METRIC_FIELDS
         )
@@ -1764,6 +1858,48 @@ def train_model(
                         'loss_B_from_A_before': float(np.mean(directional['loss_B_from_A_before'])) if directional['loss_B_from_A_before'] else None,
                         'loss_B_from_A_after': float(np.mean(directional['loss_B_from_A_after'])) if directional['loss_B_from_A_after'] else None,
                     })
+                    if d_weight_writer is not None:
+                        dw = native['d_weight_sums']
+                        def _dw(key):
+                            return float(dw.get(key, 0.0))
+                        def _dw_mean(total_key, count_key):
+                            return _safe_mean(_dw(total_key), _dw(count_key))
+                        corr_orig = _dw('sum_q_original_corr')
+                        corr_used = _dw('sum_q_used_corr')
+                        dis_orig = _dw('sum_q_original_dis')
+                        dis_used = _dw('sum_q_used_dis')
+                        corr_count = _dw('count_q_corr')
+                        dis_count = _dw('count_q_dis')
+                        total_count = corr_count + dis_count
+                        total_orig = corr_orig + dis_orig
+                        total_used = corr_used + dis_used
+                        d_weight_writer.writerow({
+                            'epoch': current_epoch,
+                            'method': args.d_weight_ablation,
+                            'num_K': int(_dw('num_K')),
+                            'num_Mcorr': int(_dw('num_Mcorr')),
+                            'num_Mdis': int(_dw('num_Mdis')),
+                            'mean_D_corr': _dw_mean('sum_D_corr', 'count_D_corr'),
+                            'mean_D_dis': _dw_mean('sum_D_dis', 'count_D_dis'),
+                            'mean_q_original_corr': _dw_mean('sum_q_original_corr', 'count_q_corr'),
+                            'mean_q_used_corr': _dw_mean('sum_q_used_corr', 'count_q_corr'),
+                            'sum_q_original_corr': corr_orig,
+                            'sum_q_used_corr': corr_used,
+                            'budget_error_corr': abs(corr_used-corr_orig)/max(abs(corr_orig),1e-12),
+                            'mean_q_original_dis': _dw_mean('sum_q_original_dis', 'count_q_dis'),
+                            'mean_q_used_dis': _dw_mean('sum_q_used_dis', 'count_q_dis'),
+                            'sum_q_original_dis': dis_orig,
+                            'sum_q_used_dis': dis_used,
+                            'budget_error_dis': abs(dis_used-dis_orig)/max(abs(dis_orig),1e-12),
+                            'FG2BG_mean_q_original': _dw_mean('sum_q_original_FG2BG', 'count_FG2BG'),
+                            'FG2BG_mean_q_used': _dw_mean('sum_q_used_FG2BG', 'count_FG2BG'),
+                            'BG2FG_mean_q_original': _dw_mean('sum_q_original_BG2FG', 'count_BG2FG'),
+                            'BG2FG_mean_q_used': _dw_mean('sum_q_used_BG2FG', 'count_BG2FG'),
+                            'mean_q_original': _safe_mean(total_orig, total_count),
+                            'mean_q_used': _safe_mean(total_used, total_count),
+                            'total_intervention_budget': total_used,
+                        })
+                        d_weight_file.flush()
                 native_training_writer.writerow({
                     'experiment': args.reference_mode,
                     'epoch': epoch + 1,

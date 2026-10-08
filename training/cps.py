@@ -123,6 +123,81 @@ def compute_native_margin_calibrated_anti_confirmation_losses(
         raise AssertionError('Margin-calibrated mode received no valid pseudo-label pixels')
     if not torch.all((q_pixel >= 0.0) & (q_pixel <= 1.0)).item():
         raise AssertionError('Margin-calibrated q escaped [0,1]')
+    q_original = q_pixel.detach()
+    q_used = q_original.clone()
+    d_weight_stats = {}
+    if mode == 'native_fine_margin_calibrated_reverse_disroute':
+        m_corr = fine_stats['M_corr_pixel'][:, 0]
+        m_keep = fine_stats['M_keep_pixel'][:, 0]
+        m_dis = fine_stats['M_dis_pixel'][:, 0]
+        k_mask = fine_stats['K_pixel'][:, 0]
+        ct_fg = fine_stats['Ct_pixel'][:, 0].bool()
+        if not torch.equal(m_corr | m_keep | m_dis, k_mask):
+            raise AssertionError('Adaptive/constant candidate masks do not partition K')
+        if not torch.equal(m_corr, risk_pixel):
+            raise AssertionError('Adaptive/constant M_corr candidate changed')
+        if not torch.equal(m_corr | m_keep | m_dis, k_mask):
+            raise AssertionError('Adaptive/constant K population changed')
+        if getattr(fine_stats, 'get', None) is None:
+            raise AssertionError('Fine state is not a mapping')
+        if fine_stats.get('d_weight_ablation', 'adaptive') == 'constant':
+            # Match q budget independently within each branch and semantic
+            # direction. This only changes q assignment; all masks and targets
+            # remain the original native disroute population.
+            for population in (m_corr, m_dis):
+                for direction_mask in (ct_fg, ~ct_fg):
+                    mask = population & direction_mask
+                    if mask.any().item():
+                        q_used[mask] = q_original[mask].mean()
+        if fine_stats.get('d_weight_ablation', 'adaptive') == 'adaptive':
+            if not torch.equal(q_used, q_original):
+                raise AssertionError('Adaptive q must equal original q')
+        elif fine_stats.get('d_weight_ablation') != 'constant':
+            raise ValueError('Unknown d-weight ablation: {}'.format(
+                fine_stats.get('d_weight_ablation')
+            ))
+        if fine_stats.get('d_weight_ablation') == 'constant':
+            # Every active subgroup has a constant q and exactly matches its
+            # original sum (within floating point reduction error).
+            for population in (m_corr, m_dis):
+                for direction_mask in (ct_fg, ~ct_fg):
+                    mask = population & direction_mask
+                    if mask.any().item():
+                        if q_used[mask].std(unbiased=False).item() > 1e-7:
+                            raise AssertionError('Constant q varies within a subgroup')
+                        before = q_original[mask].sum()
+                        after = q_used[mask].sum()
+                        rel = ((after - before).abs() / before.abs().clamp_min(1e-12)).item()
+                        if rel >= 1e-6:
+                            raise AssertionError('Constant q does not match subgroup budget')
+        q_pixel = q_used
+        d_pixel = fine_stats['d_pixel'][:, 0].detach()
+        d_weight_stats = {
+            'num_K': k_mask.sum().detach(),
+            'num_Mcorr': m_corr.sum().detach(),
+            'num_Mkeep': m_keep.sum().detach(),
+            'num_Mdis': m_dis.sum().detach(),
+            'sum_D_corr': d_pixel[m_corr].sum().detach(),
+            'count_D_corr': m_corr.sum().detach(),
+            'sum_D_dis': d_pixel[m_dis].sum().detach(),
+            'count_D_dis': m_dis.sum().detach(),
+        }
+        for name, mask in (('corr', m_corr), ('dis', m_dis)):
+            for suffix, values in (('original', q_original), ('used', q_used)):
+                selected = values[mask]
+                d_weight_stats['sum_q_{}_{}'.format(suffix, name)] = selected.sum().detach()
+                d_weight_stats['sum_q2_{}_{}'.format(suffix, name)] = selected.square().sum().detach()
+                d_weight_stats['count_q_{}'.format(name)] = mask.sum().detach()
+            original_sum = q_original[mask].sum()
+            used_sum = q_used[mask].sum()
+            d_weight_stats['budget_error_{}'.format(name)] = (
+                (used_sum - original_sum).abs() / original_sum.abs().clamp_min(1e-12)
+            ).detach()
+        for name, direction_mask in (('FG2BG', ct_fg), ('BG2FG', ~ct_fg)):
+            mask = (m_corr | m_dis) & direction_mask
+            d_weight_stats['count_{}'.format(name)] = mask.sum().detach()
+            d_weight_stats['sum_q_original_{}'.format(name)] = q_original[mask].sum().detach()
+            d_weight_stats['sum_q_used_{}'.format(name)] = q_used[mask].sum().detach()
     current_a = ce_none(prediction1, pseudo2)
     current_b = ce_none(prediction2, pseudo1)
     opposite_target = opposite_target_pixel.long().detach()
@@ -199,6 +274,7 @@ def compute_native_margin_calibrated_anti_confirmation_losses(
             'aligned_A_pixels': aligned_a.sum().detach(),
             'aligned_B_pixels': aligned_b.sum().detach(),
             'q_M_dis': q_pixel[m_dis].detach(),
+            'q_original_M_dis': q_original[m_dis].detach(),
             'harmful_weight_M_dis': (1.0 - q_pixel[m_dis]).detach(),
             'effective_suppressed_mass': (m_dis.to(q_pixel.dtype) * q_pixel).detach(),
             'loss_A_from_B_before': current_a[valid1].detach(),
@@ -228,6 +304,7 @@ def compute_native_margin_calibrated_anti_confirmation_losses(
         'risk_mix': risk_loss,
         'q_risk': q_pixel[risk_pixel].detach(),
         'risk_pixel_count': risk_pixel.sum().detach(),
+        'd_weight_stats': d_weight_stats,
         'cps_weight_risk': cps_weight[risk_pixel].detach(),
         'opposite_weight_risk': opposite_weight[risk_pixel].detach(),
         **routing_metrics,
@@ -277,6 +354,8 @@ def deterministic_disroute_sanity():
         'q_pixel': q_pixels,
         'opposite_target_pixel': torch.tensor([[[[1, 0, 0, 0, 0]]]]),
         'K_pixel': k,
+        'Ct_pixel': torch.zeros_like(k),
+        'd_pixel': torch.zeros_like(q_pixels),
         'M_corr_pixel': corr,
         'M_keep_pixel': keep,
         'M_dis_pixel': dis,

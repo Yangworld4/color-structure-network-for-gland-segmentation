@@ -1,0 +1,21 @@
+PASS: same GLaS 10% manifests and validation split
+PASS: seed 1337 for both methods
+PASS: identical fixed Semantic Memory path
+PASS: memory loaded from disk; not rebuilt
+PASS: Top-K = 50
+PASS: same fixed tau calibration records
+PASS: same D definition and q_original formula
+PASS: same K / M_corr / M_keep / M_dis definitions
+PASS: candidate masks independent of q assignment
+PASS: adaptive q_used equals q_original
+PASS: constant q is mean-matched within direction/branch
+PASS: constant intervention budget error below 1e-6
+PASS: M_corr opposite targets unchanged
+PASS: M_dis routing direction unchanged
+PASS: only q assignment differs in the loss path
+PASS: same optimizer / LR / epochs / batch size
+PASS: checkpoint selection uses validation synchronized mean IoU
+PASS: test is excluded from checkpoint selection
+PASS: test thresholds selected on validation only
+PASS: no extra post-processing
+Overall: PASS

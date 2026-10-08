@@ -1,0 +1,9 @@
+2026-10-08 00:03:46,201 | INFO | Checkpoint: /data/mission/models/Exp/DUAL/outputs/d_weight_ablation_glas10_seed1337/adaptive/test/student1_from_synchronized_checkpoint.pth
+2026-10-08 00:03:46,201 | INFO | Dataset: GlaS
+2026-10-08 00:03:46,202 | INFO | Evaluation split: test
+2026-10-08 00:03:46,202 | INFO | Manifest: /data/mission/models/Exp/DUAL/datasets/GlaS/manifests/paper_seed_2026/test.csv
+2026-10-08 00:03:46,202 | INFO | Input view: student1
+2026-10-08 00:03:46,202 | INFO | Threshold validation manifest: /data/mission/models/Exp/DUAL/datasets/GlaS/manifests/paper_seed_2026/validation.csv
+2026-10-08 00:03:46,202 | INFO | Device: cuda | samples=80 | evaluation_size=256x256 | threshold=0.2600 (selected on validation, validation Jaccard=0.823440)
+2026-10-08 00:03:46,978 | INFO | Test completed | loss=0.333415 | Jaccard=0.833372 | Dice=0.909114 | Precision=0.870514 | Recall=0.951296 | Specificity=0.851409 | Accuracy=0.902573
+2026-10-08 00:03:46,978 | INFO | Results saved to: /data/mission/models/Exp/DUAL/outputs/d_weight_ablation_glas10_seed1337/adaptive/test/student1

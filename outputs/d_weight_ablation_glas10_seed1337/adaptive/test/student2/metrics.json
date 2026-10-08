@@ -1,0 +1,22 @@
+{
+  "jaccard": 0.8331893725013079,
+  "dice": 0.9090052397199497,
+  "precision": 0.8854089071684494,
+  "recall": 0.9338937021991831,
+  "specificity": 0.8730794361588573,
+  "accuracy": 0.90422954559326,
+  "loss": 0.33466491755098104,
+  "threshold": 0.36,
+  "threshold_source": "validation",
+  "threshold_manifest": "/data/mission/models/Exp/DUAL/datasets/GlaS/manifests/paper_seed_2026/validation.csv",
+  "threshold_search_jaccard": 0.827047128416976,
+  "evaluation_size": [
+    256,
+    256
+  ],
+  "samples": 80,
+  "checkpoint": "/data/mission/models/Exp/DUAL/outputs/d_weight_ablation_glas10_seed1337/adaptive/test/student2_from_synchronized_checkpoint.pth",
+  "input_view": "student2",
+  "split": "test",
+  "manifest": "/data/mission/models/Exp/DUAL/datasets/GlaS/manifests/paper_seed_2026/test.csv"
+}

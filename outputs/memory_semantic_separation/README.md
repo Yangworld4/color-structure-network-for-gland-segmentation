@@ -1,6 +1,6 @@
 # UNI FG/BG Memory Semantic Separation
 
-    Input: `/data/mission/models/Exp/DUAL/outputs/native_scale_reference/crag_standard_cps_uni256/token_records.csv`
+    Input: `/data/mission/models/Exp/DUAL/outputs/native_scale_reference/glas_standard_cps_uni2224/token_records.csv`
 
 Retrieval Top-K: `50`
 

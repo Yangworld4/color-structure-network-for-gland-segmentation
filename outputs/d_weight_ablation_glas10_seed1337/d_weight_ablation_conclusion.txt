@@ -1,0 +1,15 @@
+NOT SUPPORTED
+The tested results do not satisfy the prespecified conditions for practical value from D-adaptive strength allocation.
+Mean test score over Dice/IoU and both students: Constant=0.871794; Adaptive=0.871170.
+Mean test Dice: Constant=0.909521; Adaptive=0.909060. Mean test IoU: Constant=0.834068; Adaptive=0.833281.
+Validation WW: Constant=0.079843; Adaptive=0.074963.
+Validation HC90WW: Constant=0.048230; Adaptive=0.043963.
+Maximum constant-mode batch-aggregated relative budget error: 4.846e-08.
+Average error-rate reduction Q1/Q2=0.060152; Q4/Q5=0.055791.
+
+中文总结：
+1. 按 batch 和 semantic direction 匹配后，Constant 的最大 budget relative error 为 4.846e-08。
+2. Test 平均 Dice/IoU（两学生平均）Constant=0.8718，Adaptive=0.8712。
+3. Validation WW 为 7.9843% → 7.4963%，HC90WW 为 4.8230% → 4.3963%。
+4. Q1/Q2 平均改善 6.0152%，Q4/Q5 平均改善 5.5791%。
+5. 因此结果判定为 NOT SUPPORTED；结论仅限于本次 GLaS 10%、seed 1337 实验。

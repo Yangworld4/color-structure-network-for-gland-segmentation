@@ -1,0 +1,12 @@
+initialize network with kaiming
+/data/software/miniconda3/envs/cg-seg/lib/python3.10/site-packages/torch/nn/modules/conv.py:459: UserWarning: Applied workaround for CuDNN issue, install nvrtc.so (Triggered internally at ../aten/src/ATen/native/cudnn/Conv_v8.cpp:80.)
+  return F.conv2d(input, weight, bias, self.stride,
+2026-10-08 00:02:42,086 | INFO | Checkpoint: /data/mission/models/Exp/DUAL/outputs/d_weight_ablation_glas10_seed1337/constant/test/student1_from_synchronized_checkpoint.pth
+2026-10-08 00:02:42,086 | INFO | Dataset: GlaS
+2026-10-08 00:02:42,087 | INFO | Evaluation split: test
+2026-10-08 00:02:42,087 | INFO | Manifest: /data/mission/models/Exp/DUAL/datasets/GlaS/manifests/paper_seed_2026/test.csv
+2026-10-08 00:02:42,087 | INFO | Input view: student1
+2026-10-08 00:02:42,087 | INFO | Threshold validation manifest: /data/mission/models/Exp/DUAL/datasets/GlaS/manifests/paper_seed_2026/validation.csv
+2026-10-08 00:02:42,087 | INFO | Device: cuda | samples=80 | evaluation_size=256x256 | threshold=0.2200 (selected on validation, validation Jaccard=0.810044)
+2026-10-08 00:02:43,343 | INFO | Test completed | loss=0.326981 | Jaccard=0.829254 | Dice=0.906658 | Precision=0.871342 | Recall=0.944958 | Specificity=0.853483 | Accuracy=0.900338
+2026-10-08 00:02:43,343 | INFO | Results saved to: /data/mission/models/Exp/DUAL/outputs/d_weight_ablation_glas10_seed1337/constant/test/student1

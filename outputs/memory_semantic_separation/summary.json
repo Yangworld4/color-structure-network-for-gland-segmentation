@@ -1,5 +1,5 @@
 {
-  "input": "/data/mission/models/Exp/DUAL/outputs/native_scale_reference/crag_standard_cps_uni256/token_records.csv",
+  "input": "/data/mission/models/Exp/DUAL/outputs/native_scale_reference/glas_standard_cps_uni2224/token_records.csv",
   "output_dir": "/data/mission/models/Exp/DUAL/outputs/memory_semantic_separation",
   "top_k": 50,
   "total_tokens": 3281,
@@ -7,31 +7,31 @@
   "bg_tokens": 1928,
   "margin": {
     "formula": "S_FG - S_BG",
-    "full_min": -0.4044814705848694,
-    "full_max": 0.27456343173980713,
+    "full_min": -0.4251078739762306,
+    "full_max": 0.5718203634023666,
     "visual_range_p0.5_p99.5": [
-      -0.3610859811306,
-      0.2234159260988235
+      -0.3771815612912178,
+      0.5334102541208264
     ]
   },
   "fg": {
     "n": 1353,
-    "mean_delta": 0.10444592405867771,
-    "median_delta": 0.11231529712677002,
-    "min_delta": -0.25422152876853943,
-    "max_delta": 0.27456343173980713,
-    "correct_sign_rate": 0.9416112342941612
+    "mean_delta": 0.2314366500353866,
+    "median_delta": 0.21440303325653076,
+    "min_delta": -0.31115829199552536,
+    "max_delta": 0.5718203634023666,
+    "correct_sign_rate": 0.9896526237989652
   },
   "bg": {
     "n": 1928,
-    "mean_delta": -0.07746806954076181,
-    "median_delta": -0.0809730812907219,
-    "min_delta": -0.4044814705848694,
-    "max_delta": 0.20512719452381134,
-    "correct_sign_rate": 0.9164937759336099
+    "mean_delta": -0.15108043845371957,
+    "median_delta": -0.15730814635753632,
+    "min_delta": -0.4251078739762306,
+    "max_delta": 0.3228316605091095,
+    "correct_sign_rate": 0.891597510373444
   },
-  "balanced_accuracy": 0.9290525051138856,
-  "auroc": 0.9514265210551013,
+  "balanced_accuracy": 0.9406250670862046,
+  "auroc": 0.9860288187001071,
   "source_columns": {
     "s_fg": "S_FG",
     "s_bg": "S_BG",

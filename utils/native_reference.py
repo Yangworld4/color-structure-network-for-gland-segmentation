@@ -26,9 +26,7 @@ from config.uni_config.uni_config import (
     REFERENCE_MEMORY_PER_IMAGE_PER_CLASS,
     REFERENCE_MEMORY_SEED,
     SUPPORTED_REFERENCE_RESOLUTIONS,
-    UNI_MEAN,
     UNI_PATCH_SIZE,
-    UNI_STD,
 )
 from dataload.dataset_2d import imagefloder_itn
 from models.uni import load_uni
@@ -49,22 +47,27 @@ NATIVE_MODE_TAGS = {
 }
 
 
-def _reference_grid(reference_resolution):
+def _reference_grid(reference_resolution, patch_size=UNI_PATCH_SIZE):
     resolution = int(reference_resolution)
-    if resolution not in SUPPORTED_REFERENCE_RESOLUTIONS:
+    if patch_size == UNI_PATCH_SIZE and resolution not in SUPPORTED_REFERENCE_RESOLUTIONS:
         raise ValueError(
             'reference_resolution must be one of {}'.format(
                 SUPPORTED_REFERENCE_RESOLUTIONS
             )
         )
-    if resolution % UNI_PATCH_SIZE:
-        raise ValueError('reference_resolution must be divisible by patch size')
-    return resolution // UNI_PATCH_SIZE
+    if resolution % int(patch_size):
+        raise ValueError(
+            'reference_resolution={} must be divisible by patch size={}'.format(
+                resolution, patch_size
+            )
+        )
+    return resolution // int(patch_size)
 
 
 def _reference_size(reference_resolution):
     resolution = int(reference_resolution)
-    _reference_grid(resolution)
+    if resolution < 1:
+        raise ValueError('reference_resolution must be positive')
     return (resolution, resolution)
 
 
@@ -99,11 +102,17 @@ def _sha256_file(path):
 
 
 def _load_uni(args):
-    return load_uni(
+    loader = getattr(args, 'uni_loader', 'local')
+    backbone = getattr(args, 'reference_backbone', 'uni')
+    model, weights_path, config_path = load_uni(
         args.uni_weights,
         args.uni_config,
         expected_sha256=EXPECTED_UNI_SHA256,
+        loader=loader,
+        hub_model_id=getattr(args, 'uni_hub_id', 'MahmoodLab/UNI'),
+        backbone=backbone,
     )
+    return model, weights_path, config_path
 
 
 def _reference_memory_dataset(args, cfg, manifest_dir, use_manifests):
@@ -147,7 +156,7 @@ def _build_reference_memory(
     """Build an immutable memory once, before the CPS optimizer loop."""
     if reference_resolution is None:
         reference_resolution = getattr(args, 'reference_resolution', DEFAULT_REFERENCE_RESOLUTION)
-    expected_grid = _reference_grid(reference_resolution)
+    expected_grid = _reference_grid(reference_resolution, uni.patch_size)
     dataset = _reference_memory_dataset(args, cfg, manifest_dir, use_manifests)
     loader = DataLoader(
         dataset,
@@ -208,10 +217,10 @@ def _build_reference_memory(
                     for token_index in chosen:
                         memory_by_class[cls].append(token_cpu[index, token_index])
 
-    if token_grid != expected_grid or feature_dim != 1024:
+    if token_grid != expected_grid or feature_dim != uni.feature_dim:
         raise RuntimeError(
-            'Unexpected generated memory feature shape: grid={} dim={}'.format(
-                token_grid, feature_dim
+            'Unexpected generated memory feature shape: grid={} dim={} (expected grid={} dim={})'.format(
+                token_grid, feature_dim, expected_grid, uni.feature_dim
             )
         )
     if not memory_by_class[0] or not memory_by_class[1]:
@@ -235,7 +244,7 @@ def _build_reference_memory(
         # Memory construction is independent of retrieval K.  Keep the legacy
         # key for compatibility, but record the actual retrieval setting too.
         top_k=np.array(int(args.uni_k)),
-        memory_construction=np.array('class-balanced native UNI token memory'),
+        memory_construction=np.array('class-balanced native pathology token memory'),
         retrieval_top_k=np.array(int(args.uni_k)),
         anchor_fg=np.array(REFERENCE_MEMORY_ANCHOR_FG),
         anchor_bg=np.array(REFERENCE_MEMORY_ANCHOR_BG),
@@ -246,6 +255,8 @@ def _build_reference_memory(
         seed=np.array(REFERENCE_MEMORY_SEED),
         source_dataset=np.array(str(args.dataset_name)),
         reference_resolution=np.array(int(reference_resolution)),
+        encoder_id=np.array(uni.model_id),
+        encoder_sha256=np.array(uni.weights_sha256),
     )
     logger.info(
         'Reference memory built before training | source=labeled_%s | fg=%d bg=%d '
@@ -307,14 +318,15 @@ def _build_margin_calibration_train_loo(
                 _get_rgb_view(batch).cuda(non_blocking=True), cfg
             )
             gt = batch['mask'].cuda(non_blocking=True).float().unsqueeze(1)
-            tokens = _uni_dense_features(uni, rgb, 256)
+            tokens = _uni_dense_features(uni, rgb, args.reference_resolution)
             occ = F.adaptive_avg_pool2d(gt, (16, 16)).flatten(1)
             features.append(tokens.detach().cpu().numpy().astype(np.float32))
             occupancy.append(occ.detach().cpu().numpy().astype(np.float32))
             image_ids.extend(str(value) for value in batch['ID'])
     features = np.concatenate(features, axis=0)
     occupancy = np.concatenate(occupancy, axis=0)
-    if features.shape != (len(image_ids), 256, 1024):
+    expected_grid = _reference_grid(args.reference_resolution, uni.patch_size)
+    if features.shape != (len(image_ids), expected_grid * expected_grid, uni.feature_dim):
         raise RuntimeError('Unexpected train calibration feature shape: {}'.format(features.shape))
 
     rng = np.random.default_rng(REFERENCE_MEMORY_SEED)
@@ -406,9 +418,11 @@ def _build_margin_calibration_train_loo(
         'source_dataset': str(args.dataset_name),
         'source_labeled_ratio': int(args.labeled_ratio),
         'source_memory': str(Path(memory_path).resolve()),
-        'reference_resolution': 256,
-        'token_grid': 16,
-        'feature_dim': 1024,
+        'reference_resolution': int(args.reference_resolution),
+        'token_grid': expected_grid,
+        'feature_dim': uni.feature_dim,
+        'encoder_id': uni.model_id,
+        'encoder_sha256': uni.weights_sha256,
         'fg_token_count': fg_count,
         'bg_token_count': bg_count,
         'fallback_count': fallback_count,
@@ -422,7 +436,7 @@ def _build_margin_calibration_train_loo(
     )
 
 
-def _load_margin_calibration(args, logger):
+def _load_margin_calibration(args, logger, uni=None):
     """Load fixed labeled-train-only image-level LOO calibration at ``--uni_k``."""
     records_path = Path(args.margin_calibration_records).expanduser().resolve()
     summary_path = records_path.with_name('summary.json')
@@ -431,6 +445,16 @@ def _load_margin_calibration(args, logger):
     if not summary_path.is_file():
         raise FileNotFoundError('Margin calibration summary not found: {}'.format(summary_path))
     summary = json.loads(summary_path.read_text(encoding='utf-8'))
+    if uni is not None:
+        if int(summary.get('reference_resolution', -1)) != int(args.reference_resolution):
+            raise RuntimeError('Margin calibration resolution does not match current encoder input')
+        if int(summary.get('feature_dim', -1)) != int(uni.feature_dim):
+            raise RuntimeError('Margin calibration feature dimension does not match current encoder')
+        if uni.backbone != 'uni':
+            if summary.get('encoder_id', '').lower() != uni.model_id.lower():
+                raise RuntimeError('{} requires matching train-only margin calibration'.format(uni.backbone))
+            if summary.get('encoder_sha256') != uni.weights_sha256:
+                raise RuntimeError('Margin calibration was built from different encoder weights')
     expected_k = int(args.uni_k)
     if int(summary.get('selected_k', -1)) != expected_k:
         raise RuntimeError(
@@ -520,9 +544,20 @@ def _load_margin_calibration(args, logger):
 def _load_reference(args, cfg, logger, manifest_dir=None, use_manifests=False):
     """Load the immutable UNI model and class-balanced token memory."""
     reference_resolution = int(getattr(args, 'reference_resolution', DEFAULT_REFERENCE_RESOLUTION))
-    expected_grid = _reference_grid(reference_resolution)
     memory_path = Path(args.uni_reference_memory).expanduser().resolve()
     uni, weights_path, config_path = _load_uni(args)
+    expected_grid = _reference_grid(reference_resolution, uni.patch_size)
+    if (
+        _is_native_reference_mode(args)
+        and expected_grid != 16
+        and not getattr(args, 'build_reference_memory_only', False)
+    ):
+        raise RuntimeError(
+            'Native CPS reference backend must produce a 16x16 grid; got {}x{} '
+            'from resolution={} and patch={}'.format(
+                expected_grid, expected_grid, reference_resolution, uni.patch_size
+            )
+        )
     memory_built = False
     if not memory_path.is_file():
         if (
@@ -579,13 +614,41 @@ def _load_reference(args, cfg, logger, manifest_dir=None, use_manifests=False):
 
     assert memory_fg_count == memory_fg_np.shape[0], memory_fg_count
     assert memory_bg_count == memory_bg_np.shape[0], memory_bg_count
-    if reference_resolution == 224 and str(args.dataset_name).strip().lower() == 'glas' and args.labeled_ratio == 10:
+    if (
+        uni.model_id.lower() == 'mahmoodlab/uni'
+        and reference_resolution == 224
+        and str(args.dataset_name).strip().lower() == 'glas'
+        and args.labeled_ratio == 10
+    ):
         assert memory_fg_count == 391, memory_fg_count
         assert memory_bg_count == 294, memory_bg_count
-    assert memory_fg_np.shape[1] == 1024, memory_fg_np.shape
-    assert memory_bg_np.shape[1] == 1024, memory_bg_np.shape
-    assert feature_dim == 1024, feature_dim
+    assert memory_fg_np.shape[1] == uni.feature_dim, memory_fg_np.shape
+    assert memory_bg_np.shape[1] == uni.feature_dim, memory_bg_np.shape
+    assert feature_dim == uni.feature_dim, feature_dim
     assert token_grid == expected_grid, (token_grid, expected_grid)
+    with np.load(str(memory_path), allow_pickle=False) as memory:
+        memory_encoder_id = (
+            str(memory['encoder_id'].item()) if 'encoder_id' in memory.files else None
+        )
+        memory_encoder_sha = (
+            str(memory['encoder_sha256'].item()) if 'encoder_sha256' in memory.files else None
+        )
+    if memory_encoder_id is not None and memory_encoder_id.lower() != uni.model_id.lower():
+        raise RuntimeError(
+            'Reference memory encoder mismatch: memory={} current={}'.format(
+                memory_encoder_id, uni.model_id
+            )
+        )
+    if memory_encoder_sha is not None and memory_encoder_sha != uni.weights_sha256:
+        raise RuntimeError('Reference memory was built from different encoder weights')
+    if uni.backbone != 'uni' and memory_encoder_id is None:
+        raise RuntimeError(
+            '{} requires a memory built by this encoder backend; do not reuse UNI memory'.format(
+                uni.backbone
+            )
+        )
+    if uni.backbone != 'uni' and memory_encoder_sha is None:
+        raise RuntimeError('Reference memory is missing its encoder weight fingerprint')
     if memory_top_k < 1:
         raise RuntimeError('Reference memory metadata top_k must be positive: {}'.format(memory_top_k))
     with np.load(str(memory_path), allow_pickle=False) as memory:
@@ -653,7 +716,10 @@ def _load_reference(args, cfg, logger, manifest_dir=None, use_manifests=False):
     )
     logger.info('%s UNI implementation=models/uni.py', mode_label)
     margin_calibration = None
-    if args.reference_mode in MARGIN_CALIBRATED_MODES:
+    if (
+        args.reference_mode in MARGIN_CALIBRATED_MODES
+        and not getattr(args, 'build_reference_memory_only', False)
+    ):
         calibration_records = Path(args.margin_calibration_records).expanduser().resolve()
         if not calibration_records.is_file():
             _build_margin_calibration_train_loo(
@@ -666,7 +732,7 @@ def _load_reference(args, cfg, logger, manifest_dir=None, use_manifests=False):
                 calibration_records,
                 logger,
             )
-        margin_calibration = _load_margin_calibration(args, logger)
+        margin_calibration = _load_margin_calibration(args, logger, uni=uni)
     return {
         'uni': uni,
         'memory_fg': memory_fg,
@@ -679,6 +745,9 @@ def _load_reference(args, cfg, logger, manifest_dir=None, use_manifests=False):
         'memory_path': str(memory_path),
         'memory_sha256': _sha256_file(memory_path),
         'uni_config_path': str(config_path),
+        'uni_loader': getattr(args, 'uni_loader', 'local'),
+        'uni_hub_id': getattr(args, 'uni_hub_id', 'MahmoodLab/UNI'),
+        'reference_backbone': uni.backbone,
         'memory_fg_count': memory_fg_count,
         'memory_bg_count': memory_bg_count,
         'memory_fg_norm_error': memory_fg_norm_error,
@@ -697,10 +766,10 @@ def _load_reference(args, cfg, logger, manifest_dir=None, use_manifests=False):
 
 
 def _uni_dense_features(uni, rgb_01, reference_resolution=DEFAULT_REFERENCE_RESOLUTION):
-    mean = torch.tensor(UNI_MEAN, device=rgb_01.device, dtype=rgb_01.dtype).view(1, 3, 1, 1)
-    std = torch.tensor(UNI_STD, device=rgb_01.device, dtype=rgb_01.dtype).view(1, 3, 1, 1)
+    mean = torch.tensor(uni.input_mean, device=rgb_01.device, dtype=rgb_01.dtype).view(1, 3, 1, 1)
+    std = torch.tensor(uni.input_std, device=rgb_01.device, dtype=rgb_01.dtype).view(1, 3, 1, 1)
     reference_size = _reference_size(reference_resolution)
-    expected_grid = _reference_grid(reference_resolution)
+    expected_grid = _reference_grid(reference_resolution, uni.patch_size)
     x = F.interpolate(rgb_01, size=reference_size, mode='bilinear', align_corners=False)
     x = (x - mean) / std
     tokens = uni.dense_patch_tokens(x)
@@ -708,9 +777,9 @@ def _uni_dense_features(uni, rgb_01, reference_resolution=DEFAULT_REFERENCE_RESO
     token_grid = int(math.sqrt(token_count))
     if token_grid * token_grid != token_count:
         raise RuntimeError('UNI dense token count is not square: {}'.format(token_count))
-    if tokens.shape[-1] != 1024 or token_grid != expected_grid:
+    if tokens.shape[-1] != uni.feature_dim or token_grid != expected_grid:
         raise RuntimeError(
-            'Unexpected UNI dense feature shape: {}'.format(tuple(tokens.shape))
+            'Unexpected pathology encoder dense feature shape: {}'.format(tuple(tokens.shape))
         )
     return tokens
 
