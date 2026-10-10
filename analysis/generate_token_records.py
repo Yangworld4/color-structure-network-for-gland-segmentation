@@ -40,8 +40,8 @@ from utils.native_reference import (
 )
 
 
-DEFAULT_MEMORY = ROOT / "/data/mission/models/Exp/DUAL/checkpoints/d/GlaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5.0-w=20-7-61-image-input_mode=rgb_stain-cps_mode=native_fine_margin_calibrated_reverse/reference_memory_uni2h224.npz"
-DEFAULT_OUTPUT = ROOT / "outputs/native_scale_reference/glas_standard_cps_uni2224/token_records.csv"
+DEFAULT_MEMORY = ROOT / "/data/mission/models/Exp/DUAL/checkpoints/kaiko_vitb8_100/GlaS/CPS-l=0.5-e=200-s=50-g=0.5-b=2-cw=5.0-w=20-7-61-image-input_mode=rgb_stain-cps_mode=native_fine_margin_calibrated_reverse-reference_backbone=kaiko-vitb8/reference_memory_kaiko_vitb8_224.npz"
+DEFAULT_OUTPUT = ROOT / "outputs/native_scale_reference/glas_standard_cps_kaiko_vitb8_100/token_records.csv"
 
 
 def _build_args() -> SimpleNamespace:

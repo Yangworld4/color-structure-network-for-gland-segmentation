@@ -100,6 +100,11 @@ def _experiment_name(args, split_sup_mark, split_unsup_mark):
     experiment_name += '-cps_mode={}'.format(
         getattr(args, 'cps_mode', 'standard')
     )
+    reference_backbone = getattr(args, 'reference_backbone', 'uni')
+    if reference_backbone != 'uni':
+        # Keep alternative pathology backbones in isolated run directories so
+        # their memories/checkpoints/logs cannot overwrite existing UNI runs.
+        experiment_name += '-reference_backbone={}'.format(reference_backbone)
     return experiment_name
 
 

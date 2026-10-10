@@ -24,7 +24,10 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-import diagnose_contradiction_enrichment as token_diag
+try:
+    import diagnose_contradiction_enrichment as token_diag
+except ModuleNotFoundError:
+    from analysis import diagnose_contradiction_enrichment as token_diag
 import main as project
 from config.dataset_config.dataset_cfg import dataset_cfg
 from training.cps import get_training_views
@@ -128,7 +131,7 @@ def collect_pixel_records(model_a, model_b, loader, cfg, memory_context):
     per_image = []
     validation_images = 0
     check_names = [
-        "student_dense_256", "coarse_probability_16", "uni_grid_16", "K_token_16",
+        "student_dense_256", "coarse_probability_grid", "reference_feature_grid", "K_token_grid",
         "nearest_K_256", "fine_masks_256", "fine_raw_probability", "fine_raw_confidence",
         "agreement_partition", "hc_subset", "K_partition", "partition_disjoint",
         "K_expansion_match", "corr_semantics", "keep_semantics", "dis_semantics",
@@ -150,11 +153,11 @@ def collect_pixel_records(model_a, model_b, loader, cfg, memory_context):
 
             # Only these coarse probabilities are pooled. Fine CPS masks below use
             # the untouched dense probabilities above.
-            coarse_a = F.adaptive_avg_pool2d(probability_a[:, None], (TOKEN_GRID, TOKEN_GRID))[:, 0]
-            coarse_b = F.adaptive_avg_pool2d(probability_b[:, None], (TOKEN_GRID, TOKEN_GRID))[:, 0]
-            _check(tuple(coarse_a.shape[-2:]) == (TOKEN_GRID, TOKEN_GRID), "coarse probability grid")
+            coarse_a = F.adaptive_avg_pool2d(probability_a[:, None], (token_grid, token_grid))[:, 0]
+            coarse_b = F.adaptive_avg_pool2d(probability_b[:, None], (token_grid, token_grid))[:, 0]
+            _check(tuple(coarse_a.shape[-2:]) == (token_grid, token_grid), "coarse probability grid")
             checks["student_dense_256"] &= True
-            checks["coarse_probability_16"] &= True
+            checks["coarse_probability_grid"] &= token_grid in (16, 28)
             class_a_t, class_b_t = coarse_a.ge(0.5), coarse_b.ge(0.5)
             coarse_agreement = class_a_t.eq(class_b_t)
             coarse_class = class_a_t
@@ -163,7 +166,7 @@ def collect_pixel_records(model_a, model_b, loader, cfg, memory_context):
             features = _uni_dense_features(memory_context["uni"], rgb, reference_resolution)
             _check(tuple(features.shape[1:]) == (token_grid * token_grid, feature_dim),
                    f"Reference feature shape {tuple(features.shape)}")
-            checks["uni_grid_16"] &= True
+            checks["reference_feature_grid"] &= True
             score_fg, score_bg = _reference_scores(
                 features, memory_context, int(memory_context["memory_top_k"])
             )
@@ -176,7 +179,7 @@ def collect_pixel_records(model_a, model_b, loader, cfg, memory_context):
             K_t = coarse_agreement & margin.gt(0.0)
             _check(torch.equal(K_t, coarse_agreement & memory_class.ne(coarse_class)),
                    "K_t == coarse_agreement & (U_t != C_t)")
-            checks["K_token_16"] &= tuple(K_t.shape[-2:]) == (token_grid, token_grid)
+            checks["K_token_grid"] &= tuple(K_t.shape[-2:]) == (token_grid, token_grid)
 
             def expand(t):
                 return F.interpolate(t[:, None].float(), size=(PIXEL_SIZE, PIXEL_SIZE), mode="nearest")[:, 0].bool()
@@ -272,10 +275,12 @@ def collect_pixel_records(model_a, model_b, loader, cfg, memory_context):
 def make_summary(aggregate, directions, checkpoint_path, epoch, n_images, *,
                  dataset=DATASET, labeled_ratio=LABELED_RATIO, seed=SEED,
                  reference_backbone="uni", memory_path=""):
+    token_grid = int(TOKEN_GRID)
     s = {
         "dataset": dataset, "labeled_ratio": labeled_ratio, "seed": seed,
         "checkpoint": str(checkpoint_path), "epoch": epoch, "num_validation_images": n_images,
         "reference_backbone": reference_backbone, "memory_path": str(memory_path),
+        "token_grid": token_grid,
         "num_pixels": aggregate["num_pixels"],
         "num_agreement_pixels": aggregate["num_agreement_pixels"],
         "num_K_pixels": aggregate["num_K_pixels"], "num_corr_pixels": aggregate["num_corr_pixels"],
@@ -374,7 +379,7 @@ def _write_csv(path, fields, row):
 
 def _write_run_summary(path, s, check_pass, output_dir=OUTPUT_DIR):
     lines = [
-        "[Evaluation Scale]", f"Coarse semantic contradiction: {TOKEN_GRID}×{TOKEN_GRID} token level",
+        "[Evaluation Scale]", f"Coarse semantic contradiction: {s.get('token_grid', TOKEN_GRID)}×{s.get('token_grid', TOKEN_GRID)} token level",
         "Fine CPS errors: 256×256 pixel level", "Memory contradiction: train-only Semantic Memory",
         "Evaluation: validation only", "", "WW definition: A(x)=B(x)≠GT(x)",
         "HC90WW definition: WW and conf_A(x)>=0.90 and conf_B(x)>=0.90",
@@ -484,6 +489,16 @@ def _choose_memory_path(requested_path, requested_backbone):
             )
         if requested_backbone == "uni2-h":
             return TOKEN_OUTPUT_DIR / "reference_memory_uni2h224.npz"
+    if requested_backbone == "kaiko-vitb8":
+        candidates = sorted(ROOT.glob("checkpoints/**/reference_memory_kaiko_vitb8_224.npz"))
+        if len(candidates) == 1:
+            return candidates[0].resolve()
+        if len(candidates) > 1:
+            raise RuntimeError(
+                "Found multiple Kaiko ViT-B/8 memories; pass --memory explicitly:\n"
+                + "\n".join(str(path) for path in candidates)
+            )
+        return TOKEN_OUTPUT_DIR / "reference_memory_kaiko_vitb8_224.npz"
     raise RuntimeError("Could not choose a reference memory; pass --memory PATH")
 
 
@@ -496,7 +511,7 @@ def main():
         help="Reference memory .npz. If omitted, a unique memory is selected by backbone.",
     )
     parser.add_argument(
-        "--reference-backbone", choices=("auto", "uni", "uni2-h"), default="auto",
+        "--reference-backbone", choices=("auto", "uni", "uni2-h", "kaiko-vitb8"), default="auto",
         help="Encoder used by the memory. auto infers it from memory metadata.",
     )
     parser.add_argument(
@@ -520,24 +535,21 @@ def main():
         raise RuntimeError(
             f"Requested backbone {cli.reference_backbone} does not match memory encoder {backbone}"
         )
-    if backbone == "kaiko-vitb8":
-        raise RuntimeError(
-            "This CPS diagnostic requires the 16x16 coarse grid; Kaiko ViT-B/8 "
-            "memory is 28x28. UNI2-h memory is supported at 16x16."
-        )
+    patch_size = {"uni": 16, "uni2-h": 14, "kaiko-vitb8": 8}[backbone]
+    expected_grid = {"uni": 16, "uni2-h": 16, "kaiko-vitb8": 28}[backbone]
     reference_resolution = (
         int(cli.reference_resolution)
-        if cli.reference_resolution is not None
-        else int(metadata["reference_resolution"] if metadata else (224 if backbone == "uni2-h" else 256))
+        if cli.reference_resolution is not None else
+        int(metadata["reference_resolution"] if metadata else (256 if backbone == "uni" else 224))
     )
-    expected_grid = reference_resolution // ({"uni": 16, "uni2-h": 14}[backbone])
-    if reference_resolution % {"uni": 16, "uni2-h": 14}[backbone] or expected_grid != TOKEN_GRID:
+    token_grid = reference_resolution // patch_size
+    if reference_resolution % patch_size or token_grid != expected_grid:
         raise RuntimeError(
             f"{backbone} at resolution={reference_resolution} must produce the CPS grid "
-            f"{TOKEN_GRID}x{TOKEN_GRID}"
+            f"{expected_grid}x{expected_grid}"
         )
     if metadata:
-        if metadata["token_grid"] != TOKEN_GRID or metadata["reference_resolution"] != reference_resolution:
+        if metadata["token_grid"] != token_grid or metadata["reference_resolution"] != reference_resolution:
             raise RuntimeError(
                 f"Memory geometry mismatch: grid={metadata['token_grid']} resolution="
                 f"{metadata['reference_resolution']}"
@@ -552,7 +564,7 @@ def main():
     output_dir.mkdir(parents=True, exist_ok=True)
     print(
         f"Memory backend={backbone} | path={memory_path} | "
-        f"input={reference_resolution} | grid={TOKEN_GRID}x{TOKEN_GRID} | Top-K={cli.top_k}"
+        f"input={reference_resolution} | grid={token_grid}x{token_grid} | Top-K={cli.top_k}"
     )
     project.init_seeds(SEED)
     checkpoint_path, _student_a_path, _student_b_path, checkpoint, epoch = token_diag.select_checkpoints()
@@ -561,7 +573,7 @@ def main():
     args.uni_loader = "hf-hub" if backbone == "uni2-h" else "local"
     args.uni_hub_id = UNI2_H_MODEL_ID if backbone == "uni2-h" else "MahmoodLab/UNI"
     args.reference_resolution = reference_resolution
-    args.reference_grid = TOKEN_GRID
+    args.reference_grid = token_grid
     args.uni_k = cli.top_k
     args.uni_reference_memory = str(memory_path)
     cfg=dataset_cfg(DATASET)
@@ -572,7 +584,7 @@ def main():
                       num_workers=cli.num_workers,pin_memory=True)
     memory=_load_reference(args,cfg,logging.getLogger("pixel_contradiction_enrichment"),
                            manifest_dir=manifest_dir,use_manifests=use_manifests)
-    if memory["memory_top_k"]!=cli.top_k or memory["token_grid"]!=TOKEN_GRID:
+    if memory["memory_top_k"]!=cli.top_k or memory["token_grid"]!=token_grid:
         raise RuntimeError("Reference memory Top-K/grid does not match the diagnostic settings")
     model_a,model_b=token_diag.load_models(checkpoint,cfg)
     aggregate,directions,per_image,n_images,checks=collect_pixel_records(model_a,model_b,loader,cfg,memory)
@@ -581,6 +593,7 @@ def main():
     check_pass=all(bool(v) for v in checks.values())
     summary=make_summary(aggregate,directions,checkpoint_path,epoch,n_images,
                          reference_backbone=backbone,memory_path=memory_path)
+    summary["token_grid"] = token_grid
     with (output_dir/"pixel_contradiction_per_image.csv").open("w",newline="",encoding="utf-8") as f:
         writer=csv.DictWriter(f,fieldnames=PER_IMAGE_FIELDS); writer.writeheader(); writer.writerows(per_image)
     summary_fields=list(summary.keys())

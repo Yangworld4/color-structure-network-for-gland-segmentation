@@ -301,6 +301,7 @@ def _build_margin_calibration_train_loo(
     k = int(args.uni_k)
     if k < 1:
         raise ValueError('--uni_k must be positive for margin calibration')
+    expected_grid = _reference_grid(args.reference_resolution, uni.patch_size)
     dataset = _reference_memory_dataset(args, cfg, manifest_dir, use_manifests)
     loader = DataLoader(
         dataset,
@@ -319,13 +320,12 @@ def _build_margin_calibration_train_loo(
             )
             gt = batch['mask'].cuda(non_blocking=True).float().unsqueeze(1)
             tokens = _uni_dense_features(uni, rgb, args.reference_resolution)
-            occ = F.adaptive_avg_pool2d(gt, (16, 16)).flatten(1)
+            occ = F.adaptive_avg_pool2d(gt, (expected_grid, expected_grid)).flatten(1)
             features.append(tokens.detach().cpu().numpy().astype(np.float32))
             occupancy.append(occ.detach().cpu().numpy().astype(np.float32))
             image_ids.extend(str(value) for value in batch['ID'])
     features = np.concatenate(features, axis=0)
     occupancy = np.concatenate(occupancy, axis=0)
-    expected_grid = _reference_grid(args.reference_resolution, uni.patch_size)
     if features.shape != (len(image_ids), expected_grid * expected_grid, uni.feature_dim):
         raise RuntimeError('Unexpected train calibration feature shape: {}'.format(features.shape))
 
@@ -547,15 +547,13 @@ def _load_reference(args, cfg, logger, manifest_dir=None, use_manifests=False):
     memory_path = Path(args.uni_reference_memory).expanduser().resolve()
     uni, weights_path, config_path = _load_uni(args)
     expected_grid = _reference_grid(reference_resolution, uni.patch_size)
-    if (
-        _is_native_reference_mode(args)
-        and expected_grid != 16
-        and not getattr(args, 'build_reference_memory_only', False)
-    ):
+    requested_grid = getattr(args, 'reference_grid', expected_grid)
+    if _is_native_reference_mode(args) and expected_grid != requested_grid:
         raise RuntimeError(
-            'Native CPS reference backend must produce a 16x16 grid; got {}x{} '
+            'Native CPS reference grid mismatch: expected {}x{}, got {}x{} '
             'from resolution={} and patch={}'.format(
-                expected_grid, expected_grid, reference_resolution, uni.patch_size
+                requested_grid, requested_grid, expected_grid, expected_grid,
+                reference_resolution, uni.patch_size
             )
         )
     memory_built = False

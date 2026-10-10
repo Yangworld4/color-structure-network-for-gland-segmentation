@@ -455,15 +455,10 @@ def parse_args():
         if args.reference_resolution % patch_size:
             parser.error('reference input size must be divisible by the selected patch size')
         args.reference_grid = args.reference_resolution // patch_size
-        if args.reference_backbone == 'kaiko-vitb8' and not args.build_reference_memory_only:
+        if not args.build_reference_memory_only and args.reference_grid not in (16, 28):
             parser.error(
-                'Kaiko ViT-B/8 currently supports native 28x28 memory-bank '
-                'construction only; pass --build-reference-memory-only'
-            )
-        if not args.build_reference_memory_only and args.reference_grid != 16:
-            parser.error(
-                'native reference mode requires a 16x16 encoder grid; '
-                'UNI uses 256 input and UNI2-h uses 224 input'
+                'native training supports 16x16 or 28x28 encoder grids; '
+                'UNI uses 256 input, UNI2-h uses 224 input, and Kaiko ViT-B/8 uses 224 input'
             )
     if args.milestone_interval < 0:
         parser.error('--milestone_interval must be non-negative')

@@ -1,0 +1,47 @@
+{
+  "input": "/data/mission/models/Exp/DUAL/outputs/native_scale_reference/glas_standard_cps_kaiko_vitb8/token_records.csv",
+  "output_dir": "/data/mission/models/Exp/DUAL/outputs/memory_semantic_separation_kaiko_vitb8",
+  "top_k": 50,
+  "total_tokens": 11127,
+  "fg_tokens": 4704,
+  "bg_tokens": 6423,
+  "margin": {
+    "formula": "S_FG - S_BG",
+    "full_min": -0.3746553063392639,
+    "full_max": 0.6456054598093033,
+    "visual_range_p0.5_p99.5": [
+      -0.3338903179764748,
+      0.6040412297844892
+    ]
+  },
+  "fg": {
+    "n": 4704,
+    "mean_delta": 0.17643147344910065,
+    "median_delta": 0.16746073961257935,
+    "min_delta": -0.2529456317424774,
+    "max_delta": 0.6456054598093033,
+    "correct_sign_rate": 0.8690476190476191
+  },
+  "bg": {
+    "n": 6423,
+    "mean_delta": -0.14400754934175353,
+    "median_delta": -0.1543128788471222,
+    "min_delta": -0.3746553063392639,
+    "max_delta": 0.24365296959877014,
+    "correct_sign_rate": 0.9160828273392496
+  },
+  "balanced_accuracy": 0.8925652231934343,
+  "auroc": 0.959543707721295,
+  "source_columns": {
+    "s_fg": "S_FG",
+    "s_bg": "S_BG",
+    "gt_class": "gt_class",
+    "gt_ratio": "fg_ratio",
+    "top_k": "top_k",
+    "gt_rule": "direct gt class"
+  },
+  "kde_available": true,
+  "plot_forward_performed": false,
+  "plot_memory_rebuilt": false,
+  "interpretation": "The class-aware UNI memory provides discriminative semantic evidence on unseen validation tokens: gland tokens are predominantly more similar to the foreground memory, while background tokens are predominantly more similar to the background memory."
+}

@@ -187,20 +187,22 @@ def _safe_mean(total, count):
 def _build_native_reference_targets(logits_a, logits_b, rgb_input, context, cfg, args):
     """Build detached pathology-backbone native token gating for S/SC.
 
-    The pathology margin remains at its native 16x16 scale. Only boolean
+    Student probabilities are pooled to the selected encoder's native token
+    grid (16x16 for UNI/UNI2-h, 28x28 for Kaiko ViT-B/8). Only boolean
     contradiction/HC masks are later expanded as *loss weights* with nearest
     neighbour replication; no semantic UNI value is interpolated here.
     """
-    if context['token_grid'] != 16:
+    token_grid = int(context['token_grid'])
+    if token_grid not in (16, 28):
         raise AssertionError(
-            'Native reference modes require a 16x16 pathology token grid, got resolution={} grid={}'.format(
-                context['reference_resolution'], context['token_grid']
+            'Native reference modes require a supported 16x16 or 28x28 token grid, got resolution={} grid={}'.format(
+                context['reference_resolution'], token_grid
             )
         )
     prob_a = _foreground_probability(logits_a)
     prob_b = _foreground_probability(logits_b)
-    p_a_token = F.adaptive_avg_pool2d(prob_a, (16, 16))
-    p_b_token = F.adaptive_avg_pool2d(prob_b, (16, 16))
+    p_a_token = F.adaptive_avg_pool2d(prob_a, (token_grid, token_grid))
+    p_b_token = F.adaptive_avg_pool2d(prob_b, (token_grid, token_grid))
     gate_a = p_a_token.detach()
     gate_b = p_b_token.detach()
     hard_a = gate_a.ge(0.5)
@@ -217,12 +219,12 @@ def _build_native_reference_targets(logits_a, logits_b, rgb_input, context, cfg,
         if tokens.shape[1:] != (context['token_grid'] ** 2, context['feature_dim']):
             raise AssertionError('Native pathology tokens have unexpected shape: {}'.format(tuple(tokens.shape)))
         score_fg, score_bg = _reference_scores(tokens, context, args.uni_k)
-        margin = (score_fg - score_bg).reshape(-1, 1, 16, 16)
-        score_fg = score_fg.reshape(-1, 1, 16, 16)
-        score_bg = score_bg.reshape(-1, 1, 16, 16)
+        margin = (score_fg - score_bg).reshape(-1, 1, token_grid, token_grid)
+        score_fg = score_fg.reshape(-1, 1, token_grid, token_grid)
+        score_bg = score_bg.reshape(-1, 1, token_grid, token_grid)
         uni_fg = margin.gt(0.0)
         ties = margin.eq(0.0)
-    # Direct semantic-gap evidence at the native 16x16 token scale.  The
+    # Direct semantic-gap evidence at the encoder's native token scale. The
     # reference margin is S_FG-S_BG; choose current/opposite by the detached
     # Student consensus, then suppress only positive contradiction gaps.
     s_cur = torch.where(hard_a[:, 0], score_fg[:, 0], score_bg[:, 0]).detach()
@@ -368,23 +370,40 @@ def _run_native_startup_checks(args, context, models, optimizers):
     """Protocol checks for the native-scale mode (no training smoke run)."""
     if not _is_native_reference_mode(args):
         raise AssertionError('Native startup check called for non-native mode')
-    if context['token_grid'] != 16:
-        raise AssertionError('Native pathology geometry must have a 16x16 token grid')
+    expected_grid = {'uni': 16, 'uni2-h': 16, 'kaiko-vitb8': 28}.get(
+        context['reference_backbone']
+    )
+    if expected_grid is None or context['token_grid'] != expected_grid:
+        raise AssertionError(
+            'Unexpected native pathology grid for {}: {}'.format(
+                context['reference_backbone'], context['token_grid']
+            )
+        )
     expected_resolution = {
         'uni': 256,
         'uni2-h': 224,
+        'kaiko-vitb8': 224,
     }.get(context['reference_backbone'])
     if expected_resolution is not None and context['reference_resolution'] != expected_resolution:
         raise AssertionError(
-            '{} native mode expects {}x{} input for a 16x16 grid, got {}'.format(
+            '{} native mode expects {}x{} input for a {}x{} grid, got {}'.format(
                 context['reference_backbone'],
                 expected_resolution,
                 expected_resolution,
+                expected_grid,
+                expected_grid,
                 context['reference_resolution'],
             )
         )
-    if context['feature_dim'] not in (768, 1024, 1536):
-        raise AssertionError('Unsupported native pathology feature dimension: {}'.format(context['feature_dim']))
+    expected_dim = {'uni': 1024, 'uni2-h': 1536, 'kaiko-vitb8': 768}[
+        context['reference_backbone']
+    ]
+    if context['feature_dim'] != expected_dim:
+        raise AssertionError(
+            'Unexpected {} feature dimension: {}'.format(
+                context['reference_backbone'], context['feature_dim']
+            )
+        )
     if args.uni_k < 1:
         raise AssertionError('Requested native UNI Top-K must be positive')
     if any(parameter.requires_grad for parameter in context['uni'].parameters()):
@@ -869,6 +888,7 @@ def _native_validation_diagnostic(validation, dataloader, context, cfg, args):
     totals = defaultdict(float)
     events = defaultdict(float)
     offset = 0
+    token_count_per_image = int(context['token_grid']) ** 2
     with torch.inference_mode():
         for batch in dataloader:
             n = int(batch['mask'].shape[0])
@@ -902,8 +922,9 @@ def _native_validation_diagnostic(validation, dataloader, context, cfg, args):
             )
             contradiction = targets['contradiction']
             hc_token = targets['hc']
+            token_grid = int(context['token_grid'])
             occ = F.adaptive_avg_pool2d(
-                gt.float().unsqueeze(1), (16, 16)
+                gt.float().unsqueeze(1), (token_grid, token_grid)
             )[:, 0]
             pca = 0.5 * (
                 targets['p_a_token'][:, 0] + targets['p_b_token'][:, 0]
@@ -915,13 +936,13 @@ def _native_validation_diagnostic(validation, dataloader, context, cfg, args):
                 uni_direction * gt_direction > 0
             ) & direction_valid
             token_ww = F.adaptive_avg_pool2d(
-                ww.float().unsqueeze(1), (16, 16)
+                ww.float().unsqueeze(1), (token_grid, token_grid)
             )[:, 0]
             token_hc = F.adaptive_avg_pool2d(
-                hc.float().unsqueeze(1), (16, 16)
+                hc.float().unsqueeze(1), (token_grid, token_grid)
             )[:, 0]
             token_cc = F.adaptive_avg_pool2d(
-                cc.float().unsqueeze(1), (16, 16)
+                cc.float().unsqueeze(1), (token_grid, token_grid)
             )[:, 0]
 
             for key, value in (
@@ -1022,10 +1043,10 @@ def _native_validation_diagnostic(validation, dataloader, context, cfg, args):
         'contradiction_tokens': int(contradiction),
         'hc_contradiction_tokens': int(hc_tokens),
         'contradiction_rate': _safe_mean(
-            contradiction, max(1.0, totals['valid'] / 256.0)
+            contradiction, max(1.0, totals['valid'] / float(token_count_per_image))
         ),
         'hc_contradiction_rate': _safe_mean(
-            hc_tokens, max(1.0, totals['valid'] / 256.0)
+            hc_tokens, max(1.0, totals['valid'] / float(token_count_per_image))
         ),
         'mean_WW_ratio_contradiction': _safe_mean(
             totals['contradiction_ww_sum'], contradiction
@@ -1087,7 +1108,7 @@ def _native_checkpoint_metadata(args, context, best_val_eval_lists, best_epochs)
         'reference_memory_path': context['memory_path'],
         'reference_memory_sha256': context['memory_sha256'],
         'reference_resolution': context['reference_resolution'],
-        'reference_grid': 16,
+        'reference_grid': int(context['token_grid']),
         'reference_memory_source': 'labeled_{} GT only'.format(
             args.labeled_ratio
         ),
@@ -1230,14 +1251,19 @@ def train_model(
             ),
             'reverse_target': reverse_target_description,
             'contradiction_gate': 'detach pooled pA/pB; agreement and UNI margin sign only; no GT',
-            'loss_weight_expansion': 'nearest 16x16 -> student pixel resolution',
+            'loss_weight_expansion': 'nearest {}x{} -> student pixel resolution'.format(
+                args.reference_grid, args.reference_grid
+            ),
             'hc_correction': 'disabled',
             'test_evaluation_policy': 'not evaluated during training',
             'command': ' '.join(sys.argv),
         }
         config_roots = [Path(trained_models_path)]
         if getattr(args, 'native_metrics_dir', None) is None:
-            config_roots.append(Path('outputs/native_scale_training'))
+            generic_metrics_root = Path('outputs/native_scale_training')
+            if args.reference_backbone != 'uni':
+                generic_metrics_root /= args.reference_backbone.replace('-', '')
+            config_roots.append(generic_metrics_root)
         for root in config_roots:
             root.mkdir(parents=True, exist_ok=True)
             (root / 'config_{}.json'.format(NATIVE_MODE_TAGS[args.reference_mode])).write_text(
@@ -1309,8 +1335,9 @@ def train_model(
     if reference_context is not None and _is_native_reference_mode(args):
         _run_native_startup_checks(args, reference_context, models, optimizers)
         logger.info(
-            'Native-scale reference startup checks passed | mode=%s | reference input=%d | token grid=16x16',
+            'Native-scale reference startup checks passed | mode=%s | reference input=%d | token grid=%dx%d',
             args.reference_mode, reference_context['reference_resolution'],
+            reference_context['token_grid'], reference_context['token_grid'],
         )
     best_val_eval_lists = (
         [0 for _ in range(4)],
@@ -1349,11 +1376,12 @@ def train_model(
             open(metrics_path, 'a' if args.resume else 'w', newline='', encoding='utf-8')
         )
         if _is_native_reference_mode(args):
-            native_root = Path(
-                args.native_metrics_dir
-                if getattr(args, 'native_metrics_dir', None)
-                else 'outputs/native_scale_training'
-            )
+            if getattr(args, 'native_metrics_dir', None):
+                native_root = Path(args.native_metrics_dir)
+            else:
+                native_root = Path('outputs/native_scale_training')
+                if args.reference_backbone != 'uni':
+                    native_root /= args.reference_backbone.replace('-', '')
             native_root.mkdir(parents=True, exist_ok=True)
             mode_tag = NATIVE_MODE_TAGS[args.reference_mode]
             native_training_file = stack.enter_context(open(

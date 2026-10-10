@@ -192,3 +192,60 @@ If you use this work in your research or project, please cite the following pape
 ```bash
 ```
 
+
+
+ python main.py \
+    --dataset_name GLaS --path_dataset datasets/GlaS \
+    --path_trained_models checkpoints/glas10_seed1337_uni \
+    --path_seg_results seg_pred/glas10_seed1337_uni \
+    --labeled_ratio 10 --sd 1337 --batch_size 2 --num_epochs 200 \
+    --network unet --input_mode rgb_stain \
+    --step_size 50 --lr 0.5 --gamma 0.5 --unsup_weight 5.0 \
+    --warm_up_duration 20 --momentum 0.9 \
+    --cps_mode native_fine_margin_calibrated_reverse --uni_k 50 \
+    --reference-backbone uni --uni-input-size 256 \
+    --uni_build_reference_memory
+
+  UNI 使用项目配置的本地 --uni_weights 和 --uni_config。如果权重不在默认路径，可
+  另外传这两个参数。
+
+  ### UNI2-h（ViT-H/14，16×16 网格）
+
+  python main.py \
+    --dataset_name GLaS --path_dataset datasets/GlaS \
+    --path_trained_models checkpoints/glas10_seed1337_uni2h \
+    --path_seg_results seg_pred/glas10_seed1337_uni2h \
+    --labeled_ratio 10 --sd 1337 --batch_size 2 --num_epochs 200 \
+    --network unet --input_mode rgb_stain \
+    --step_size 50 --lr 0.5 --gamma 0.5 --unsup_weight 5.0 \
+    --warm_up_duration 20 --momentum 0.9 \
+    --cps_mode native_fine_margin_calibrated_reverse --uni_k 50 \
+    --reference-backbone uni2-h \
+    --uni-loader hf-hub --uni-hub-id MahmoodLab/UNI2-h \
+    --uni-input-size 224 \
+    --uni_build_reference_memory
+
+  缓存中已有 UNI2-h 配置和权重时会优先本地加载；输入 224×224 得到 16×16 网格。
+
+  ### Kaiko ViT-B/8（28×28 网格，784 个 token）
+
+  python main.py \
+    --dataset_name GLaS --path_dataset datasets/GlaS \
+    --path_trained_models checkpoints/glas10_seed1337_kaiko_vitb8 \
+    --path_seg_results seg_pred/glas10_seed1337_kaiko_vitb8 \
+    --labeled_ratio 10 --sd 1337 --batch_size 2 --num_epochs 200 \
+    --network unet --input_mode rgb_stain \
+    --step_size 50 --lr 0.5 --gamma 0.5 --unsup_weight 5.0 \
+    --warm_up_duration 20 --momentum 0.9 \
+    --cps_mode native_fine_margin_calibrated_reverse --uni_k 50 \
+    --reference-backbone kaiko-vitb8 --uni-input-size 224 \
+    --uni_build_reference_memory
+
+  Kaiko 使用官方 Torch Hub 加载方式，不需要传 --uni-loader hf-hub 或 --uni-hub-
+  id。输入 224×224 保留 28×28 网格；它的 memory、Student coarse pooling 和训练路
+  由使用同一网格。
+
+  如果只想建立 Kaiko memory bank、不训练，在 Kaiko 命令末尾加 --build-reference-
+  memory-only。
+
+
