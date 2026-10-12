@@ -58,6 +58,7 @@ def compute_cps_losses(
     *,
     ce_none=None,
     reference_targets=None,
+    collect_q_dynamics=False,
 ) -> Dict[str, torch.Tensor]:
     """Dispatch the selected standard or Native Reference CPS loss."""
     if cps_mode == 'standard':
@@ -88,6 +89,7 @@ def compute_cps_losses(
         fine['opposite_target_pixel'][:, 0],
         fine,
         cps_mode,
+        collect_q_dynamics=collect_q_dynamics,
     )
 
 def compute_native_margin_calibrated_anti_confirmation_losses(
@@ -101,6 +103,7 @@ def compute_native_margin_calibrated_anti_confirmation_losses(
     opposite_target_pixel,
     fine_stats,
     mode,
+    collect_q_dynamics=False,
 ):
     """Margin-calibrated ablations on fine-selective risk pixels.
 
@@ -231,6 +234,7 @@ def compute_native_margin_calibrated_anti_confirmation_losses(
     effective_a = torch.where(risk_pixel, risk_a, current_a)
     effective_b = torch.where(risk_pixel, risk_b, current_b)
     routing_metrics = {}
+    q_dynamics = None
     if mode == 'native_fine_margin_calibrated_reverse_disroute':
         m_corr = fine_stats['M_corr_pixel'][:, 0]
         m_keep = fine_stats['M_keep_pixel'][:, 0]
@@ -290,6 +294,30 @@ def compute_native_margin_calibrated_anti_confirmation_losses(
         0.5 * (risk_a[risk_pixel].mean() + risk_b[risk_pixel].mean())
         if risk_pixel.any().item() else prediction1.sum() * 0.0
     )
+    if collect_q_dynamics:
+        # Detached diagnostic maps only. The scalar loss above is unchanged;
+        # weighted contribution maps include the existing 0.5 and valid-pixel
+        # reductions so their active-pixel sums match this branch's contribution
+        # to the current bidirectional CPS scalar.
+        current_a_log = current_a.detach()
+        current_b_log = current_b.detach()
+        opposite_a_log = opposite_a.detach()
+        opposite_b_log = opposite_b.detach()
+        n_valid1 = valid1.sum().to(current_a.dtype).clamp_min(1.0)
+        n_valid2 = valid2.sum().to(current_b.dtype).clamp_min(1.0)
+        q_dynamics = {
+            'q_pixel': q_pixel.detach(),
+            'raw_cps': (0.5 * (current_a_log + current_b_log)).detach(),
+            'raw_opp': (0.5 * (opposite_a_log + opposite_b_log)).detach(),
+            'weighted_cps': (
+                0.5 * (cps_weight.detach() * current_a_log / n_valid1
+                       + cps_weight.detach() * current_b_log / n_valid2)
+            ).detach(),
+            'weighted_opp': (
+                0.5 * (opposite_weight.detach() * opposite_a_log / n_valid1
+                       + opposite_weight.detach() * opposite_b_log / n_valid2)
+            ).detach(),
+        }
     total = loss_a_to_b + loss_b_to_a
     if not torch.isfinite(total).item():
         raise FloatingPointError('Margin-calibrated Anti-Confirmation CPS loss contains NaN/Inf')
@@ -307,6 +335,7 @@ def compute_native_margin_calibrated_anti_confirmation_losses(
         'd_weight_stats': d_weight_stats,
         'cps_weight_risk': cps_weight[risk_pixel].detach(),
         'opposite_weight_risk': opposite_weight[risk_pixel].detach(),
+        'q_dynamics': q_dynamics,
         **routing_metrics,
     }
 

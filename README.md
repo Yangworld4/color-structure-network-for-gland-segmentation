@@ -195,14 +195,14 @@ If you use this work in your research or project, please cite the following pape
 
 
  python main.py \
-    --dataset_name GLaS --path_dataset datasets/GlaS \
-    --path_trained_models checkpoints/glas10_seed1337_uni \
+    --dataset_name GlaS --path_dataset datasets/GlaS \
+    --path_trained_models checkpoints/glas10_seed1337_uni_haveq \
     --path_seg_results seg_pred/glas10_seed1337_uni \
     --labeled_ratio 10 --sd 1337 --batch_size 2 --num_epochs 200 \
     --network unet --input_mode rgb_stain \
     --step_size 50 --lr 0.5 --gamma 0.5 --unsup_weight 5.0 \
     --warm_up_duration 20 --momentum 0.9 \
-    --cps_mode native_fine_margin_calibrated_reverse --uni_k 50 \
+    --cps_mode native_fine_margin_calibrated_reverse_disroute --uni_k 50 \
     --reference-backbone uni --uni-input-size 256 \
     --uni_build_reference_memory
 

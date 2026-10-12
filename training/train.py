@@ -54,6 +54,7 @@ from training.cps import (
     _pixel_entropy, compute_cps_losses, deterministic_disroute_sanity,
     compute_supervised_loss, get_training_views,
 )
+from utils.q_dynamics import QDynamicsTracker
 
 
 def _snapshot_rng_state():
@@ -352,6 +353,82 @@ def _build_native_reference_targets(logits_a, logits_b, rgb_input, context, cfg,
                 'aligned_B_pixel': aligned_b[:, None],
                 'Ct_pixel': consensus_pixel.detach(),
                 'd_weight_ablation': args.d_weight_ablation,
+                'q_mode_has_disroute': True,
+            })
+            if getattr(args, 'log_q_dynamics', True):
+                fine_stats.update({
+                    'Ut_pixel': uni_pixel.detach(),
+                    'A_pixel': hard_a_pixel[:, 0].detach()[:, None],
+                    'B_pixel': hard_b_pixel[:, 0].detach()[:, None],
+                    'conf_A_pixel': torch.maximum(prob_a.detach(), 1.0 - prob_a.detach()),
+                    'conf_B_pixel': torch.maximum(prob_b.detach(), 1.0 - prob_b.detach()),
+                    'S_cur_pixel': F.interpolate(
+                        s_cur.detach().unsqueeze(1), size=prob_a.shape[-2:], mode='nearest'
+                    ),
+                    'S_opp_pixel': F.interpolate(
+                        s_opp.detach().unsqueeze(1), size=prob_a.shape[-2:], mode='nearest'
+                    ),
+                    'direction_fg2bg': (
+                        k_pixel & consensus_pixel[:, 0] & ~uni_pixel[:, 0]
+                    )[:, None],
+                    'direction_bg2fg': (
+                        k_pixel & ~consensus_pixel[:, 0] & uni_pixel[:, 0]
+                    )[:, None],
+                    'token_id_pixel': F.interpolate(
+                        torch.arange(
+                            token_grid * token_grid, device=prob_a.device,
+                            dtype=torch.float32,
+                        ).reshape(1, 1, token_grid, token_grid).expand(
+                            prob_a.shape[0], -1, -1, -1
+                        ),
+                        size=prob_a.shape[-2:], mode='nearest',
+                    ).long(),
+                })
+        elif (getattr(args, 'log_q_dynamics', True)
+              and args.cps_mode == 'native_fine_margin_calibrated_reverse'):
+            # This CPS mode uses q on M_corr but has no M_dis routing branch.
+            # Keep the absent population empty instead of inventing a routed set.
+            uni_pixel = F.interpolate(
+                uni_fg.float(), size=prob_a.shape[-2:], mode='nearest'
+            ).ge(0.5)
+            k_pixel = contradiction_pixel[:, 0].detach()
+            m_corr = risk_pixel[:, 0].detach()
+            empty = torch.zeros_like(m_corr)
+            fine_stats.update({
+                'K_pixel': k_pixel[:, None],
+                'M_corr_pixel': m_corr[:, None],
+                'M_keep_pixel': empty[:, None],
+                'M_dis_pixel': empty[:, None],
+                'aligned_A_pixel': empty[:, None],
+                'aligned_B_pixel': empty[:, None],
+                'Ct_pixel': consensus_pixel.detach(),
+                'Ut_pixel': uni_pixel.detach(),
+                'A_pixel': hard_a_pixel[:, 0].detach()[:, None],
+                'B_pixel': hard_b_pixel[:, 0].detach()[:, None],
+                'conf_A_pixel': torch.maximum(prob_a.detach(), 1.0 - prob_a.detach()),
+                'conf_B_pixel': torch.maximum(prob_b.detach(), 1.0 - prob_b.detach()),
+                'S_cur_pixel': F.interpolate(
+                    s_cur.detach().unsqueeze(1), size=prob_a.shape[-2:], mode='nearest'
+                ),
+                'S_opp_pixel': F.interpolate(
+                    s_opp.detach().unsqueeze(1), size=prob_a.shape[-2:], mode='nearest'
+                ),
+                'direction_fg2bg': (
+                    k_pixel & consensus_pixel[:, 0] & ~uni_pixel[:, 0]
+                )[:, None],
+                'direction_bg2fg': (
+                    k_pixel & ~consensus_pixel[:, 0] & uni_pixel[:, 0]
+                )[:, None],
+                'token_id_pixel': F.interpolate(
+                    torch.arange(
+                        token_grid * token_grid, device=prob_a.device,
+                        dtype=torch.float32,
+                    ).reshape(1, 1, token_grid, token_grid).expand(
+                        prob_a.shape[0], -1, -1, -1
+                    ),
+                    size=prob_a.shape[-2:], mode='nearest',
+                ).long(),
+                'q_mode_has_disroute': False,
             })
     return {
         'p_a_token': p_a_token, 'p_b_token': p_b_token,
@@ -468,6 +545,7 @@ def train_one_epoch(
     metrics_writer,
     metrics_file,
     reference_context=None,
+    q_dynamics_tracker=None,
 ):
     model1, model2 = models
     optimizer1, optimizer2 = optimizers
@@ -604,7 +682,22 @@ def train_one_epoch(
             cps_mode=args.cps_mode,
             ce_none=losses.get('ce_none'),
             reference_targets=reference_targets,
+            collect_q_dynamics=q_dynamics_tracker is not None,
         )
+        if q_dynamics_tracker is not None:
+            if args.cps_mode not in (
+                'native_fine_margin_calibrated_reverse',
+                'native_fine_margin_calibrated_reverse_disroute',
+            ):
+                raise AssertionError('q dynamics tracker received an unsupported CPS mode')
+            if not torch.isfinite(cps_losses['q_dynamics']['q_pixel']).all().item():
+                raise AssertionError('Non-finite detached q diagnostics')
+            q_dynamics_tracker.update(
+                batch_idx=batch_index + 1,
+                image_ids=unsup_batch.get('ID'),
+                fine=reference_targets['fine_stats'],
+                log_values=cps_losses['q_dynamics'],
+            )
         if _is_native_reference_mode(args):
             native_cps = cps_losses
             if args.cps_mode == 'native_fine_margin_calibrated_reverse_disroute':
@@ -1190,6 +1283,21 @@ def train_model(
             args.uni_reference_memory = str(
                 Path(trained_models_path) / 'reference_memory_{}.npz'.format(backbone_tag)
             )
+    q_dynamics_tracker = None
+    if (getattr(args, 'log_q_dynamics', True)
+            and args.cps_mode in (
+                'native_fine_margin_calibrated_reverse',
+                'native_fine_margin_calibrated_reverse_disroute',
+            )
+            and not getattr(args, 'build_reference_memory_only', False)):
+        q_dynamics_tracker = QDynamicsTracker(
+            Path(trained_models_path) / 'q_diagnostics',
+            token_grid=args.reference_grid,
+            resume=args.resume,
+            has_disroute=(
+                args.cps_mode == 'native_fine_margin_calibrated_reverse_disroute'
+            ),
+        )
     logger, metrics_path, diagnostic_logger = create_run_outputs(
         args, trained_models_path
     )
@@ -1472,6 +1580,8 @@ def train_model(
         for epoch in range(start_epoch, args.num_epochs):
             epoch_start = time.time()
             torch.cuda.reset_peak_memory_stats()
+            if q_dynamics_tracker is not None:
+                q_dynamics_tracker.start_epoch(epoch + 1)
             loss_totals, train_predictions, global_step, reference_totals = train_one_epoch(
                 args,
                 epoch,
@@ -1483,6 +1593,7 @@ def train_model(
                 metrics_writer,
                 metrics_file,
                 reference_context=reference_context,
+                q_dynamics_tracker=q_dynamics_tracker,
             )
             schedulers[0].step()
             schedulers[1].step()
@@ -1491,6 +1602,9 @@ def train_model(
             print_epoch = (
                 current_epoch % 5 == 0 or current_epoch == args.num_epochs
             )
+            if q_dynamics_tracker is not None:
+                q_dynamics_tracker.finalize_epoch(current_epoch)
+                q_dynamics_tracker.print_epoch(current_epoch, print_epoch)
             if print_epoch:
                 print('=' * print_num)
                 print(
@@ -1951,6 +2065,8 @@ def train_model(
                 })
                 native_training_file.flush()
 
+    if q_dynamics_tracker is not None:
+        q_dynamics_tracker.finalize_run()
     if _is_native_reference_mode(args):
         native_last_path = os.path.join(trained_models_path, 'last_checkpoint.pth')
         torch.save({

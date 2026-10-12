@@ -320,6 +320,12 @@ def parse_args():
         ),
     )
     parser.add_argument(
+        '--log-q-dynamics',
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help='write detached q(D) branch/direction diagnostics; use --no-log-q-dynamics to disable',
+    )
+    parser.add_argument(
         '--uni_reference_memory', '--reference-memory', '--reference_memory',
         dest='uni_reference_memory',
         default=None,
